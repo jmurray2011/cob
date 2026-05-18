@@ -96,7 +96,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 	out.Header("Publishing %s/%s@%s -> %s/%s", m.Namespace, m.Package, version, m.Domain, m.Repository)
 
 	if dryRun {
-		return runDryRun(ctx, sources, out)
+		return runDryRun(ctx, coords, sources, out)
 	}
 
 	proceed, err := confirmAction(yes, fmt.Sprintf("Publish %d assets?", len(sources)))
@@ -153,28 +153,45 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 	return out.CommandResult(result)
 }
 
-func runDryRun(ctx context.Context, sources []NamedSource, out *output.Writer) error {
+func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []NamedSource, out *output.Writer) error {
+	result := &cob.CommandResult{
+		Command:    "publish",
+		Package:    fmt.Sprintf("%s/%s@%s", coords.Namespace, coords.Package, coords.Version),
+		Repository: fmt.Sprintf("%s/%s", coords.Domain, coords.Repository),
+		Status:     "ok",
+	}
+
 	var failures int
 	for _, ns := range sources {
 		meta, err := ns.Source.Resolve(ctx)
 		if err != nil {
 			out.AssetFail(ns.Name, ns.Source.URI(), err)
+			ar := cob.AssetResult{Name: ns.Name, Source: ns.Source.URI(), Method: "buffered"}
+			ar.SetError(err)
+			result.Assets = append(result.Assets, ar)
 			failures++
 			continue
 		}
-		r := &cob.AssetResult{
+		ar := cob.AssetResult{
 			Name:   ns.Name,
+			Source: ns.Source.URI(),
 			Size:   meta.Size,
 			SHA256: meta.SHA256,
 			Method: "buffered",
 		}
-		out.AssetOK(r, ns.Source.URI())
+		out.AssetOK(&ar, ns.Source.URI())
+		result.Assets = append(result.Assets, ar)
+		result.TotalSize += ar.Size
 	}
+
 	verified := len(sources) - failures
 	if failures > 0 {
+		result.Status = "error"
+		result.Error = fmt.Sprintf("%d of %d sources failed verification", failures, len(sources))
 		out.Summary("Dry run complete. %d of %d sources verified, %d failed.", verified, len(sources), failures)
+		out.CommandResult(result)
 		return &ExitError{Code: cob.ExitError}
 	}
 	out.Summary("Dry run complete. All %d sources verified.", len(sources))
-	return nil
+	return out.CommandResult(result)
 }
