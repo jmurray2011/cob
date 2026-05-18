@@ -64,6 +64,9 @@ do **not** silently proceed -- they refuse unless `--yes` is given, so a
 pipeline can't delete or overwrite by accident. Pass `--yes` in CI.
 `--dry-run` never prompts.
 
+Every publish also writes a `cob-provenance.json` asset (the finalizer) --
+see [Provenance](#provenance).
+
 ### pull
 
 Downloads assets to a local directory. Works with a manifest or compact coordinates.
@@ -193,7 +196,7 @@ cob verify my-package.yaml --version 2.1.0
 cob verify my-package.yaml --version 2.1.0 --deep   # download+hash unchecksummed sources
 ```
 
-Flags: `--version` (required, or `COB_VERSION`), `--deep`
+Flags: `--version` (required, or `COB_VERSION`), `--deep` (manifest mode only)
 
 ### diff
 
@@ -243,13 +246,17 @@ that's the intended trade-off for a self-contained evidence trail.
 to `chain`. The file appears in `cob ls <pkg>@ver` and is fetched by
 `cob pull`; it is excluded from `verify`'s "not in manifest" reporting.
 
+Read it with `cob verify <coordinates>` (no manifest): it self-verifies the
+version against this document and prints the chain plus the recursive origin
+tree -- audit any cob-published version with nothing but its coordinates.
+
 ### Parallel transfers
 
 `publish`, `pull`, and `promote` transfer assets in parallel, bounded by
 `--concurrency` (default 4; `1` = sequential, the old behaviour). For
-`publish`/`promote` the version-finalizing write is always sequenced last,
-after every other asset has uploaded, so a failure leaves the version
-Unfinished exactly as before.
+`publish`/`promote` the `cob-provenance.json` write is the finalizer and is
+always sequenced last, after every other asset has uploaded, so a failure
+leaves the version Unfinished exactly as before.
 
 ## Source types
 
