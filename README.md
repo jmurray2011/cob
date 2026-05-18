@@ -214,6 +214,30 @@ cob diff my-package.yaml --version 2.1.0 --deep
 
 Flags: `--version` (required, or `COB_VERSION`), `--deep`
 
+### manifest
+
+Prints a manifest (YAML, to stdout) for an existing version -- recover the
+manifest for a package you have only coordinates for.
+
+If the version has a `cob-provenance.json`, it is **reconstructed**
+faithfully: original `sources:` keys, with each URI as it resolved at
+publish. This is a *pinned snapshot* -- `${VERSION}`/`${env.*}` are already
+expanded, and `promote.stages` is not recoverable (provenance records actual
+promotes, not the declared list).
+
+Otherwise it is **inferred**: the version has no provenance (non-cob or
+pre-provenance), so real origins are unknown -- each asset is sourced from
+the package itself via `ca://`. Re-publishing the inferred manifest
+reproduces the same bytes. `cob-provenance.json` is never emitted as a
+source.
+
+```bash
+cob manifest my-domain/dev/my-namespace/my-package@2.1.0 > my-package.yaml
+cob manifest my-domain/dev/my-namespace/my-package@latest
+```
+
+Flags: `--version` (or use `@version` / `COB_VERSION`)
+
 ### Provenance
 
 Every `cob publish` writes one extra asset, **`cob-provenance.json`** -- a
