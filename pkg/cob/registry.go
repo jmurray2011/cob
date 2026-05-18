@@ -310,37 +310,28 @@ func (r *Registry) ListAssets(ctx context.Context, coords *PackageCoordinates) (
 
 // CheckVersionExists returns true if a version exists in the given repo.
 func (r *Registry) CheckVersionExists(ctx context.Context, coords *PackageCoordinates) (bool, error) {
-	var nextToken *string
-
-	for {
-		out, err := r.client.CodeArtifact.ListPackageVersions(ctx, &codeartifact.ListPackageVersionsInput{
-			Domain:     aws.String(coords.Domain),
-			Repository: aws.String(coords.Repository),
-			Namespace:  aws.String(coords.Namespace),
-			Package:    aws.String(coords.Package),
-			Format:     FormatGeneric,
-			Status:     catypes.PackageVersionStatusPublished,
-			NextToken:  nextToken,
-		})
-		if err != nil {
-			// Package doesn't exist yet — that means the version doesn't either.
-			if isNotFound(err) {
-				return false, nil
-			}
-			return false, err
+	// DescribePackageVersion returns the version regardless of status, so an
+	// Unfinished version left behind by a failed publish is reported as
+	// existing — which is what --force / conflict handling needs. (The old
+	// ListPackageVersions+Status:Published scan was blind to those and would
+	// let publish collide with or strand a half-written version.) It is also
+	// a single call instead of a full paginated listing.
+	_, err := r.client.CodeArtifact.DescribePackageVersion(ctx, &codeartifact.DescribePackageVersionInput{
+		Domain:         aws.String(coords.Domain),
+		Repository:     aws.String(coords.Repository),
+		Namespace:      aws.String(coords.Namespace),
+		Package:        aws.String(coords.Package),
+		PackageVersion: aws.String(coords.Version),
+		Format:         FormatGeneric,
+	})
+	if err != nil {
+		// No such package or version → it doesn't exist.
+		if isNotFound(err) {
+			return false, nil
 		}
-		for _, v := range out.Versions {
-			if aws.ToString(v.Version) == coords.Version {
-				return true, nil
-			}
-		}
-		if out.NextToken == nil {
-			break
-		}
-		nextToken = out.NextToken
+		return false, err
 	}
-
-	return false, nil
+	return true, nil
 }
 
 // ResolveLatest returns the most recently published version of a package by
