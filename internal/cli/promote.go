@@ -116,7 +116,11 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	out.Header("Promoting %s/%s@%s: %s -> %s",
 		coords.Namespace, coords.Package, coords.Version, srcRepo, toRepo)
 
-	if !confirmAction(yes, fmt.Sprintf("Promote to %s?", toRepo)) {
+	proceed, err := confirmAction(yes, fmt.Sprintf("Promote to %s?", toRepo))
+	if err != nil {
+		return fail(out, "promote", cob.ExitError, "%s", err)
+	}
+	if !proceed {
 		fmt.Fprintln(os.Stderr, "Aborted.")
 		return nil
 	}

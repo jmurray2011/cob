@@ -99,7 +99,11 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		return runDryRun(ctx, sources, out)
 	}
 
-	if !confirmAction(yes, fmt.Sprintf("Publish %d assets?", len(sources))) {
+	proceed, err := confirmAction(yes, fmt.Sprintf("Publish %d assets?", len(sources)))
+	if err != nil {
+		return fail(out, "publish", cob.ExitError, "%s", err)
+	}
+	if !proceed {
 		fmt.Fprintln(os.Stderr, "Aborted.")
 		return nil
 	}

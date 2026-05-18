@@ -91,19 +91,28 @@ func resolveLatestIfNeeded(ctx context.Context, coords *cob.PackageCoordinates, 
 	return nil
 }
 
-// confirmAction asks for confirmation unless --yes or non-TTY.
-func confirmAction(yes bool, prompt string) bool {
+// confirmAction decides whether a mutating action may proceed.
+//
+//   - --yes: always proceeds.
+//   - interactive TTY: prompts; only a "y"/"yes" answer proceeds.
+//   - non-interactive (piped / CI) without --yes: refuses with an error
+//     instead of silently auto-confirming. Auto-confirming a delete or
+//     publish in a pipeline is a footgun; callers must pass --yes to opt in.
+//
+// A non-nil error means the action must not run and the command should fail
+// loudly. (false, nil) means the user declined at the prompt — a clean,
+// expected abort.
+func confirmAction(yes bool, prompt string) (bool, error) {
 	if yes {
-		return true
+		return true, nil
 	}
-	// Auto-confirm in non-interactive mode.
 	if !isInteractive() {
-		return true
+		return false, fmt.Errorf("refusing to proceed without confirmation: stdin is not a TTY; pass --yes to confirm")
 	}
 	fmt.Fprintf(os.Stderr, "%s [y/N] ", prompt)
 	var response string
 	fmt.Scanln(&response)
-	return strings.HasPrefix(strings.ToLower(response), "y")
+	return strings.HasPrefix(strings.ToLower(response), "y"), nil
 }
 
 func isInteractive() bool {
