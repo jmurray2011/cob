@@ -89,6 +89,96 @@ func TestResolveLatest(t *testing.T) {
 	})
 }
 
+func TestVersionStatus(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns real status", func(t *testing.T) {
+		ca := &fakeCA{describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+			return &codeartifact.DescribePackageVersionOutput{
+				PackageVersion: &catypes.PackageVersionDescription{Status: catypes.PackageVersionStatusUnfinished},
+			}, nil
+		}}
+		st, found, err := NewRegistry(newTestClient(ca)).VersionStatus(ctx, coords())
+		if err != nil || !found || st != string(catypes.PackageVersionStatusUnfinished) {
+			t.Fatalf("got (%q,%v,%v), want (Unfinished,true,nil)", st, found, err)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		ca := &fakeCA{describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+			return nil, &catypes.ResourceNotFoundException{}
+		}}
+		st, found, err := NewRegistry(newTestClient(ca)).VersionStatus(ctx, coords())
+		if err != nil || found || st != "" {
+			t.Fatalf("got (%q,%v,%v), want (\"\",false,nil)", st, found, err)
+		}
+	})
+}
+
+// TestListVersionsBestEffort: a per-version metadata error must NOT fail the
+// whole listing — the failed row keeps zero Assets/Published, others still
+// populate. (Regression guard for the A2/C3 fix.)
+func TestListVersionsBestEffort(t *testing.T) {
+	ctx := context.Background()
+	order := []string{"1.0.3", "1.0.2", "1.0.1"}
+	ca := &fakeCA{
+		listVersionsFn: func(*codeartifact.ListPackageVersionsInput) (*codeartifact.ListPackageVersionsOutput, error) {
+			var vs []catypes.PackageVersionSummary
+			for _, v := range order {
+				vs = append(vs, catypes.PackageVersionSummary{Version: aws.String(v)})
+			}
+			return &codeartifact.ListPackageVersionsOutput{Versions: vs}, nil
+		},
+		describeFn: func(in *codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+			if aws.ToString(in.PackageVersion) == "1.0.2" {
+				return nil, errors.New("throttled")
+			}
+			pt := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+			return &codeartifact.DescribePackageVersionOutput{
+				PackageVersion: &catypes.PackageVersionDescription{PublishedTime: &pt},
+			}, nil
+		},
+		listAssetsFn: func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
+			return &codeartifact.ListPackageVersionAssetsOutput{
+				Assets: []catypes.AssetSummary{{Name: aws.String("a")}},
+			}, nil
+		},
+	}
+
+	got, err := NewRegistry(newTestClient(ca)).ListVersions(ctx, coords())
+	if err != nil {
+		t.Fatalf("ListVersions must not fail when one version errors: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d versions, want 3 (all listed despite one meta error)", len(got))
+	}
+	for i, v := range order {
+		if got[i].Version != v {
+			t.Fatalf("order: [%d]=%q want %q", i, got[i].Version, v)
+		}
+	}
+	// 1.0.2 (index 1) failed -> zero values; the others populated.
+	if got[1].Assets != 0 || !got[1].Published.IsZero() {
+		t.Errorf("failed version should keep zero meta, got Assets=%d Published=%v", got[1].Assets, got[1].Published)
+	}
+	if got[0].Assets != 1 || got[2].Assets != 1 {
+		t.Errorf("healthy versions should still populate: %+v / %+v", got[0], got[2])
+	}
+}
+
+func TestListVersionsContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ca := &fakeCA{listVersionsFn: func(*codeartifact.ListPackageVersionsInput) (*codeartifact.ListPackageVersionsOutput, error) {
+		return &codeartifact.ListPackageVersionsOutput{
+			Versions: []catypes.PackageVersionSummary{{Version: aws.String("1.0.0")}},
+		}, nil
+	}}
+	if _, err := NewRegistry(newTestClient(ca)).ListVersions(ctx, coords()); err == nil {
+		t.Fatal("expected context cancellation to surface as an error")
+	}
+}
+
 // TestListVersionsFanOut verifies the bounded-concurrency fan-out populates
 // Assets + Published for every version and preserves the listing order.
 func TestListVersionsFanOut(t *testing.T) {
