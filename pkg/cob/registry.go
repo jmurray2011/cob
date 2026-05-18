@@ -4,11 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 )
+
+// versionMetaConcurrency bounds the parallel per-version metadata lookups
+// done by ListVersions, to keep `cob ls <pkg>` responsive without hammering
+// the CodeArtifact API into throttling.
+const versionMetaConcurrency = 8
 
 // isNotFound returns true if the error is a CodeArtifact ResourceNotFoundException.
 func isNotFound(err error) bool {
@@ -132,7 +139,11 @@ func (r *Registry) ListPackages(ctx context.Context, domain, repo string) ([]Pac
 	return results, nil
 }
 
-// ListVersions returns versions of a specific package.
+// ListVersions returns versions of a specific package, newest first, with
+// Assets and Published populated. Those two columns are not available from
+// ListPackageVersions, so each version costs two extra calls
+// (DescribePackageVersion + ListPackageVersionAssets); the lookups are
+// fanned out with bounded concurrency.
 func (r *Registry) ListVersions(ctx context.Context, coords *PackageCoordinates) ([]VersionSummary, error) {
 	var results []VersionSummary
 	var nextToken *string
@@ -145,6 +156,7 @@ func (r *Registry) ListVersions(ctx context.Context, coords *PackageCoordinates)
 			Package:    aws.String(coords.Package),
 			Format:     FormatGeneric,
 			Status:     catypes.PackageVersionStatusPublished,
+			SortBy:     "PUBLISHED_TIME",
 			NextToken:  nextToken,
 		})
 		if err != nil {
@@ -166,7 +178,88 @@ func (r *Registry) ListVersions(ctx context.Context, coords *PackageCoordinates)
 		nextToken = out.NextToken
 	}
 
+	if err := r.populateVersionMeta(ctx, coords, results); err != nil {
+		return nil, err
+	}
 	return results, nil
+}
+
+// populateVersionMeta fills Assets and Published for every version in place,
+// using a bounded-concurrency worker fan-out. Returns the first error seen.
+func (r *Registry) populateVersionMeta(ctx context.Context, coords *PackageCoordinates, versions []VersionSummary) error {
+	sem := make(chan struct{}, versionMetaConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+
+	for i := range versions {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			assets, published, err := r.versionMeta(ctx, coords, versions[i].Version)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
+				return
+			}
+			// Distinct index per goroutine: no lock needed for the write.
+			versions[i].Assets = assets
+			versions[i].Published = published
+		}(i)
+	}
+
+	wg.Wait()
+	return firstErr
+}
+
+// versionMeta returns the asset count and publish time for a single version.
+func (r *Registry) versionMeta(ctx context.Context, coords *PackageCoordinates, version string) (int, time.Time, error) {
+	desc, err := r.client.CodeArtifact.DescribePackageVersion(ctx, &codeartifact.DescribePackageVersionInput{
+		Domain:         aws.String(coords.Domain),
+		Repository:     aws.String(coords.Repository),
+		Namespace:      aws.String(coords.Namespace),
+		Package:        aws.String(coords.Package),
+		PackageVersion: aws.String(version),
+		Format:         FormatGeneric,
+	})
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("describing %s/%s@%s: %w", coords.Namespace, coords.Package, version, err)
+	}
+
+	var published time.Time
+	if desc.PackageVersion != nil && desc.PackageVersion.PublishedTime != nil {
+		published = *desc.PackageVersion.PublishedTime
+	}
+
+	count := 0
+	var nextToken *string
+	for {
+		out, err := r.client.CodeArtifact.ListPackageVersionAssets(ctx, &codeartifact.ListPackageVersionAssetsInput{
+			Domain:         aws.String(coords.Domain),
+			Repository:     aws.String(coords.Repository),
+			Namespace:      aws.String(coords.Namespace),
+			Package:        aws.String(coords.Package),
+			PackageVersion: aws.String(version),
+			Format:         FormatGeneric,
+			NextToken:      nextToken,
+		})
+		if err != nil {
+			return 0, time.Time{}, fmt.Errorf("listing assets for %s/%s@%s: %w", coords.Namespace, coords.Package, version, err)
+		}
+		count += len(out.Assets)
+		if out.NextToken == nil {
+			break
+		}
+		nextToken = out.NextToken
+	}
+
+	return count, published, nil
 }
 
 // ListAssets returns assets in a specific package version.
