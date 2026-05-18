@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"path"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
@@ -19,6 +21,9 @@ type S3Source struct {
 	bucket string
 	key    string
 	uri    string
+
+	// regionFixed guards the one-time client rebuild in correctRegion.
+	regionFixed bool
 }
 
 // NewS3Source creates an S3Source from a URI like s3://bucket/key.
@@ -40,11 +45,41 @@ func (s *S3Source) URI() string { return s.uri }
 
 func (s *S3Source) Filename() string { return path.Base(s.key) }
 
+// correctRegion inspects err for an S3 cross-region redirect. A request sent
+// to the wrong regional endpoint comes back as a 301/400 that still carries
+// the bucket's real region in the x-amz-bucket-region header. When that
+// header is present we rebuild the client pinned to that region — reusing
+// the same credentials and HTTP options — and return true so the caller can
+// retry once. This happens at most once per source; in the common
+// same-region case it is never triggered and adds no overhead.
+func (s *S3Source) correctRegion(err error) bool {
+	if s.regionFixed {
+		return false
+	}
+	var re *awshttp.ResponseError
+	if !errors.As(err, &re) || re.Response == nil {
+		return false
+	}
+	region := re.Response.Header.Get("X-Amz-Bucket-Region")
+	if region == "" || region == s.client.Options().Region {
+		return false
+	}
+	opts := s.client.Options()
+	opts.Region = region
+	s.client = s3.New(opts)
+	s.regionFixed = true
+	return true
+}
+
 func (s *S3Source) Resolve(ctx context.Context) (*AssetMetadata, error) {
-	head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+	in := &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(s.key),
-	})
+	}
+	head, err := s.client.HeadObject(ctx, in)
+	if err != nil && s.correctRegion(err) {
+		head, err = s.client.HeadObject(ctx, in)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("HeadObject %s: %w", s.uri, err)
 	}
@@ -66,10 +101,14 @@ func (s *S3Source) Resolve(ctx context.Context) (*AssetMetadata, error) {
 }
 
 func (s *S3Source) Open(ctx context.Context) (io.ReadCloser, error) {
-	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+	in := &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(s.key),
-	})
+	}
+	out, err := s.client.GetObject(ctx, in)
+	if err != nil && s.correctRegion(err) {
+		out, err = s.client.GetObject(ctx, in)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("GetObject %s: %w", s.uri, err)
 	}
