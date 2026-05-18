@@ -62,6 +62,8 @@ func NewCASource(client *codeartifact.Client, uri string) (*CASource, error) {
 
 func (c *CASource) URI() string { return c.uri }
 
+func (c *CASource) Filename() string { return c.asset }
+
 func (c *CASource) Resolve(ctx context.Context) (*AssetMetadata, error) {
 	out, err := c.client.ListPackageVersionAssets(ctx, &codeartifact.ListPackageVersionAssetsInput{
 		Domain:         aws.String(c.domain),

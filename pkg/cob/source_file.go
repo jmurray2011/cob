@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 // FileSource reads an asset from the local filesystem.
@@ -23,6 +24,8 @@ func NewFileSource(path, uri string) *FileSource {
 }
 
 func (f *FileSource) URI() string { return f.uri }
+
+func (f *FileSource) Filename() string { return filepath.Base(f.path) }
 
 func (f *FileSource) Resolve(_ context.Context) (*AssetMetadata, error) {
 	file, err := os.Open(f.path)

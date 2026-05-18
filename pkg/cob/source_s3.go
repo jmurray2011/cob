@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -39,6 +40,8 @@ func NewS3Source(client *s3.Client, uri string) (*S3Source, error) {
 }
 
 func (s *S3Source) URI() string { return s.uri }
+
+func (s *S3Source) Filename() string { return path.Base(s.key) }
 
 func (s *S3Source) Resolve(ctx context.Context) (*AssetMetadata, error) {
 	head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{

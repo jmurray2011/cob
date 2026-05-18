@@ -17,6 +17,13 @@ type AssetSource interface {
 	// URI returns the original source URI for display purposes.
 	URI() string
 
+	// Filename returns the basename used as the CodeArtifact AssetName.
+	// For s3:// sources this is the last segment of the object key, for
+	// ca:// sources it is the asset name from the source package, and for
+	// local files it is filepath.Base of the resolved path. The manifest's
+	// YAML key is a label, not the stored asset name.
+	Filename() string
+
 	// Resolve checks that the source exists and returns metadata.
 	// For sources with a known hash (S3 with checksum, CodeArtifact),
 	// this returns the hash. For others, SHA256 may be empty.

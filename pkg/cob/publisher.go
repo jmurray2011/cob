@@ -27,6 +27,11 @@ func NewPublisher(client *Client) *Publisher {
 
 // PublishAsset resolves a source, reads its bytes, and publishes to CodeArtifact.
 //
+// The CodeArtifact AssetName is derived from the source's filename (e.g. the
+// last segment of an s3:// key, or the asset name in a ca:// URI), not from
+// the manifest's YAML key. The YAML key is just a label for display and for
+// consumers looking up assets by a stable handle in higher-level tooling.
+//
 // All transfers buffer in memory because PublishPackageVersion requires an
 // io.ReadSeeker (for Content-Length + retries), not just an io.Reader. The
 // distinction between "hash known upfront" and "hash computed" still matters:
@@ -38,6 +43,12 @@ func NewPublisher(client *Client) *Publisher {
 // to move the version to Published status.
 func (p *Publisher) PublishAsset(ctx context.Context, coords *PackageCoordinates, name string, src AssetSource, unfinished bool) (*AssetResult, error) {
 	start := time.Now()
+
+	assetName := src.Filename()
+	if assetName == "" {
+		err := fmt.Errorf("asset %q: could not derive filename from source %s", name, src.URI())
+		return &AssetResult{Name: name, Source: src.URI(), ErrorMsg: err.Error(), Error: err}, err
+	}
 
 	result := &AssetResult{
 		Name:   name,
@@ -91,7 +102,7 @@ func (p *Publisher) PublishAsset(ctx context.Context, coords *PackageCoordinates
 		Package:        aws.String(coords.Package),
 		PackageVersion: aws.String(coords.Version),
 		Format:         FormatGeneric,
-		AssetName:      aws.String(name),
+		AssetName:      aws.String(assetName),
 		AssetSHA256:    aws.String(hash),
 		AssetContent:   bytes.NewReader(buf),
 	}
