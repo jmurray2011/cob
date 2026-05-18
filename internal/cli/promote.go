@@ -15,10 +15,11 @@ import (
 
 func newPromoteCmd() *cobra.Command {
 	var (
-		flagVersion string
-		flagTo      string
-		flagForce   bool
-		flagYes     bool
+		flagVersion     string
+		flagTo          string
+		flagForce       bool
+		flagYes         bool
+		flagConcurrency int
 	)
 
 	cmd := &cobra.Command{
@@ -27,7 +28,7 @@ func newPromoteCmd() *cobra.Command {
 		Long:  "Copies a package version from one repo to another, streaming through memory.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPromote(cmd.Context(), args[0], flagVersion, flagTo, flagForce, flagYes)
+			return runPromote(cmd.Context(), args[0], flagVersion, flagTo, flagForce, flagYes, flagConcurrency)
 		},
 	}
 
@@ -35,12 +36,13 @@ func newPromoteCmd() *cobra.Command {
 	cmd.Flags().StringVar(&flagTo, "to", "", "Destination repository (required)")
 	cmd.Flags().BoolVar(&flagForce, "force", false, "Overwrite if version exists in destination")
 	cmd.Flags().BoolVar(&flagYes, "yes", false, "Skip confirmation")
+	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential)")
 	cmd.MarkFlagRequired("to")
 
 	return cmd
 }
 
-func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, yes bool) error {
+func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, yes bool, concurrency int) error {
 	out := output.New(flagJSON)
 
 	client, err := cob.NewClient(ctx, cob.ClientOptions{
@@ -146,30 +148,36 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	}
 
 	start := time.Now()
-	for i, name := range assetNames {
-		isLast := i == len(assetNames)-1
-		out.AssetStart(name, "", 0)
-		ar, err := promoter.PromoteAsset(ctx, coords, srcRepo, toRepo, name, !isLast)
-		if err != nil {
-			out.AssetFail(name, "", err)
-			for _, remaining := range assetNames[i+1:] {
-				out.AssetSkipped(remaining)
+	results, _, ok := runFinalizeProtocol(len(assetNames), concurrency,
+		func(i int, unfinished bool) (*cob.AssetResult, error) {
+			name := assetNames[i]
+			out.AssetStart(name, "", 0)
+			ar, err := promoter.PromoteAsset(ctx, coords, srcRepo, toRepo, name, unfinished)
+			if err != nil {
+				out.AssetFail(name, "", err)
+				return ar, err
 			}
-			cmdResult.Status = "error"
-			cmdResult.Error = err.Error()
-			out.Error("%s\n  Promoted %d of %d assets to %s before failure. Version is in partial state.\n  Re-run with --force to delete and retry.",
-				err, len(cmdResult.Assets), len(assetNames), toRepo)
-			cmdResult.DurationMs = time.Since(start).Milliseconds()
-			out.CommandResult(cmdResult)
-			return &ExitError{Code: cob.ExitError}
+			out.AssetOK(ar, "")
+			return ar, nil
+		})
+
+	for _, r := range results {
+		if r != nil && r.Error == nil {
+			cmdResult.Assets = append(cmdResult.Assets, *r)
+			cmdResult.TotalSize += r.Size
 		}
-		cmdResult.Assets = append(cmdResult.Assets, *ar)
-		cmdResult.TotalSize += ar.Size
-		out.AssetOK(ar, "")
+	}
+	cmdResult.DurationMs = time.Since(start).Milliseconds()
+
+	if !ok {
+		cmdResult.Status = "error"
+		cmdResult.Error = firstResultError(results)
+		out.Error("%s\n  Promoted %d of %d assets to %s before failure. Version is in partial state.\n  Re-run with --force to delete and retry.",
+			cmdResult.Error, len(cmdResult.Assets), len(assetNames), toRepo)
+		out.CommandResult(cmdResult)
+		return &ExitError{Code: cob.ExitError}
 	}
 
-	cmdResult.DurationMs = time.Since(start).Milliseconds()
 	out.Summary("Promoted %d assets in %s", len(cmdResult.Assets), output.FormatDuration(cmdResult.DurationMs))
-
 	return out.CommandResult(cmdResult)
 }

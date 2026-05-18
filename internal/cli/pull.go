@@ -17,9 +17,10 @@ import (
 
 func newPullCmd() *cobra.Command {
 	var (
-		flagVersion string
-		flagOutput  string
-		flagAssets  string
+		flagVersion     string
+		flagOutput      string
+		flagAssets      string
+		flagConcurrency int
 	)
 
 	cmd := &cobra.Command{
@@ -32,18 +33,19 @@ func newPullCmd() *cobra.Command {
 			if len(args) > 1 {
 				assetName = args[1]
 			}
-			return runPull(cmd.Context(), args[0], flagVersion, flagOutput, flagAssets, assetName)
+			return runPull(cmd.Context(), args[0], flagVersion, flagOutput, flagAssets, assetName, flagConcurrency)
 		},
 	}
 
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Specific version (required with manifest)")
 	cmd.Flags().StringVar(&flagOutput, "output", "", "Output path (directory or filename)")
 	cmd.Flags().StringVar(&flagAssets, "assets", "", "Pull specific assets only (comma-separated)")
+	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets downloaded in parallel (1 = sequential)")
 
 	return cmd
 }
 
-func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter, assetArg string) error {
+func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
 	out := output.New(flagJSON)
 
 	client, err := cob.NewClient(ctx, cob.ClientOptions{
@@ -156,7 +158,8 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		Status:     "ok",
 	}
 
-	for _, info := range assets {
+	results, _, ok := runConcurrent(len(assets), concurrency, func(i int) (*cob.AssetResult, error) {
+		info := assets[i]
 		dest := outputPath
 		if len(assets) > 1 || isDir(outputPath) || strings.HasSuffix(outputPath, "/") {
 			dest = filepath.Join(outputPath, info.Name)
@@ -166,17 +169,25 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		ar, err := puller.PullAsset(ctx, coords, info, dest)
 		if err != nil {
 			out.AssetFail(info.Name, "", err)
-			result.Status = "error"
-			result.Error = err.Error()
-			break
+			return ar, err
 		}
-		result.Assets = append(result.Assets, *ar)
-		result.TotalSize += ar.Size
 		if ar.Method == "skipped" {
 			out.AssetSkipped(info.Name)
 		} else {
 			out.AssetOK(ar, "")
 		}
+		return ar, nil
+	})
+
+	for _, r := range results {
+		if r != nil && r.Error == nil {
+			result.Assets = append(result.Assets, *r)
+			result.TotalSize += r.Size
+		}
+	}
+	if !ok {
+		result.Status = "error"
+		result.Error = firstResultError(results)
 	}
 
 	result.DurationMs = time.Since(start).Milliseconds()

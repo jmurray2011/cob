@@ -6,17 +6,21 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/jmurray2011/cob/pkg/cob"
 )
 
-// Writer handles formatted output for cob commands.
+// Writer handles formatted output for cob commands. The per-asset line
+// methods (AssetStart/OK/Fail/Skipped) and Plain take mu so they can be
+// called from concurrent transfer workers without interleaving a line.
 type Writer struct {
 	out    io.Writer
 	errOut io.Writer
 	json   bool
 	isTTY  bool
+	mu     sync.Mutex
 }
 
 // New creates a Writer. If jsonMode is true, output is JSON.
@@ -76,6 +80,8 @@ func (w *Writer) Header(format string, args ...any) {
 // sourceURI is shown when known (publish); pass "" for pull where there is no
 // source URI to display. size is the known content size (or 0 if unknown).
 func (w *Writer) AssetStart(name, sourceURI string, size int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.json || !w.isTTY {
 		return
 	}
@@ -92,6 +98,8 @@ func (w *Writer) AssetStart(name, sourceURI string, size int64) {
 
 // AssetOK prints a successful asset transfer line.
 func (w *Writer) AssetOK(r *cob.AssetResult, sourceURI string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.json {
 		return
 	}
@@ -112,6 +120,8 @@ func (w *Writer) AssetOK(r *cob.AssetResult, sourceURI string) {
 
 // AssetFail prints a failed asset line.
 func (w *Writer) AssetFail(name, sourceURI string, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.json {
 		return
 	}
@@ -130,6 +140,8 @@ func (w *Writer) AssetFail(name, sourceURI string, err error) {
 
 // AssetSkipped prints a skipped asset line.
 func (w *Writer) AssetSkipped(name string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.json {
 		return
 	}
@@ -153,6 +165,8 @@ func (w *Writer) flush() {
 // Plain prints a formatted line to stdout (non-JSON mode only). For ad-hoc
 // human output that is neither an asset transfer line nor a summary.
 func (w *Writer) Plain(format string, args ...any) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.json {
 		return
 	}

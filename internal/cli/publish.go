@@ -15,10 +15,11 @@ import (
 
 func newPublishCmd() *cobra.Command {
 	var (
-		flagVersion string
-		flagForce   bool
-		flagDryRun  bool
-		flagYes     bool
+		flagVersion     string
+		flagForce       bool
+		flagDryRun      bool
+		flagYes         bool
+		flagConcurrency int
 	)
 
 	cmd := &cobra.Command{
@@ -27,7 +28,7 @@ func newPublishCmd() *cobra.Command {
 		Long:  "Reads a manifest file, resolves variables, pulls from each source, and publishes to CodeArtifact.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPublish(cmd.Context(), args[0], flagVersion, flagForce, flagDryRun, flagYes)
+			return runPublish(cmd.Context(), args[0], flagVersion, flagForce, flagDryRun, flagYes, flagConcurrency)
 		},
 	}
 
@@ -35,11 +36,12 @@ func newPublishCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&flagForce, "force", false, "Overwrite existing version")
 	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Verify sources exist, show plan, don't publish")
 	cmd.Flags().BoolVar(&flagYes, "yes", false, "Skip confirmation")
+	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential)")
 
 	return cmd
 }
 
-func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dryRun, yes bool) error {
+func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dryRun, yes bool, concurrency int) error {
 	out := output.New(flagJSON)
 
 	version, err := resolveVersion(versionFlag)
@@ -124,33 +126,50 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		Status:     "ok",
 	}
 
-	for i, ns := range sources {
-		isLast := i == len(sources)-1
-		out.AssetStart(ns.Name, ns.Source.URI(), 0)
-		ar, err := publisher.PublishAsset(ctx, coords, ns.Name, ns.Source, !isLast)
-		if err != nil {
-			out.AssetFail(ns.Name, ns.Source.URI(), err)
-			// Only skip assets that haven't been attempted yet.
-			for _, remaining := range sources[i+1:] {
-				out.AssetSkipped(remaining.Name)
+	results, _, ok := runFinalizeProtocol(len(sources), concurrency,
+		func(i int, unfinished bool) (*cob.AssetResult, error) {
+			ns := sources[i]
+			out.AssetStart(ns.Name, ns.Source.URI(), 0)
+			ar, err := publisher.PublishAsset(ctx, coords, ns.Name, ns.Source, unfinished)
+			if err != nil {
+				out.AssetFail(ns.Name, ns.Source.URI(), err)
+				return ar, err
 			}
-			result.Status = "error"
-			result.Error = err.Error()
-			out.Error("failed to read %s\n  Published %d of %d assets. Version is in unfinished state.\n  Re-run with --force to delete and retry.",
-				ns.Source.URI(), len(result.Assets), len(sources))
-			out.CommandResult(result)
-			return &ExitError{Code: cob.ExitError}
+			out.AssetOK(ar, ns.Source.URI())
+			return ar, nil
+		})
+
+	for _, r := range results {
+		if r != nil && r.Error == nil {
+			result.Assets = append(result.Assets, *r)
+			result.TotalSize += r.Size
 		}
-		result.Assets = append(result.Assets, *ar)
-		result.TotalSize += ar.Size
-		out.AssetOK(ar, ns.Source.URI())
+	}
+	result.DurationMs = time.Since(start).Milliseconds()
+
+	if !ok {
+		result.Status = "error"
+		result.Error = firstResultError(results)
+		out.Error("%s\n  Published %d of %d assets. Version is in unfinished state.\n  Re-run with --force to delete and retry.",
+			result.Error, len(result.Assets), len(sources))
+		out.CommandResult(result)
+		return &ExitError{Code: cob.ExitError}
 	}
 
-	result.DurationMs = time.Since(start).Milliseconds()
 	out.Summary("Published %d assets (%s) in %s",
 		len(result.Assets), output.FormatSize(result.TotalSize), output.FormatDuration(result.DurationMs))
-
 	return out.CommandResult(result)
+}
+
+// firstResultError returns the error message of the first failed asset
+// result, for the partial-failure summary.
+func firstResultError(results []*cob.AssetResult) string {
+	for _, r := range results {
+		if r != nil && r.ErrorMsg != "" {
+			return r.ErrorMsg
+		}
+	}
+	return "asset transfer failed"
 }
 
 func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []NamedSource, out *output.Writer) error {
