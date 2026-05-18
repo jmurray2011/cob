@@ -117,7 +117,6 @@ func (p *Promoter) PromoteAsset(ctx context.Context, coords *PackageCoordinates,
 		return result, fmt.Errorf("publishing %q to %s: %w", assetName, dstRepo, err)
 	}
 
-	result.Duration = time.Since(start)
-	result.DurationMs = result.Duration.Milliseconds()
+	result.DurationMs = time.Since(start).Milliseconds()
 	return result, nil
 }

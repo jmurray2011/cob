@@ -301,4 +301,3 @@ func runLsPromotionStatus(ctx context.Context, registry *cob.Registry, coords *c
 	out.Table(headers, rows)
 	return nil
 }
-

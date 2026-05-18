@@ -13,15 +13,14 @@ type PackageCoordinates struct {
 
 // AssetResult holds the outcome of a single asset transfer.
 type AssetResult struct {
-	Name       string        `json:"name"`
-	Source     string        `json:"source,omitempty"`
-	Size       int64         `json:"size"`
-	SHA256     string        `json:"sha256"`
-	Method     string        `json:"method"` // "buffered" or "skipped"
-	Duration   time.Duration `json:"-"`
-	DurationMs int64         `json:"duration_ms"`
-	Error      error         `json:"-"`
-	ErrorMsg   string        `json:"error,omitempty"`
+	Name       string `json:"name"`
+	Source     string `json:"source,omitempty"`
+	Size       int64  `json:"size"`
+	SHA256     string `json:"sha256"`
+	Method     string `json:"method"` // "buffered" or "skipped"
+	DurationMs int64  `json:"duration_ms"`
+	Error      error  `json:"-"`
+	ErrorMsg   string `json:"error,omitempty"`
 }
 
 // SetError sets both the error and its string representation for JSON.
@@ -46,10 +45,10 @@ type CommandResult struct {
 
 // PackageSummary is returned by list operations at the repo level.
 type PackageSummary struct {
-	Namespace    string `json:"namespace"`
-	Package      string `json:"package"`
+	Namespace     string `json:"namespace"`
+	Package       string `json:"package"`
 	LatestVersion string `json:"latest_version"`
-	VersionCount int    `json:"version_count"`
+	VersionCount  int    `json:"version_count"`
 }
 
 // VersionSummary is returned by list operations at the package level.

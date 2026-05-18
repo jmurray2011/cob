@@ -68,42 +68,6 @@ func buildSource(uri, manifestDir string, client *cob.Client) (cob.AssetSource, 
 	}
 }
 
-// resolveNamespaceIfNeeded finds the namespace for a package when only
-// domain/repo/package was provided (3-segment coordinates). Searches all
-// packages in the repo. No-op if namespace is already set.
-func resolveNamespaceIfNeeded(ctx context.Context, coords *cob.PackageCoordinates, registry *cob.Registry) error {
-	if coords.Namespace != "" || coords.Package == "" {
-		return nil
-	}
-
-	packages, err := registry.ListPackages(ctx, coords.Domain, coords.Repository)
-	if err != nil {
-		return fmt.Errorf("searching for package %q: %w", coords.Package, err)
-	}
-
-	var matches []cob.PackageSummary
-	for _, p := range packages {
-		if p.Package == coords.Package {
-			matches = append(matches, p)
-		}
-	}
-
-	switch len(matches) {
-	case 0:
-		return fmt.Errorf("package %q not found in %s/%s", coords.Package, coords.Domain, coords.Repository)
-	case 1:
-		coords.Namespace = matches[0].Namespace
-		return nil
-	default:
-		var namespaces []string
-		for _, m := range matches {
-			namespaces = append(namespaces, m.Namespace)
-		}
-		return fmt.Errorf("package %q exists in multiple namespaces: %v — use domain/repo/namespace/package to disambiguate",
-			coords.Package, namespaces)
-	}
-}
-
 // warnManifestOverrides logs any env var overrides applied to the manifest.
 func warnManifestOverrides(m *manifest.Manifest, out *output.Writer) {
 	for _, o := range m.Overrides {

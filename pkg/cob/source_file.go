@@ -14,7 +14,6 @@ import (
 type FileSource struct {
 	path string
 	uri  string
-	meta *AssetMetadata
 }
 
 // NewFileSource creates a FileSource. The path should already be resolved
@@ -44,11 +43,10 @@ func (f *FileSource) Resolve(_ context.Context) (*AssetMetadata, error) {
 		return nil, fmt.Errorf("hashing %s: %w", f.path, err)
 	}
 
-	f.meta = &AssetMetadata{
+	return &AssetMetadata{
 		Size:   info.Size(),
 		SHA256: hex.EncodeToString(h.Sum(nil)),
-	}
-	return f.meta, nil
+	}, nil
 }
 
 func (f *FileSource) Open(_ context.Context) (io.ReadCloser, error) {

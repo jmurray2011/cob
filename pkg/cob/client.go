@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -14,7 +13,6 @@ import (
 type Client struct {
 	S3           *s3.Client
 	CodeArtifact *codeartifact.Client
-	cfg          aws.Config
 }
 
 // ClientOptions configures how the AWS client is created.
@@ -42,6 +40,5 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 	return &Client{
 		S3:           s3.NewFromConfig(cfg),
 		CodeArtifact: codeartifact.NewFromConfig(cfg),
-		cfg:          cfg,
 	}, nil
 }

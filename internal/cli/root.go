@@ -15,9 +15,9 @@ var (
 // NewRootCmd creates the top-level cob command.
 func NewRootCmd(version string) *cobra.Command {
 	root := &cobra.Command{
-		Use:   "cob",
-		Short: "Assemble CodeArtifact packages from remote sources",
-		Long:  "cob assembles AWS CodeArtifact packages from S3, other CodeArtifact packages, and local files. No local artifacts required.",
+		Use:           "cob",
+		Short:         "Assemble CodeArtifact packages from remote sources",
+		Long:          "cob assembles AWS CodeArtifact packages from S3, other CodeArtifact packages, and local files. No local artifacts required.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {

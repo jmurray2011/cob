@@ -19,9 +19,6 @@ type S3Source struct {
 	bucket string
 	key    string
 	uri    string
-
-	// Populated by Resolve.
-	meta *AssetMetadata
 }
 
 // NewS3Source creates an S3Source from a URI like s3://bucket/key.
@@ -65,7 +62,6 @@ func (s *S3Source) Resolve(ctx context.Context) (*AssetMetadata, error) {
 		meta.SHA256 = hex.EncodeToString(raw)
 	}
 
-	s.meta = meta
 	return meta, nil
 }
 

@@ -92,8 +92,7 @@ func (p *Puller) PullAsset(ctx context.Context, coords *PackageCoordinates, info
 	// Check if already exists with matching hash.
 	if existingHash, err := hashFile(outputPath); err == nil && existingHash == info.SHA256 {
 		result.Method = "skipped"
-		result.Duration = time.Since(start)
-		result.DurationMs = result.Duration.Milliseconds()
+		result.DurationMs = time.Since(start).Milliseconds()
 		return result, nil
 	}
 
@@ -131,8 +130,7 @@ func (p *Puller) PullAsset(ctx context.Context, coords *PackageCoordinates, info
 		return result, fmt.Errorf("writing %s: %w", outputPath, err)
 	}
 
-	result.Duration = time.Since(start)
-	result.DurationMs = result.Duration.Milliseconds()
+	result.DurationMs = time.Since(start).Milliseconds()
 	return result, nil
 }
 

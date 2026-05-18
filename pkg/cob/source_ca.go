@@ -21,8 +21,6 @@ type CASource struct {
 	version   string
 	asset     string
 	uri       string
-
-	meta *AssetMetadata
 }
 
 // NewCASource creates a CASource from a URI like ca://domain/repo/ns/pkg@ver/asset.
@@ -89,7 +87,6 @@ func (c *CASource) Resolve(ctx context.Context) (*AssetMetadata, error) {
 					break
 				}
 			}
-			c.meta = meta
 			return meta, nil
 		}
 	}

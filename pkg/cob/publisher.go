@@ -115,8 +115,7 @@ func (p *Publisher) PublishAsset(ctx context.Context, coords *PackageCoordinates
 		return result, fmt.Errorf("publishing asset %q: %w", name, err)
 	}
 
-	result.Duration = time.Since(start)
-	result.DurationMs = result.Duration.Milliseconds()
+	result.DurationMs = time.Since(start).Milliseconds()
 	return result, nil
 }
 
