@@ -12,7 +12,7 @@ import (
 
 var version = "dev"
 
-func resolveVersion() string {
+func resolveBuildVersion() string {
 	if version != "dev" {
 		return version
 	}
@@ -23,7 +23,7 @@ func resolveVersion() string {
 }
 
 func main() {
-	root := cli.NewRootCmd(resolveVersion())
+	root := cli.NewRootCmd(resolveBuildVersion())
 	if err := root.Execute(); err != nil {
 		// ExitError already had its message emitted by the command layer;
 		// just carry the code out. Anything else is unexpected — print it.
