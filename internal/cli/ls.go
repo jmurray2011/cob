@@ -33,6 +33,64 @@ func newLsCmd() *cobra.Command {
 	return cmd
 }
 
+// lsKind is the kind of listing a parsed ls target requests.
+type lsKind int
+
+const (
+	lsKindDomains lsKind = iota
+	lsKindRepos
+	lsKindPackages
+	lsKindVersions
+	lsKindAssets
+	lsKindPromotion
+)
+
+// classifyLs maps a parsed target to the listing it requests. It does no
+// I/O, so it is unit-testable in isolation. The precedence below is the one
+// ls has always used and must not change:
+//
+//	(no target)                     -> domains
+//	domain                          -> repos      (before wildcard rules, so
+//	                                                `ls acme --all-repos`
+//	                                                still lists repos)
+//	domain/* | --all-repos (full)   -> promotion status
+//	domain/repo                     -> packages
+//	domain/repo/ns/pkg              -> versions
+//	domain/repo/ns/pkg@version      -> assets
+//
+// A non-empty second return value is a user-facing validation message for an
+// invalid flag/coordinate combination; the caller turns it into an error.
+func classifyLs(coords *cob.PackageCoordinates, target string, allRepos bool) (lsKind, string) {
+	if target == "" {
+		return lsKindDomains, ""
+	}
+	// domain only (single segment). Checked before the wildcard rules so
+	// `cob ls acme --all-repos` still lists repositories.
+	if coords.Repository == "" && coords.Namespace == "" {
+		return lsKindRepos, ""
+	}
+
+	wildcard := coords.Repository == "*" || allRepos
+	full := coords.Namespace != "" && coords.Package != ""
+
+	if wildcard && coords.Namespace == "" {
+		return 0, "--all-repos requires full coordinates (domain/*/namespace/package@version)"
+	}
+	if coords.Repository == "*" || (allRepos && full) {
+		if coords.Version == "" {
+			return 0, "version is required for wildcard repo listing (use domain/*/ns/pkg@version or @latest)"
+		}
+		return lsKindPromotion, ""
+	}
+	if coords.Namespace == "" && coords.Package == "" {
+		return lsKindPackages, ""
+	}
+	if coords.Version == "" {
+		return lsKindVersions, ""
+	}
+	return lsKindAssets, ""
+}
+
 func runLs(ctx context.Context, target string, allRepos bool) error {
 	out := output.New(flagJSON)
 
@@ -43,78 +101,68 @@ func runLs(ctx context.Context, target string, allRepos bool) error {
 	if err != nil {
 		return fail(out, "ls", cob.ExitError, "%s", err)
 	}
-
 	registry := cob.NewRegistry(client)
 
-	// No argument -> list domains.
-	if target == "" {
-		return runLsDomains(ctx, registry, out)
-	}
-
-	coords, err := manifest.ParseCoordinates(target)
-	if err != nil {
-		return fail(out, "ls", cob.ExitError, "%s", err)
-	}
-
-	// domain only -> list repositories in that domain.
-	if coords.Repository == "" && coords.Namespace == "" {
-		return runLsRepos(ctx, registry, coords.Domain, out)
-	}
-
-	// Handle wildcard repo for promotion status.
-	// Only valid with full coordinates (domain/repo/ns/pkg), not domain/repo.
-	if (coords.Repository == "*" || allRepos) && coords.Namespace == "" {
-		return fail(out, "ls", cob.ExitError, "--all-repos requires full coordinates (domain/*/namespace/package@version)")
-	}
-	if coords.Repository == "*" || (allRepos && coords.Namespace != "" && coords.Package != "") {
-		if coords.Version == "" {
-			return fail(out, "ls", cob.ExitError, "version is required for wildcard repo listing (use domain/*/ns/pkg@version or @latest)")
+	var coords *cob.PackageCoordinates
+	if target != "" {
+		coords, err = manifest.ParseCoordinates(target)
+		if err != nil {
+			return fail(out, "ls", cob.ExitError, "%s", err)
 		}
-		// Resolve @latest by trying each repo in the domain until one has the package.
-		if coords.Version == "latest" {
-			repos, err := registry.ListRepositories(ctx, coords.Domain)
-			if err != nil || len(repos) == 0 {
-				return fail(out, "ls", cob.ExitNotFound, "cannot resolve @latest: no repositories found in %s", coords.Domain)
-			}
-			var resolved bool
-			for _, repo := range repos {
-				resolveCoords := *coords
-				resolveCoords.Repository = repo
-				version, err := registry.ResolveLatest(ctx, &resolveCoords)
-				if err == nil {
-					coords.Version = version
-					resolved = true
-					out.Header("Resolved latest -> %s (from %s)", version, repo)
-					break
-				}
-			}
-			if !resolved {
-				return fail(out, "ls", cob.ExitNotFound, "no published versions of %s/%s found in any repository in %s",
-					coords.Namespace, coords.Package, coords.Domain)
-			}
+	}
+
+	kind, invalid := classifyLs(coords, target, allRepos)
+	if invalid != "" {
+		return fail(out, "ls", cob.ExitError, "%s", invalid)
+	}
+
+	switch kind {
+	case lsKindDomains:
+		return runLsDomains(ctx, registry, out)
+	case lsKindRepos:
+		return runLsRepos(ctx, registry, coords.Domain, out)
+	case lsKindPackages:
+		return runLsPackages(ctx, registry, coords, out)
+	case lsKindPromotion:
+		if err := resolvePromotionLatest(ctx, registry, coords, out); err != nil {
+			return err
 		}
 		return runLsPromotionStatus(ctx, registry, coords, out)
+	case lsKindVersions:
+		return runLsVersions(ctx, registry, coords, out)
+	default: // lsKindAssets
+		if coords.Version == "latest" {
+			if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
+				return fail(out, "ls", cob.ExitNotFound, "%s", err)
+			}
+		}
+		return runLsAssets(ctx, registry, coords, out)
 	}
+}
 
-	// domain/repo only -> list packages
-	if coords.Namespace == "" && coords.Package == "" {
-		return runLsPackages(ctx, registry, coords, out)
+// resolvePromotionLatest resolves @latest for a wildcard / --all-repos
+// promotion listing by probing each repository in the domain until one has
+// the package, then pinning coords.Version. A non-latest version is left
+// untouched.
+func resolvePromotionLatest(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {
+	if coords.Version != "latest" {
+		return nil
 	}
-
-	// Resolve @latest for version-specific operations.
-	if coords.Version == "latest" {
-		if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-			return fail(out, "ls", cob.ExitNotFound, "%s", err)
+	repos, err := registry.ListRepositories(ctx, coords.Domain)
+	if err != nil || len(repos) == 0 {
+		return fail(out, "ls", cob.ExitNotFound, "cannot resolve @latest: no repositories found in %s", coords.Domain)
+	}
+	for _, repo := range repos {
+		probe := *coords
+		probe.Repository = repo
+		if version, err := registry.ResolveLatest(ctx, &probe); err == nil {
+			coords.Version = version
+			out.Header("Resolved latest -> %s (from %s)", version, repo)
+			return nil
 		}
 	}
-
-	// domain/repo/ns/pkg without version -> list versions
-	if coords.Version == "" {
-		return runLsVersions(ctx, registry, coords, out)
-	}
-
-	// domain/repo/ns/pkg@version -> list assets
-	return runLsAssets(ctx, registry, coords, out)
+	return fail(out, "ls", cob.ExitNotFound, "no published versions of %s/%s found in any repository in %s",
+		coords.Namespace, coords.Package, coords.Domain)
 }
 
 func runLsPackages(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {
