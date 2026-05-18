@@ -9,6 +9,7 @@ import (
 	"io"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -119,4 +120,32 @@ func (s *S3Source) Open(ctx context.Context) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("GetObject %s: %w", s.uri, err)
 	}
 	return out.Body, nil
+}
+
+func (s *S3Source) Origin(ctx context.Context) (*Origin, error) {
+	in := &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.key)}
+	head, err := s.client.HeadObject(ctx, in)
+	if err != nil && s.correctRegion(err) {
+		head, err = s.client.HeadObject(ctx, in)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("HeadObject %s: %w", s.uri, err)
+	}
+	vid := aws.ToString(head.VersionId)
+	versioned := vid != "" && vid != "null"
+	o := &Origin{
+		Type:      "s3",
+		Bucket:    s.bucket,
+		Key:       s.key,
+		ETag:      strings.Trim(aws.ToString(head.ETag), `"`),
+		Region:    s.client.Options().Region,
+		Versioned: &versioned,
+	}
+	if versioned {
+		o.VersionID = vid
+	}
+	if head.LastModified != nil {
+		o.LastModified = head.LastModified.UTC().Format(time.RFC3339)
+	}
+	return o, nil
 }

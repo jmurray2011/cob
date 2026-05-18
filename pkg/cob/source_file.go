@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // FileSource reads an asset from the local filesystem.
@@ -55,4 +56,12 @@ func (f *FileSource) Open(_ context.Context) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("opening %s: %w", f.path, err)
 	}
 	return file, nil
+}
+
+func (f *FileSource) Origin(_ context.Context) (*Origin, error) {
+	o := &Origin{Type: "file", Path: f.path}
+	if info, err := os.Stat(f.path); err == nil {
+		o.Mtime = info.ModTime().UTC().Format(time.RFC3339)
+	}
+	return o, nil
 }

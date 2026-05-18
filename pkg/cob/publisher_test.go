@@ -26,6 +26,7 @@ func (s stubSource) Resolve(context.Context) (*AssetMetadata, error) { return s.
 func (s stubSource) Open(context.Context) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(s.body)), nil
 }
+func (s stubSource) Origin(context.Context) (*Origin, error) { return nil, nil }
 
 func TestPublishAssetUsesFilenameNotManifestKey(t *testing.T) {
 	var captured *codeartifact.PublishPackageVersionInput

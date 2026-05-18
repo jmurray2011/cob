@@ -34,4 +34,10 @@ type AssetSource interface {
 	// requires an io.ReadSeeker. When Resolve returned a SHA256, the caller
 	// can skip re-hashing the buffer.
 	Open(ctx context.Context) (io.ReadCloser, error)
+
+	// Origin pins where the asset physically came from at packaging time
+	// (S3 object version/etag, recursive ca:// provenance, or local path +
+	// mtime), for the provenance chain-of-evidence. Best-effort: callers
+	// treat an error as "origin unknown", not a publish failure.
+	Origin(ctx context.Context) (*Origin, error)
 }

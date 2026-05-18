@@ -13,36 +13,92 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 )
 
-// ProvenanceFile is the well-known asset name cob writes into every
-// published version. It records what each manifest source resolved to and
-// the SHA-256 cob computed while streaming it, so verify/diff can work
-// without re-reading S3 (and even when the S3 object has no checksum).
+// ProvenanceFile is the well-known asset cob writes into every published
+// version: a chain-of-evidence document recording who published/promoted it
+// and where each file came from, so verify/diff work without re-reading S3.
 const ProvenanceFile = "cob-provenance.json"
 
 // ProvenanceSchema is the current cob_provenance schema version.
-const ProvenanceSchema = 1
+const ProvenanceSchema = 2
 
-// Provenance is the cob-provenance.json document.
+// Upstream status values for a ca:// origin.
+const (
+	UpstreamEmbedded = "embedded"          // upstream cob-provenance.json inlined
+	UpstreamNoProv   = "no-cob-provenance" // upstream exists but not cob-published
+	UpstreamMissing  = "missing"           // recorded coords no longer resolve (re-check time)
+)
+
+// Provenance is the cob-provenance.json document. assets is invariant across
+// promotes (the same bytes move); chain is an append-only evidence log.
 type Provenance struct {
-	Schema     int               `json:"cob_provenance"`
-	Package    string            `json:"package"`
-	Repository string            `json:"repository"`
-	Version    string            `json:"version"`
-	Published  string            `json:"published"`
-	CobVersion string            `json:"cob_version,omitempty"`
-	Assets     []ProvenanceEntry `json:"assets"`
+	Schema  int               `json:"cob_provenance"`
+	Package string            `json:"package"`
+	Assets  []ProvenanceEntry `json:"assets"`
+	Chain   []ProvenanceEvent `json:"chain"`
 }
 
 // ProvenanceEntry is one manifest source as published.
 type ProvenanceEntry struct {
-	Key    string `json:"key"`    // manifest YAML key
-	Source string `json:"source"` // resolved source URI
-	Asset  string `json:"asset"`  // stored CodeArtifact asset name
-	SHA256 string `json:"sha256"`
-	Size   int64  `json:"size"`
+	Key    string  `json:"key"`    // manifest YAML key
+	Source string  `json:"source"` // resolved source URI
+	Asset  string  `json:"asset"`  // stored CodeArtifact asset name
+	SHA256 string  `json:"sha256"`
+	Size   int64   `json:"size"`
+	Origin *Origin `json:"origin,omitempty"` // where the file physically came from
 }
 
-// SHAByAsset indexes the recorded SHA-256 by stored asset name.
+// Actor is the AWS principal that performed a chain event (STS identity).
+type Actor struct {
+	Account string `json:"account,omitempty"`
+	ARN     string `json:"arn,omitempty"`
+	UserID  string `json:"user_id,omitempty"`
+}
+
+// ProvenanceEvent is one link in the chain: a publish or a promote.
+type ProvenanceEvent struct {
+	Event          string `json:"event"`                // "publish" | "promote"
+	Repository     string `json:"repository,omitempty"` // publish: domain/repo
+	Version        string `json:"version,omitempty"`    // publish
+	From           string `json:"from,omitempty"`       // promote: domain/repo
+	To             string `json:"to,omitempty"`         // promote: domain/repo
+	Time           string `json:"time"`
+	CobVersion     string `json:"cob_version,omitempty"`
+	Region         string `json:"region,omitempty"`
+	ManifestSHA256 string `json:"manifest_sha256,omitempty"` // publish only
+	Actor          Actor  `json:"actor"`
+}
+
+// Origin pins where one asset physically came from at packaging time.
+// Type is "s3", "ca", or "file"; only the matching fields are populated.
+type Origin struct {
+	Type string `json:"type"`
+
+	// s3
+	Bucket       string `json:"bucket,omitempty"`
+	Key          string `json:"key,omitempty"`
+	VersionID    string `json:"version_id,omitempty"`
+	ETag         string `json:"etag,omitempty"`
+	LastModified string `json:"last_modified,omitempty"`
+	Region       string `json:"region,omitempty"`
+	Versioned    *bool  `json:"versioned,omitempty"`
+
+	// ca (recursive: upstream's own provenance, frozen at our publish time)
+	Domain             string      `json:"domain,omitempty"`
+	CARepository       string      `json:"ca_repository,omitempty"`
+	Namespace          string      `json:"namespace,omitempty"`
+	Package            string      `json:"package,omitempty"`
+	CAVersion          string      `json:"ca_version,omitempty"`
+	CAAsset            string      `json:"ca_asset,omitempty"`
+	UpstreamStatus     string      `json:"upstream_status,omitempty"`
+	UpstreamProvenance *Provenance `json:"upstream_provenance,omitempty"`
+
+	// file
+	Path  string `json:"path,omitempty"`
+	Mtime string `json:"mtime,omitempty"`
+}
+
+// SHAByAsset indexes the recorded SHA-256 by stored asset name. Field name
+// is stable across schema versions, so this also works on v1 documents.
 func (p *Provenance) SHAByAsset() map[string]string {
 	m := make(map[string]string, len(p.Assets))
 	for _, a := range p.Assets {
@@ -51,25 +107,35 @@ func (p *Provenance) SHAByAsset() map[string]string {
 	return m
 }
 
-// Marshal renders the provenance document as indented JSON.
+// OriginByAsset indexes the recorded Origin by stored asset name.
+func (p *Provenance) OriginByAsset() map[string]*Origin {
+	m := make(map[string]*Origin, len(p.Assets))
+	for _, a := range p.Assets {
+		if a.Origin != nil {
+			m[a.Asset] = a.Origin
+		}
+	}
+	return m
+}
+
+// Marshal renders the document as indented JSON, stamping the schema.
 func (p *Provenance) Marshal() []byte {
 	p.Schema = ProvenanceSchema
-	if p.Published == "" {
-		p.Published = time.Now().UTC().Format(time.RFC3339)
-	}
 	b, _ := json.MarshalIndent(p, "", "  ")
 	return append(b, '\n')
 }
 
-// bytesSource is an in-memory AssetSource, used to publish the generated
+// NowStamp is the RFC3339 UTC timestamp used for chain events.
+func NowStamp() string { return time.Now().UTC().Format(time.RFC3339) }
+
+// bytesSource is an in-memory AssetSource used to publish the generated
 // provenance document through the normal publish path.
 type bytesSource struct {
 	name string
 	data []byte
 }
 
-// NewBytesSource creates an AssetSource backed by an in-memory buffer whose
-// stored asset name is name.
+// NewBytesSource creates an AssetSource backed by an in-memory buffer.
 func NewBytesSource(name string, data []byte) AssetSource {
 	return &bytesSource{name: name, data: data}
 }
@@ -86,9 +152,13 @@ func (b *bytesSource) Open(context.Context) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(b.data)), nil
 }
 
+// Origin is nil for the provenance asset itself — it is cob's own output,
+// never a manifest source whose origin we record.
+func (b *bytesSource) Origin(context.Context) (*Origin, error) { return nil, nil }
+
 // FetchProvenance reads and parses the cob-provenance.json asset for a
-// version. It returns (nil, nil) when the version has no provenance asset
-// (e.g. it was published by an older cob), so callers can fall back.
+// version. Returns (nil, nil) when the version has no provenance asset (an
+// older cob or a non-cob publisher), so callers can fall back.
 func FetchProvenance(ctx context.Context, ca CodeArtifactAPI, coords *PackageCoordinates) (*Provenance, error) {
 	out, err := ca.GetPackageVersionAsset(ctx, &codeartifact.GetPackageVersionAssetInput{
 		Domain:         aws.String(coords.Domain),

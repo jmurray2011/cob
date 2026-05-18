@@ -113,3 +113,31 @@ func (c *CASource) Open(ctx context.Context) (io.ReadCloser, error) {
 	}
 	return out.Asset, nil
 }
+
+func (c *CASource) Origin(ctx context.Context) (*Origin, error) {
+	o := &Origin{
+		Type:         "ca",
+		Domain:       c.domain,
+		CARepository: c.repo,
+		Namespace:    c.namespace,
+		Package:      c.pkg,
+		CAVersion:    c.version,
+		CAAsset:      c.asset,
+	}
+	// Embed the upstream's own (already-complete) provenance. One fetch per
+	// direct ca:// source; deep history rides along inside it. An upstream
+	// without provenance (non-cob / pre-provenance publisher) is recorded
+	// honestly rather than treated as an error.
+	up, err := FetchProvenance(ctx, c.client, &PackageCoordinates{
+		Domain: c.domain, Repository: c.repo, Namespace: c.namespace,
+		Package: c.pkg, Version: c.version,
+	})
+	switch {
+	case err == nil && up != nil:
+		o.UpstreamStatus = UpstreamEmbedded
+		o.UpstreamProvenance = up
+	default:
+		o.UpstreamStatus = UpstreamNoProv
+	}
+	return o, nil
+}
