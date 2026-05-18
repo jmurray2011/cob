@@ -2,7 +2,7 @@
 
 Assemble AWS CodeArtifact packages from remote sources. No local artifacts required.
 
-cob reads a YAML manifest that declares what goes into a package by pointing at S3 objects, other CodeArtifact packages, or local files. Assets flow from source to CodeArtifact through memory -- they never touch disk.
+cob reads a YAML manifest that declares what goes into a package by pointing at S3 objects, other CodeArtifact packages, or local files. Assets stream from source to CodeArtifact in constant memory -- no size limit, and the full asset is never held in RAM (it spills through a transient temp file; see Known limitations).
 
 ## Install
 

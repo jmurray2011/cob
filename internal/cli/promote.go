@@ -25,7 +25,7 @@ func newPromoteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "promote <manifest|coordinates>",
 		Short: "Copy a package version between repositories",
-		Long:  "Copies a package version from one repo to another, streaming through memory.",
+		Long:  "Copies a package version from one repo to another, streaming in constant memory (via a temp file).",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPromote(cmd.Context(), args[0], flagVersion, flagTo, flagForce, flagYes, flagConcurrency)
