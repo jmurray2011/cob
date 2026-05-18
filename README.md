@@ -157,11 +157,23 @@ Flags: `--version` (optional)
 
 ### verify
 
-Checks that a published version matches the manifest's sources by SHA-256.
-No mutation. Exits non-zero on any mismatch or missing asset. A CI gate for
-reproducible builds.
+Checks a published version's integrity. No mutation; exits non-zero on any
+mismatch. Takes a manifest **or** compact coordinates.
 
-Each source is checked by this precedence, cheapest first:
+**Coordinates (no manifest)** -- self-verifies a version against its own
+recorded `cob-provenance.json`: every recorded asset must still hash to what
+was recorded, and the chain of evidence (who published/promoted it, where
+each file came from, recursing through `ca://`) is printed. Audit a version
+you didn't build, with nothing but its coordinates:
+
+```bash
+cob verify my-domain/dev/my-namespace/my-package@2.1.0
+cob verify my-domain/dev/my-namespace/my-package@latest
+```
+
+**Manifest** -- compares each manifest source's SHA-256 against the
+published assets. A CI gate for reproducible builds. Each source is checked
+by this precedence, cheapest first:
 
 1. a **known checksum** -- S3 object with `--checksum-algorithm SHA256`,
    a `ca://` source, or a local file (no download);
