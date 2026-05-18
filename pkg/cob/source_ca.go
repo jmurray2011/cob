@@ -27,21 +27,25 @@ type CASource struct {
 func NewCASource(client *codeartifact.Client, uri string) (*CASource, error) {
 	trimmed := strings.TrimPrefix(uri, "ca://")
 
-	// Split off the asset name (last segment after the version).
-	// Format: domain/repo/namespace/package@version/asset
-	parts := strings.Split(trimmed, "/")
-	if len(parts) != 5 {
+	// domain / repo / namespace / package@version / asset...
+	// The asset is everything after the version and may itself contain
+	// slashes — CodeArtifact generic asset names are path-like — so cap the
+	// split at 5 fields and treat the remainder as the asset name.
+	parts := strings.SplitN(trimmed, "/", 5)
+	if len(parts) < 5 || parts[4] == "" {
 		return nil, fmt.Errorf("invalid CodeArtifact URI %q: expected ca://domain/repo/namespace/package@version/asset", uri)
 	}
 
-	// Parse package@version from parts[3]
 	pkgVer := parts[3]
 	at := strings.LastIndex(pkgVer, "@")
 	if at < 0 {
 		return nil, fmt.Errorf("invalid CodeArtifact URI %q: missing @version", uri)
 	}
-
+	pkg := pkgVer[:at]
 	version := pkgVer[at+1:]
+	if pkg == "" || version == "" {
+		return nil, fmt.Errorf("invalid CodeArtifact URI %q: empty package or version", uri)
+	}
 	if version == "latest" {
 		return nil, fmt.Errorf("invalid CodeArtifact URI %q: @latest is not supported in source URIs (use ${VERSION} instead)", uri)
 	}
@@ -51,8 +55,8 @@ func NewCASource(client *codeartifact.Client, uri string) (*CASource, error) {
 		domain:    parts[0],
 		repo:      parts[1],
 		namespace: parts[2],
-		pkg:       pkgVer[:at],
-		version:   pkgVer[at+1:],
+		pkg:       pkg,
+		version:   version,
 		asset:     parts[4],
 		uri:       uri,
 	}, nil
