@@ -12,25 +12,31 @@ import (
 )
 
 func newVerifyCmd() *cobra.Command {
-	var flagVersion string
+	var (
+		flagVersion string
+		flagDeep    bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "verify <manifest>",
 		Short: "Check a published version matches the manifest's sources",
 		Long: "Compares each manifest source's SHA-256 against the published " +
-			"version's assets. No asset is downloaded (S3 HeadObject / ca:// " +
-			"listing / local hash only). Exits non-zero on any mismatch or " +
-			"missing asset. A good CI gate for reproducible builds.",
+			"version's assets. No mutation. Source hash precedence: a known " +
+			"checksum (S3 SHA-256 / ca:// / local) → the version's recorded " +
+			"cob-provenance.json → (with --deep) downloading and hashing the " +
+			"source. Exits non-zero on any mismatch or missing asset. A good " +
+			"CI gate for reproducible builds.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runVerify(cmd.Context(), args[0], flagVersion)
+			return runVerify(cmd.Context(), args[0], flagVersion, flagDeep)
 		},
 	}
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Package version (required, or set COB_VERSION)")
+	cmd.Flags().BoolVar(&flagDeep, "deep", false, "Download and hash sources lacking a checksum (no S3 writes)")
 	return cmd
 }
 
-func runVerify(ctx context.Context, manifestPath, versionFlag string) error {
+func runVerify(ctx context.Context, manifestPath, versionFlag string, deep bool) error {
 	out := output.New(flagJSON)
 
 	version, err := resolveVersion(versionFlag)
@@ -60,7 +66,8 @@ func runVerify(ctx context.Context, manifestPath, versionFlag string) error {
 		return fail(out, "verify", cob.ExitError, "%s", err)
 	}
 
-	cmps, err := compareManifestToPublished(ctx, sources, cob.NewRegistry(client), coords)
+	prov, _ := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
+	cmps, err := compareManifestToPublished(ctx, sources, cob.NewRegistry(client), coords, deep, prov)
 	if err != nil {
 		return fail(out, "verify", cob.ExitNotFound, "%s", err)
 	}
@@ -93,9 +100,9 @@ func runVerify(ctx context.Context, manifestPath, versionFlag string) error {
 		case c.SrcSHA == "":
 			unverified++
 			ar.Method = "unverified"
-			out.AssetSkipped(c.Name + " (no source checksum; needs download to verify)")
+			out.AssetSkipped(c.Name + " (no checksum/provenance; use --deep to hash)")
 		case c.SrcSHA == c.PubSHA:
-			ar.Method = "match"
+			ar.Method = "match(" + c.SrcFrom + ")"
 			out.AssetOK(&ar, c.Source)
 		default:
 			failures++
@@ -110,7 +117,7 @@ func runVerify(ctx context.Context, manifestPath, versionFlag string) error {
 		out.Warn("%d published asset(s) not declared in the manifest", extra)
 	}
 	if unverified > 0 {
-		out.Warn("%d source(s) unverified (no checksum without downloading)", unverified)
+		out.Warn("%d source(s) unverified (no checksum or provenance; pass --deep to hash)", unverified)
 	}
 
 	if failures > 0 {

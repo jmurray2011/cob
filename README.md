@@ -158,30 +158,53 @@ Flags: `--version` (optional)
 ### verify
 
 Checks that a published version matches the manifest's sources by SHA-256.
-No asset is downloaded (S3 `HeadObject` / `ca://` listing / local hash
-only). Exits non-zero on any mismatch or missing asset. A CI gate for
-reproducible builds. Sources with no obtainable checksum (an S3 object
-published without `--checksum-algorithm SHA256`) are reported as
-*unverified* rather than failing.
+No mutation. Exits non-zero on any mismatch or missing asset. A CI gate for
+reproducible builds.
+
+Each source's SHA-256 is obtained by this precedence, cheapest first:
+
+1. a **known checksum** -- S3 object with `--checksum-algorithm SHA256`,
+   a `ca://` source, or a local file (no download);
+2. the version's recorded **`cob-provenance.json`** (see below) -- works
+   even for S3 objects with no checksum, no download;
+3. with **`--deep`**, cob downloads and hashes the source (no S3 writes).
+
+Only sources with none of the above are reported *unverified* (pass
+`--deep` to force a real hash). The match line shows the basis, e.g.
+`match(source)`, `match(provenance)`, `match(deep)`.
 
 ```bash
 cob verify my-package.yaml --version 2.1.0
+cob verify my-package.yaml --version 2.1.0 --deep   # download+hash unchecksummed sources
 ```
 
-Flags: `--version` (required, or `COB_VERSION`)
+Flags: `--version` (required, or `COB_VERSION`), `--deep`
 
 ### diff
 
 Shows how the manifest differs from a published version: added (`+`),
-removed (`-`), changed (`~`). No asset is downloaded. Exits `1` on any
+removed (`-`), changed (`~`). Uses the same source-hash precedence as
+`verify` (known checksum → provenance → `--deep`). Exits `1` on any
 drift, `0` when identical -- like `diff(1)`. Run before `publish --force`
 to see exactly what would change.
 
 ```bash
 cob diff my-package.yaml --version 2.1.0
+cob diff my-package.yaml --version 2.1.0 --deep
 ```
 
-Flags: `--version` (required, or `COB_VERSION`)
+Flags: `--version` (required, or `COB_VERSION`), `--deep`
+
+### Provenance
+
+Every `cob publish` writes one extra asset, **`cob-provenance.json`**,
+recording each manifest source's resolved URI and the SHA-256 cob computed
+while streaming it. It is published last and finalizes the version. This
+lets `verify`/`diff` confirm a version without re-reading S3 -- crucially,
+even when the S3 objects were uploaded without a checksum. `promote`
+carries it along like any other asset. It will appear in `cob ls <pkg>@ver`
+and be fetched by `cob pull`; it is excluded from `verify`'s
+"not in manifest" reporting.
 
 ### Parallel transfers
 

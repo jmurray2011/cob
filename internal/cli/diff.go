@@ -12,25 +12,30 @@ import (
 )
 
 func newDiffCmd() *cobra.Command {
-	var flagVersion string
+	var (
+		flagVersion string
+		flagDeep    bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "diff <manifest>",
 		Short: "Show how the manifest differs from a published version",
 		Long: "Compares the manifest's sources against a published version and " +
-			"reports added / removed / changed assets. No asset is downloaded. " +
-			"Exits 1 when there is any drift (like `diff`), 0 when identical. " +
-			"Run before `publish --force` to see exactly what would change.",
+			"reports added / removed / changed assets. Source hash precedence: " +
+			"known checksum → recorded cob-provenance.json → (with --deep) " +
+			"download+hash. Exits 1 on any drift (like `diff`), 0 when " +
+			"identical. Run before `publish --force` to see what would change.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDiff(cmd.Context(), args[0], flagVersion)
+			return runDiff(cmd.Context(), args[0], flagVersion, flagDeep)
 		},
 	}
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Package version (required, or set COB_VERSION)")
+	cmd.Flags().BoolVar(&flagDeep, "deep", false, "Download and hash sources lacking a checksum (no S3 writes)")
 	return cmd
 }
 
-func runDiff(ctx context.Context, manifestPath, versionFlag string) error {
+func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) error {
 	out := output.New(flagJSON)
 
 	version, err := resolveVersion(versionFlag)
@@ -60,7 +65,8 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string) error {
 		return fail(out, "diff", cob.ExitError, "%s", err)
 	}
 
-	cmps, err := compareManifestToPublished(ctx, sources, cob.NewRegistry(client), coords)
+	prov, _ := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
+	cmps, err := compareManifestToPublished(ctx, sources, cob.NewRegistry(client), coords, deep, prov)
 	if err != nil {
 		return fail(out, "diff", cob.ExitNotFound, "%s", err)
 	}
