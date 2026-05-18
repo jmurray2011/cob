@@ -12,7 +12,7 @@ import (
 // Client wraps AWS SDK clients for S3 and CodeArtifact.
 type Client struct {
 	S3           *s3.Client
-	CodeArtifact *codeartifact.Client
+	CodeArtifact CodeArtifactAPI
 }
 
 // ClientOptions configures how the AWS client is created.

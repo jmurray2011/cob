@@ -13,7 +13,7 @@ import (
 // CASource reads an asset from another CodeArtifact package.
 // URI format: ca://domain/repo/namespace/package@version/asset-name
 type CASource struct {
-	client    *codeartifact.Client
+	client    CodeArtifactAPI
 	domain    string
 	repo      string
 	namespace string
@@ -24,7 +24,7 @@ type CASource struct {
 }
 
 // NewCASource creates a CASource from a URI like ca://domain/repo/ns/pkg@ver/asset.
-func NewCASource(client *codeartifact.Client, uri string) (*CASource, error) {
+func NewCASource(client CodeArtifactAPI, uri string) (*CASource, error) {
 	trimmed := strings.TrimPrefix(uri, "ca://")
 
 	// domain / repo / namespace / package@version / asset...

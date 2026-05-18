@@ -22,12 +22,20 @@ type Writer struct {
 // New creates a Writer. If jsonMode is true, output is JSON.
 // Otherwise it auto-detects TTY for human-friendly output.
 func New(jsonMode bool) *Writer {
-	isTTY := isTerminal(os.Stdout)
+	w := NewWithWriters(os.Stdout, os.Stderr, jsonMode)
+	w.isTTY = isTerminal(os.Stdout)
+	return w
+}
+
+// NewWithWriters builds a Writer with explicit destinations. Used by tests
+// to capture stdout/stderr; isTTY is forced false so formatting is
+// deterministic regardless of the test environment.
+func NewWithWriters(out, errOut io.Writer, jsonMode bool) *Writer {
 	return &Writer{
-		out:    os.Stdout,
-		errOut: os.Stderr,
+		out:    out,
+		errOut: errOut,
 		json:   jsonMode,
-		isTTY:  isTTY,
+		isTTY:  false,
 	}
 }
 
