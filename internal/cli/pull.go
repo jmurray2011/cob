@@ -182,6 +182,13 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 	result.DurationMs = time.Since(start).Milliseconds()
 	out.Summary("Pulled %d assets to %s", len(result.Assets), outputPath)
 
+	// A failed asset must surface as a non-zero exit (a CI step that does
+	// `cob pull && deploy` otherwise deploys with missing/partial assets).
+	// JSON is still emitted so pipelines can parse the partial result.
+	if result.Status == "error" {
+		out.CommandResult(result)
+		return &ExitError{Code: cob.ExitError}
+	}
 	return out.CommandResult(result)
 }
 
