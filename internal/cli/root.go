@@ -49,6 +49,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newResolveCmd(),
 		newValidateCmd(),
 		newVerifyCmd(),
+		newDiffCmd(),
 	)
 
 	root.Version = version

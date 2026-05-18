@@ -150,6 +150,16 @@ func (w *Writer) flush() {
 	}
 }
 
+// Plain prints a formatted line to stdout (non-JSON mode only). For ad-hoc
+// human output that is neither an asset transfer line nor a summary.
+func (w *Writer) Plain(format string, args ...any) {
+	if w.json {
+		return
+	}
+	fmt.Fprintf(w.out, format+"\n", args...)
+	w.flush()
+}
+
 // Summary prints the final summary line.
 func (w *Writer) Summary(format string, args ...any) {
 	if !w.json {
