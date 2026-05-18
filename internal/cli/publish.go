@@ -126,11 +126,14 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		Status:     "ok",
 	}
 
-	results, _, ok := runFinalizeProtocol(len(sources), concurrency,
-		func(i int, unfinished bool) (*cob.AssetResult, error) {
+	// Real sources publish concurrently as Unfinished; the provenance
+	// document is published last with unfinished=false, which both records
+	// what was published and flips the version to Published.
+	results, _, ok := runConcurrent(len(sources), concurrency,
+		func(i int) (*cob.AssetResult, error) {
 			ns := sources[i]
 			out.AssetStart(ns.Name, ns.Source.URI(), 0)
-			ar, err := publisher.PublishAsset(ctx, coords, ns.Name, ns.Source, unfinished)
+			ar, err := publisher.PublishAsset(ctx, coords, ns.Name, ns.Source, true)
 			if err != nil {
 				out.AssetFail(ns.Name, ns.Source.URI(), err)
 				return ar, err
@@ -145,9 +148,9 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 			result.TotalSize += r.Size
 		}
 	}
-	result.DurationMs = time.Since(start).Milliseconds()
 
 	if !ok {
+		result.DurationMs = time.Since(start).Milliseconds()
 		result.Status = "error"
 		result.Error = firstResultError(results)
 		out.Error("%s\n  Published %d of %d assets. Version is in unfinished state.\n  Re-run with --force to delete and retry.",
@@ -155,6 +158,39 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		out.CommandResult(result)
 		return &ExitError{Code: cob.ExitError}
 	}
+
+	// Build + publish provenance (the finalizer).
+	prov := &cob.Provenance{
+		Package:    fmt.Sprintf("%s/%s", m.Namespace, m.Package),
+		Repository: fmt.Sprintf("%s/%s", m.Domain, m.Repository),
+		Version:    version,
+		CobVersion: buildVersion,
+	}
+	for i, ns := range sources {
+		prov.Assets = append(prov.Assets, cob.ProvenanceEntry{
+			Key:    ns.Name,
+			Source: ns.Source.URI(),
+			Asset:  ns.Source.Filename(),
+			SHA256: results[i].SHA256,
+			Size:   results[i].Size,
+		})
+	}
+	provSrc := cob.NewBytesSource(cob.ProvenanceFile, prov.Marshal())
+	out.AssetStart(cob.ProvenanceFile, "", 0)
+	par, err := publisher.PublishAsset(ctx, coords, cob.ProvenanceFile, provSrc, false)
+	if err != nil {
+		out.AssetFail(cob.ProvenanceFile, "", err)
+		result.DurationMs = time.Since(start).Milliseconds()
+		result.Status = "error"
+		result.Error = err.Error()
+		out.Error("%s\n  Assets published but provenance/finalize failed. Version is in unfinished state.\n  Re-run with --force to delete and retry.", err)
+		out.CommandResult(result)
+		return &ExitError{Code: cob.ExitError}
+	}
+	out.AssetOK(par, "")
+	result.Assets = append(result.Assets, *par)
+	result.TotalSize += par.Size
+	result.DurationMs = time.Since(start).Milliseconds()
 
 	out.Summary("Published %d assets (%s) in %s",
 		len(result.Assets), output.FormatSize(result.TotalSize), output.FormatDuration(result.DurationMs))

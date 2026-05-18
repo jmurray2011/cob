@@ -10,10 +10,14 @@ var (
 	flagProfile string
 	flagRegion  string
 	flagJSON    bool
+
+	// buildVersion is the cob version, recorded in provenance documents.
+	buildVersion string
 )
 
 // NewRootCmd creates the top-level cob command.
 func NewRootCmd(version string) *cobra.Command {
+	buildVersion = version
 	root := &cobra.Command{
 		Use:           "cob",
 		Short:         "Assemble CodeArtifact packages from remote sources",
