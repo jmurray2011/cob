@@ -63,23 +63,39 @@ func runManifest(ctx context.Context, target, versionFlag string) error {
 		return fail(out, "manifest", cob.ExitNotFound, "%s", err)
 	}
 
+	yaml, err := manifestYAMLFor(ctx, client, coords)
+	if err != nil {
+		return fail(out, "manifest", cob.ExitNotFound, "%s", err)
+	}
+	fmt.Print(yaml)
+	return nil
+}
+
+// generatedManifestFile is the manifest cob writes next to assets on a
+// full-package pull.
+const generatedManifestFile = "cob-manifest.yaml"
+
+// manifestYAMLFor reconstructs (from cob-provenance.json) or infers (ca://
+// self-references) the manifest YAML for a resolved version. Shared by the
+// `manifest` command and `pull`.
+func manifestYAMLFor(ctx context.Context, client *cob.Client, coords *cob.PackageCoordinates) (string, error) {
 	prov, _ := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
 
 	var assets []cob.AssetSummary
 	if prov == nil || len(prov.Assets) == 0 {
-		assets, err = registry.ListAssets(ctx, coords)
+		a, err := cob.NewRegistry(client).ListAssets(ctx, coords)
 		if err != nil {
-			return fail(out, "manifest", cob.ExitNotFound, "%s", err)
+			return "", err
 		}
+		assets = a
 	}
 
 	yaml, ok := renderManifest(coords, prov, assets)
 	if !ok {
-		return fail(out, "manifest", cob.ExitNotFound,
-			"no assets found for %s/%s@%s", coords.Namespace, coords.Package, coords.Version)
+		return "", fmt.Errorf("no assets found for %s/%s@%s",
+			coords.Namespace, coords.Package, coords.Version)
 	}
-	fmt.Print(yaml)
-	return nil
+	return yaml, nil
 }
 
 // caRef is a ca:// URI for an asset of the version itself — the only sound

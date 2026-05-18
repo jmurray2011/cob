@@ -90,6 +90,14 @@ cob pull my-domain/dev/my-namespace/my-package@2.1.0 --assets app-2.1.0.tar.gz,a
 
 Skips files that already exist with a matching SHA-256.
 
+A **whole-package pull into a directory** (no single asset, no `--assets`)
+also writes a `cob-manifest.yaml` next to the assets -- the same manifest
+[`cob manifest`](#manifest) would produce (reconstructed from provenance, or
+inferred). So `cob pull <coords> --output ./d/` gives you the assets, their
+`cob-provenance.json`, and a manifest to re-publish or inspect from. Partial
+or single-asset pulls don't (the manifest would misrepresent the package);
+a manifest hiccup only warns -- the assets are already down.
+
 Flags: `--version`, `--output`, `--assets`, `--concurrency`
 
 ### promote

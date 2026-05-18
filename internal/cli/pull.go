@@ -147,6 +147,20 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		outputPath = "."
 	}
 
+	// A multi-asset / trailing-slash / existing-dir target is a directory;
+	// anything else is a single-file path. Create the target up front so
+	// `--output ./new/dir/` works without the caller mkdir'ing it first.
+	dirTarget := len(assets) > 1 || isDir(outputPath) || strings.HasSuffix(outputPath, "/")
+	mkdir := outputPath
+	if !dirTarget {
+		mkdir = filepath.Dir(outputPath)
+	}
+	if mkdir != "" && mkdir != "." {
+		if err := os.MkdirAll(mkdir, 0o755); err != nil {
+			return fail(out, "pull", cob.ExitError, "creating output directory %s: %s", mkdir, err)
+		}
+	}
+
 	out.Header("Pulling %s/%s@%s from %s/%s",
 		coords.Namespace, coords.Package, coords.Version, coords.Domain, coords.Repository)
 
@@ -161,7 +175,7 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 	results, _, ok := runConcurrent(len(assets), concurrency, func(i int) (*cob.AssetResult, error) {
 		info := assets[i]
 		dest := outputPath
-		if len(assets) > 1 || isDir(outputPath) || strings.HasSuffix(outputPath, "/") {
+		if dirTarget {
 			dest = filepath.Join(outputPath, info.Name)
 		}
 
@@ -200,7 +214,35 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		out.CommandResult(result)
 		return &ExitError{Code: cob.ExitError}
 	}
+
+	// A whole-package pull into a directory also gets a recoverable
+	// manifest (reconstructed from provenance, or inferred). Best-effort:
+	// the assets are already down, so a manifest hiccup only warns.
+	wholePackage := assetArg == "" && assetsFilter == ""
+	if wholePackage && dirTarget {
+		writePulledManifest(ctx, client, coords, assets, outputPath, out)
+	}
 	return out.CommandResult(result)
+}
+
+func writePulledManifest(ctx context.Context, client *cob.Client, coords *cob.PackageCoordinates, assets []cob.AssetInfo, dir string, out *output.Writer) {
+	for _, a := range assets {
+		if a.Name == generatedManifestFile {
+			out.Warn("an asset is named %s; skipping generated manifest", generatedManifestFile)
+			return
+		}
+	}
+	y, err := manifestYAMLFor(ctx, client, coords)
+	if err != nil {
+		out.Warn("could not generate %s: %s", generatedManifestFile, err)
+		return
+	}
+	p := filepath.Join(dir, generatedManifestFile)
+	if err := os.WriteFile(p, []byte(y), 0o644); err != nil {
+		out.Warn("could not write %s: %s", generatedManifestFile, err)
+		return
+	}
+	out.Plain("Wrote %s", p)
 }
 
 func isDir(path string) bool {
