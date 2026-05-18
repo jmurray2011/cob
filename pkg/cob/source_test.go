@@ -1,8 +1,11 @@
 package cob
 
 import (
+	"context"
 	"errors"
+	"os"
 	"testing"
+	"time"
 )
 
 func TestNewS3Source(t *testing.T) {
@@ -84,5 +87,23 @@ func TestAssetResultSetError(t *testing.T) {
 	r.SetError(errors.New("boom"))
 	if r.Error == nil || r.ErrorMsg != "boom" {
 		t.Fatalf("got Error=%v ErrorMsg=%q", r.Error, r.ErrorMsg)
+	}
+}
+
+func TestFileSourceOrigin(t *testing.T) {
+	dir := t.TempDir()
+	p := dir + "/x.txt"
+	if err := os.WriteFile(p, []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o, err := NewFileSource(p, "./x.txt").Origin(context.Background())
+	if err != nil || o == nil {
+		t.Fatalf("Origin: o=%v err=%v", o, err)
+	}
+	if o.Type != "file" || o.Path != p {
+		t.Errorf("got %+v", o)
+	}
+	if _, perr := time.Parse(time.RFC3339, o.Mtime); perr != nil {
+		t.Errorf("Mtime %q not RFC3339: %v", o.Mtime, perr)
 	}
 }
