@@ -57,7 +57,7 @@ cob publish my-package.yaml --version 2.1.0 --yes        # skip confirmation pro
 COB_VERSION=2.1.0 cob publish my-package.yaml            # version from env
 ```
 
-Flags: `--version`, `--dry-run`, `--force`, `--yes`
+Flags: `--version`, `--dry-run`, `--force`, `--yes`, `--concurrency`
 
 `publish` and `promote` prompt before mutating. With no TTY (CI, pipes) they
 do **not** silently proceed -- they refuse unless `--yes` is given, so a
@@ -87,7 +87,7 @@ cob pull my-domain/dev/my-namespace/my-package@2.1.0 --assets app-2.1.0.tar.gz,a
 
 Skips files that already exist with a matching SHA-256.
 
-Flags: `--version`, `--output`, `--assets`
+Flags: `--version`, `--output`, `--assets`, `--concurrency`
 
 ### promote
 
@@ -105,7 +105,7 @@ cob promote my-package.yaml --version 2.1.0 --to prod      # staging -> prod
 cob promote my-domain/dev/my-namespace/my-package@latest --to staging
 ```
 
-Flags: `--to` (required), `--version`, `--force`, `--yes`
+Flags: `--to` (required), `--version`, `--force`, `--yes`, `--concurrency`
 
 ### ls
 
@@ -141,6 +141,55 @@ cob resolve my-domain/dev/my-namespace/my-package --json
 ```
 
 Resolution is by publication timestamp, not semver.
+
+### validate
+
+Checks a manifest **offline** -- no AWS calls. Schema, variable
+resolvability, source-URI syntax, and local-file existence. Good for
+pre-commit / CI lint stages.
+
+```bash
+cob validate my-package.yaml
+cob validate my-package.yaml --version 2.1.0   # also resolves ${VERSION}
+```
+
+Flags: `--version` (optional)
+
+### verify
+
+Checks that a published version matches the manifest's sources by SHA-256.
+No asset is downloaded (S3 `HeadObject` / `ca://` listing / local hash
+only). Exits non-zero on any mismatch or missing asset. A CI gate for
+reproducible builds. Sources with no obtainable checksum (an S3 object
+published without `--checksum-algorithm SHA256`) are reported as
+*unverified* rather than failing.
+
+```bash
+cob verify my-package.yaml --version 2.1.0
+```
+
+Flags: `--version` (required, or `COB_VERSION`)
+
+### diff
+
+Shows how the manifest differs from a published version: added (`+`),
+removed (`-`), changed (`~`). No asset is downloaded. Exits `1` on any
+drift, `0` when identical -- like `diff(1)`. Run before `publish --force`
+to see exactly what would change.
+
+```bash
+cob diff my-package.yaml --version 2.1.0
+```
+
+Flags: `--version` (required, or `COB_VERSION`)
+
+### Parallel transfers
+
+`publish`, `pull`, and `promote` transfer assets in parallel, bounded by
+`--concurrency` (default 4; `1` = sequential, the old behaviour). For
+`publish`/`promote` the version-finalizing write is always sequenced last,
+after every other asset has uploaded, so a failure leaves the version
+Unfinished exactly as before.
 
 ## Source types
 
