@@ -59,6 +59,11 @@ COB_VERSION=2.1.0 cob publish my-package.yaml            # version from env
 
 Flags: `--version`, `--dry-run`, `--force`, `--yes`
 
+`publish` and `promote` prompt before mutating. With no TTY (CI, pipes) they
+do **not** silently proceed -- they refuse unless `--yes` is given, so a
+pipeline can't delete or overwrite by accident. Pass `--yes` in CI.
+`--dry-run` never prompts.
+
 ### pull
 
 Downloads assets to a local directory. Works with a manifest or compact coordinates.
@@ -67,8 +72,8 @@ Downloads assets to a local directory. Works with a manifest or compact coordina
 # With a manifest -- pull all assets
 cob pull my-package.yaml --version 2.1.0 --output ./assets/
 
-# Ad-hoc -- grab one asset by name
-cob pull my-domain/dev/my-namespace/my-package@2.1.0 app
+# Ad-hoc -- grab one asset by its stored name (the source filename)
+cob pull my-domain/dev/my-namespace/my-package@2.1.0 app-2.1.0.tar.gz
 
 # Ad-hoc -- grab all assets
 cob pull my-domain/dev/my-namespace/my-package@2.1.0 --output ./assets/
@@ -76,8 +81,8 @@ cob pull my-domain/dev/my-namespace/my-package@2.1.0 --output ./assets/
 # Pull the latest published version
 cob pull my-domain/dev/my-namespace/my-package@latest --output ./assets/
 
-# Pull specific assets by name
-cob pull my-domain/dev/my-namespace/my-package@2.1.0 --assets app,config
+# Pull specific assets by stored name
+cob pull my-domain/dev/my-namespace/my-package@2.1.0 --assets app-2.1.0.tar.gz,app-config.yaml
 ```
 
 Skips files that already exist with a matching SHA-256.
@@ -149,6 +154,21 @@ Relative paths resolve from the manifest file's directory, not the working direc
 
 `@latest` is not supported in `ca://` source URIs. Use `${VERSION}` instead.
 
+### Asset names
+
+The YAML key in `sources:` is only a label -- for the manifest and logs. The
+asset name stored in CodeArtifact is the source's basename:
+
+| Source | Stored asset name |
+|--------|-------------------|
+| `s3://bucket/builds/app-2.1.0.tar.gz` | `app-2.1.0.tar.gz` |
+| `ca://acme/dev/tools/shared-lib@2.0.0/shared-lib-2.0.deb` | `shared-lib-2.0.deb` |
+| `./local-overrides.yaml` | `local-overrides.yaml` |
+
+`cob pull <coords> <asset>` and `--assets` select by this stored name, not by
+the manifest key. Put `${VERSION}` in the source URI so the version travels
+with the filename (`app-${VERSION}.tar.gz`).
+
 ### S3 checksums
 
 S3 objects uploaded with `--checksum-algorithm SHA256` store the hash in metadata, letting cob skip re-hashing the buffer. Objects without a checksum are hashed in memory before publishing. Objects over 512 MB without a checksum are rejected.
@@ -156,6 +176,9 @@ S3 objects uploaded with `--checksum-algorithm SHA256` store the hash in metadat
 ```bash
 aws s3 cp file.tar.gz s3://bucket/key --checksum-algorithm SHA256
 ```
+
+cob resolves an S3 bucket's region automatically, so `--region` need not
+match the bucket's region for `s3://` sources.
 
 ## Variable substitution
 
