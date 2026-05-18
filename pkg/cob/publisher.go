@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
+	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 )
 
 const maxBufferSize = 512 * 1024 * 1024 // 512MB
@@ -120,8 +121,15 @@ func (p *Publisher) PublishAsset(ctx context.Context, coords *PackageCoordinates
 }
 
 // DeleteVersion deletes a package version (used by --force).
+//
+// DeletePackageVersions returns HTTP 200 even when it refuses to delete a
+// version: the per-version outcome lands in FailedVersions, not the
+// top-level error. We must inspect it, otherwise --force would silently
+// republish on top of a version it never actually removed. A NOT_FOUND
+// failure is benign here — the version is already gone, which is the state
+// --force wants.
 func (p *Publisher) DeleteVersion(ctx context.Context, coords *PackageCoordinates) error {
-	_, err := p.client.CodeArtifact.DeletePackageVersions(ctx, &codeartifact.DeletePackageVersionsInput{
+	out, err := p.client.CodeArtifact.DeletePackageVersions(ctx, &codeartifact.DeletePackageVersionsInput{
 		Domain:     aws.String(coords.Domain),
 		Repository: aws.String(coords.Repository),
 		Namespace:  aws.String(coords.Namespace),
@@ -131,6 +139,13 @@ func (p *Publisher) DeleteVersion(ctx context.Context, coords *PackageCoordinate
 	})
 	if err != nil {
 		return fmt.Errorf("deleting version %s: %w", coords.Version, err)
+	}
+
+	if verr, failed := out.FailedVersions[coords.Version]; failed && verr.ErrorCode != catypes.PackageVersionErrorCodeNotFound {
+		if msg := aws.ToString(verr.ErrorMessage); msg != "" {
+			return fmt.Errorf("deleting version %s: %s: %s", coords.Version, verr.ErrorCode, msg)
+		}
+		return fmt.Errorf("deleting version %s: %s", coords.Version, verr.ErrorCode)
 	}
 	return nil
 }
