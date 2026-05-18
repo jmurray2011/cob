@@ -181,6 +181,13 @@ func (m *Manifest) ResolveVariables(version string) error {
 	return nil
 }
 
+// ExpandURI resolves ${VERSION} and ${env.*} in one source URI. Exposed for
+// offline validation, which checks sources individually and reports every
+// problem rather than aborting at the first bad one (unlike ResolveVariables).
+func ExpandURI(uri, version string) (string, error) {
+	return expandVars(uri, version)
+}
+
 func expandVars(s, version string) (string, error) {
 	var expandErr error
 	result := varPattern.ReplaceAllStringFunc(s, func(match string) string {
