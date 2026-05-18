@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // S3Source reads an asset from an S3 object.
@@ -75,6 +76,11 @@ func (s *S3Source) Resolve(ctx context.Context) (*AssetMetadata, error) {
 	in := &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(s.key),
+		// Without this, S3 omits ChecksumSHA256 from the response even when
+		// the object was uploaded with --checksum-algorithm SHA256, so cob
+		// would never see the stored hash (verify/diff fall back to
+		// "unverified" and publish always re-hashes).
+		ChecksumMode: s3types.ChecksumModeEnabled,
 	}
 	head, err := s.client.HeadObject(ctx, in)
 	if err != nil && s.correctRegion(err) {
