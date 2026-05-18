@@ -184,38 +184,45 @@ func (r *Registry) ListVersions(ctx context.Context, coords *PackageCoordinates)
 	return results, nil
 }
 
-// populateVersionMeta fills Assets and Published for every version in place,
-// using a bounded-concurrency worker fan-out. Returns the first error seen.
+// populateVersionMeta fills Assets and Published for every version in place.
+//
+// Per-version metadata is best-effort: a transient error, throttle, or a
+// version that vanished between the listing and the describe (a real TOCTOU
+// window) leaves that row's Assets/Published zero rather than failing the
+// whole `ls` — mirroring getLatestVersion, which degrades to "?" instead of
+// erroring. Only context cancellation is surfaced.
+//
+// The semaphore is acquired before the goroutine is spawned, so it bounds
+// goroutine count (not just in-flight API calls) to versionMetaConcurrency.
+// Each goroutine writes a distinct slice index, so the post-Wait read needs
+// no lock.
 func (r *Registry) populateVersionMeta(ctx context.Context, coords *PackageCoordinates, versions []VersionSummary) error {
 	sem := make(chan struct{}, versionMetaConcurrency)
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var firstErr error
 
 	for i := range versions {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			sem <- struct{}{}
 			defer func() { <-sem }()
-
-			assets, published, err := r.versionMeta(ctx, coords, versions[i].Version)
-			if err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = err
-				}
-				mu.Unlock()
+			if ctx.Err() != nil {
 				return
 			}
-			// Distinct index per goroutine: no lock needed for the write.
+			assets, published, err := r.versionMeta(ctx, coords, versions[i].Version)
+			if err != nil {
+				return // best-effort: leave zero values for this version
+			}
 			versions[i].Assets = assets
 			versions[i].Published = published
 		}(i)
 	}
 
 	wg.Wait()
-	return firstErr
+	return ctx.Err()
 }
 
 // versionMeta returns the asset count and publish time for a single version.
@@ -310,13 +317,25 @@ func (r *Registry) ListAssets(ctx context.Context, coords *PackageCoordinates) (
 
 // CheckVersionExists returns true if a version exists in the given repo.
 func (r *Registry) CheckVersionExists(ctx context.Context, coords *PackageCoordinates) (bool, error) {
-	// DescribePackageVersion returns the version regardless of status, so an
-	// Unfinished version left behind by a failed publish is reported as
-	// existing — which is what --force / conflict handling needs. (The old
-	// ListPackageVersions+Status:Published scan was blind to those and would
-	// let publish collide with or strand a half-written version.) It is also
-	// a single call instead of a full paginated listing.
-	_, err := r.client.CodeArtifact.DescribePackageVersion(ctx, &codeartifact.DescribePackageVersionInput{
+	_, found, err := r.VersionStatus(ctx, coords)
+	return found, err
+}
+
+// VersionStatus returns the version's CodeArtifact status (e.g. "Published",
+// "Unfinished"), whether it exists, and any non-NotFound error.
+//
+// DescribePackageVersion returns the version regardless of status, so an
+// Unfinished version left behind by a failed publish is reported as existing
+// — which is what --force / conflict handling needs (the old
+// ListPackageVersions+Status:Published scan was blind to those and would let
+// publish collide with or strand a half-written version). It is a single
+// call, not a paginated listing.
+//
+// Callers that *display* presence (promotion status) must use the returned
+// status rather than assuming "Published": after this any-status change, a
+// hardcoded label would mislabel an Unfinished/Archived/Deleted version.
+func (r *Registry) VersionStatus(ctx context.Context, coords *PackageCoordinates) (status string, found bool, err error) {
+	out, err := r.client.CodeArtifact.DescribePackageVersion(ctx, &codeartifact.DescribePackageVersionInput{
 		Domain:         aws.String(coords.Domain),
 		Repository:     aws.String(coords.Repository),
 		Namespace:      aws.String(coords.Namespace),
@@ -327,11 +346,14 @@ func (r *Registry) CheckVersionExists(ctx context.Context, coords *PackageCoordi
 	if err != nil {
 		// No such package or version → it doesn't exist.
 		if isNotFound(err) {
-			return false, nil
+			return "", false, nil
 		}
-		return false, err
+		return "", false, err
 	}
-	return true, nil
+	if out.PackageVersion != nil {
+		status = string(out.PackageVersion.Status)
+	}
+	return status, true, nil
 }
 
 // ResolveLatest returns the most recently published version of a package by
