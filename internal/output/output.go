@@ -113,7 +113,9 @@ func (w *Writer) AssetOK(r *cob.AssetResult, sourceURI string) {
 		line += "  (" + sizeStr + ") " + durStr + " " + r.Method
 		fmt.Fprintln(w.out, line)
 	} else {
-		fmt.Fprintf(w.out, "OK %s (%s) %s\n", r.Name, sizeStr, durStr)
+		// Include Method so non-TTY/CI logs show the basis
+		// (match(origin), match(provenance), skipped, ...).
+		fmt.Fprintf(w.out, "OK %s (%s) %s %s\n", r.Name, sizeStr, durStr, r.Method)
 	}
 	w.flush()
 }

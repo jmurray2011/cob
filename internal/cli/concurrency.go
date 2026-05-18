@@ -70,39 +70,3 @@ func runConcurrent(n, limit int, task func(i int) (*cob.AssetResult, error)) (re
 	}
 	return results, -1, true
 }
-
-// runFinalizeProtocol runs n asset transfers preserving cob's
-// unfinished/finalize ordering: assets [0,n-1) transfer concurrently with
-// unfinished=true; only once all succeed does asset n-1 transfer with
-// unfinished=false, flipping the version to Published. A failure anywhere
-// means the finalizing call never happens, so the version is left Unfinished
-// (the existing partial-failure contract). Results are index-ordered.
-func runFinalizeProtocol(n, limit int, task func(i int, unfinished bool) (*cob.AssetResult, error)) (results []*cob.AssetResult, firstErrIdx int, ok bool) {
-	if n <= 1 || clampConcurrency(limit) == 1 {
-		results = make([]*cob.AssetResult, n)
-		for i := 0; i < n; i++ {
-			r, err := task(i, i != n-1)
-			results[i] = r
-			if err != nil {
-				return results, i, false
-			}
-		}
-		return results, -1, true
-	}
-
-	head, errI, headOK := runConcurrent(n-1, limit, func(i int) (*cob.AssetResult, error) {
-		return task(i, true)
-	})
-	results = make([]*cob.AssetResult, n)
-	copy(results, head)
-	if !headOK {
-		return results, errI, false
-	}
-
-	r, err := task(n-1, false)
-	results[n-1] = r
-	if err != nil {
-		return results, n - 1, false
-	}
-	return results, -1, true
-}
