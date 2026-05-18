@@ -31,12 +31,10 @@ func runResolve(ctx context.Context, target string) error {
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
-		out.ErrorResult("resolve", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "resolve", cob.ExitError, "%s", err)
 	}
 	if coords.Namespace == "" || coords.Package == "" {
-		out.ErrorResult("resolve", "full coordinates required (domain/repo/namespace/package)")
-		os.Exit(cob.ExitError)
+		return fail(out, "resolve", cob.ExitError, "full coordinates required (domain/repo/namespace/package)")
 	}
 
 	client, err := cob.NewClient(ctx, cob.ClientOptions{
@@ -44,22 +42,19 @@ func runResolve(ctx context.Context, target string) error {
 		Region:  flagRegion,
 	})
 	if err != nil {
-		out.ErrorResult("resolve", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "resolve", cob.ExitError, "%s", err)
 	}
 
 	registry := cob.NewRegistry(client)
 
 	// Strip @latest if provided -- resolve always means latest.
 	if coords.Version != "" && coords.Version != "latest" {
-		out.ErrorResult("resolve", fmt.Sprintf("resolve always returns the latest version; got @%s", coords.Version))
-		os.Exit(cob.ExitError)
+		return fail(out, "resolve", cob.ExitError, "resolve always returns the latest version; got @%s", coords.Version)
 	}
 
 	version, err := registry.ResolveLatest(ctx, coords)
 	if err != nil {
-		out.ErrorResult("resolve", err.Error())
-		os.Exit(cob.ExitNotFound)
+		return fail(out, "resolve", cob.ExitNotFound, "%s", err)
 	}
 
 	if flagJSON {

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -42,8 +41,7 @@ func runLs(ctx context.Context, target string, allRepos bool) error {
 		Region:  flagRegion,
 	})
 	if err != nil {
-		out.ErrorResult("ls", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	registry := cob.NewRegistry(client)
@@ -55,8 +53,7 @@ func runLs(ctx context.Context, target string, allRepos bool) error {
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
-		out.ErrorResult("ls", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	// domain only -> list repositories in that domain.
@@ -67,20 +64,17 @@ func runLs(ctx context.Context, target string, allRepos bool) error {
 	// Handle wildcard repo for promotion status.
 	// Only valid with full coordinates (domain/repo/ns/pkg), not domain/repo.
 	if (coords.Repository == "*" || allRepos) && coords.Namespace == "" {
-		out.ErrorResult("ls", "--all-repos requires full coordinates (domain/*/namespace/package@version)")
-		os.Exit(cob.ExitError)
+		return fail(out, "ls", cob.ExitError, "--all-repos requires full coordinates (domain/*/namespace/package@version)")
 	}
 	if coords.Repository == "*" || (allRepos && coords.Namespace != "" && coords.Package != "") {
 		if coords.Version == "" {
-			out.ErrorResult("ls", "version is required for wildcard repo listing (use domain/*/ns/pkg@version or @latest)")
-			os.Exit(cob.ExitError)
+			return fail(out, "ls", cob.ExitError, "version is required for wildcard repo listing (use domain/*/ns/pkg@version or @latest)")
 		}
 		// Resolve @latest by trying each repo in the domain until one has the package.
 		if coords.Version == "latest" {
 			repos, err := registry.ListRepositories(ctx, coords.Domain)
 			if err != nil || len(repos) == 0 {
-				out.ErrorResult("ls", fmt.Sprintf("cannot resolve @latest: no repositories found in %s", coords.Domain))
-				os.Exit(cob.ExitNotFound)
+				return fail(out, "ls", cob.ExitNotFound, "cannot resolve @latest: no repositories found in %s", coords.Domain)
 			}
 			var resolved bool
 			for _, repo := range repos {
@@ -95,9 +89,8 @@ func runLs(ctx context.Context, target string, allRepos bool) error {
 				}
 			}
 			if !resolved {
-				out.ErrorResult("ls", fmt.Sprintf("no published versions of %s/%s found in any repository in %s",
-					coords.Namespace, coords.Package, coords.Domain))
-				os.Exit(cob.ExitNotFound)
+				return fail(out, "ls", cob.ExitNotFound, "no published versions of %s/%s found in any repository in %s",
+					coords.Namespace, coords.Package, coords.Domain)
 			}
 		}
 		return runLsPromotionStatus(ctx, registry, coords, out)
@@ -111,8 +104,7 @@ func runLs(ctx context.Context, target string, allRepos bool) error {
 	// Resolve @latest for version-specific operations.
 	if coords.Version == "latest" {
 		if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-			out.ErrorResult("ls", err.Error())
-			os.Exit(cob.ExitNotFound)
+			return fail(out, "ls", cob.ExitNotFound, "%s", err)
 		}
 	}
 
@@ -128,13 +120,11 @@ func runLs(ctx context.Context, target string, allRepos bool) error {
 func runLsPackages(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {
 	packages, err := registry.ListPackages(ctx, coords.Domain, coords.Repository)
 	if err != nil {
-		out.ErrorResult("ls", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	if len(packages) == 0 {
-		out.ErrorResult("ls", fmt.Sprintf("no packages found in %s/%s", coords.Domain, coords.Repository))
-		os.Exit(cob.ExitNotFound)
+		return fail(out, "ls", cob.ExitNotFound, "no packages found in %s/%s", coords.Domain, coords.Repository)
 	}
 
 	if out.JSON(packages) {
@@ -153,14 +143,12 @@ func runLsPackages(ctx context.Context, registry *cob.Registry, coords *cob.Pack
 func runLsVersions(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {
 	versions, err := registry.ListVersions(ctx, coords)
 	if err != nil {
-		out.ErrorResult("ls", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	if len(versions) == 0 {
-		out.ErrorResult("ls", fmt.Sprintf("no versions found for %s/%s in %s/%s",
-			coords.Namespace, coords.Package, coords.Domain, coords.Repository))
-		os.Exit(cob.ExitNotFound)
+		return fail(out, "ls", cob.ExitNotFound, "no versions found for %s/%s in %s/%s",
+			coords.Namespace, coords.Package, coords.Domain, coords.Repository)
 	}
 
 	if out.JSON(versions) {
@@ -183,14 +171,12 @@ func runLsVersions(ctx context.Context, registry *cob.Registry, coords *cob.Pack
 func runLsAssets(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {
 	assets, err := registry.ListAssets(ctx, coords)
 	if err != nil {
-		out.ErrorResult("ls", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	if len(assets) == 0 {
-		out.ErrorResult("ls", fmt.Sprintf("no assets found for %s/%s@%s",
-			coords.Namespace, coords.Package, coords.Version))
-		os.Exit(cob.ExitNotFound)
+		return fail(out, "ls", cob.ExitNotFound, "no assets found for %s/%s@%s",
+			coords.Namespace, coords.Package, coords.Version)
 	}
 
 	if out.JSON(assets) {
@@ -213,13 +199,11 @@ func runLsAssets(ctx context.Context, registry *cob.Registry, coords *cob.Packag
 func runLsDomains(ctx context.Context, registry *cob.Registry, out *output.Writer) error {
 	domains, err := registry.ListDomains(ctx)
 	if err != nil {
-		out.ErrorResult("ls", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	if len(domains) == 0 {
-		out.ErrorResult("ls", "no domains found")
-		os.Exit(cob.ExitNotFound)
+		return fail(out, "ls", cob.ExitNotFound, "no domains found")
 	}
 
 	if out.JSON(domains) {
@@ -238,13 +222,11 @@ func runLsDomains(ctx context.Context, registry *cob.Registry, out *output.Write
 func runLsRepos(ctx context.Context, registry *cob.Registry, domain string, out *output.Writer) error {
 	repos, err := registry.ListRepositories(ctx, domain)
 	if err != nil {
-		out.ErrorResult("ls", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	if len(repos) == 0 {
-		out.ErrorResult("ls", fmt.Sprintf("no repositories found in %s", domain))
-		os.Exit(cob.ExitNotFound)
+		return fail(out, "ls", cob.ExitNotFound, "no repositories found in %s", domain)
 	}
 
 	if out.JSON(repos) {
@@ -263,8 +245,7 @@ func runLsRepos(ctx context.Context, registry *cob.Registry, domain string, out 
 func runLsPromotionStatus(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {
 	repos, err := registry.ListRepositories(ctx, coords.Domain)
 	if err != nil {
-		out.ErrorResult("ls", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	var statuses []cob.PromotionStatus

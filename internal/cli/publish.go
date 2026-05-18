@@ -44,24 +44,20 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 
 	version, err := resolveVersion(versionFlag)
 	if err != nil {
-		out.ErrorResult("publish", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
 	if version == "latest" {
-		out.ErrorResult("publish", "cannot publish to @latest, provide an explicit version")
-		os.Exit(cob.ExitError)
+		return fail(out, "publish", cob.ExitError, "cannot publish to @latest, provide an explicit version")
 	}
 
 	m, err := manifest.Load(manifestPath)
 	if err != nil {
-		out.ErrorResult("publish", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
 	warnManifestOverrides(m, out)
 
 	if err := m.ResolveVariables(version); err != nil {
-		out.ErrorResult("publish", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
 
 	coords := &cob.PackageCoordinates{
@@ -77,8 +73,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		Region:  flagRegion,
 	})
 	if err != nil {
-		out.ErrorResult("publish", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
 
 	publisher := cob.NewPublisher(client)
@@ -87,18 +82,15 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 	// Check if version already exists.
 	exists, err := registry.CheckVersionExists(ctx, coords)
 	if err != nil {
-		out.ErrorResult("publish", fmt.Sprintf("checking version: %s", err))
-		os.Exit(cob.ExitError)
+		return fail(out, "publish", cob.ExitError, "checking version: %s", err)
 	}
 	if exists && !force {
-		out.ErrorResult("publish", fmt.Sprintf("version %s already exists in %s/%s. Use --force to overwrite.", version, m.Domain, m.Repository))
-		os.Exit(cob.ExitConflict)
+		return fail(out, "publish", cob.ExitConflict, "version %s already exists in %s/%s. Use --force to overwrite.", version, m.Domain, m.Repository)
 	}
 
 	sources, err := buildSources(m, client)
 	if err != nil {
-		out.ErrorResult("publish", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
 
 	out.Header("Publishing %s/%s@%s -> %s/%s", m.Namespace, m.Package, version, m.Domain, m.Repository)
@@ -109,14 +101,14 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 
 	if !confirmAction(yes, fmt.Sprintf("Publish %d assets?", len(sources))) {
 		fmt.Fprintln(os.Stderr, "Aborted.")
-		os.Exit(0)
+		return nil
 	}
 
 	// Force: delete existing version first.
 	if exists && force {
 		if err := publisher.DeleteVersion(ctx, coords); err != nil {
 			out.Error("deleting existing version: %s", err)
-			os.Exit(cob.ExitError)
+			return &ExitError{Code: cob.ExitError}
 		}
 	}
 
@@ -143,7 +135,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 			out.Error("failed to read %s\n  Published %d of %d assets. Version is in unfinished state.\n  Re-run with --force to delete and retry.",
 				ns.Source.URI(), len(result.Assets), len(sources))
 			out.CommandResult(result)
-			os.Exit(cob.ExitError)
+			return &ExitError{Code: cob.ExitError}
 		}
 		result.Assets = append(result.Assets, *ar)
 		result.TotalSize += ar.Size
@@ -177,7 +169,7 @@ func runDryRun(ctx context.Context, sources []NamedSource, out *output.Writer) e
 	verified := len(sources) - failures
 	if failures > 0 {
 		out.Summary("Dry run complete. %d of %d sources verified, %d failed.", verified, len(sources), failures)
-		os.Exit(cob.ExitError)
+		return &ExitError{Code: cob.ExitError}
 	}
 	out.Summary("Dry run complete. All %d sources verified.", len(sources))
 	return nil

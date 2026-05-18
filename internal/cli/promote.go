@@ -48,8 +48,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		Region:  flagRegion,
 	})
 	if err != nil {
-		out.ErrorResult("promote", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "promote", cob.ExitError, "%s", err)
 	}
 
 	var coords *cob.PackageCoordinates
@@ -58,22 +57,19 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	if isManifestPath(target) {
 		version, err := resolveVersion(versionFlag)
 		if err != nil {
-			out.ErrorResult("promote", err.Error())
-			os.Exit(cob.ExitError)
+			return fail(out, "promote", cob.ExitError, "%s", err)
 		}
 
 		m, err := manifest.Load(target)
 		if err != nil {
-			out.ErrorResult("promote", err.Error())
-			os.Exit(cob.ExitError)
+			return fail(out, "promote", cob.ExitError, "%s", err)
 		}
 		warnManifestOverrides(m, out)
 
 		// Infer source repo from promote stages.
 		srcRepo, err = m.InferPromoteSource(toRepo)
 		if err != nil {
-			out.ErrorResult("promote", err.Error())
-			os.Exit(cob.ExitError)
+			return fail(out, "promote", cob.ExitError, "%s", err)
 		}
 
 		coords = &cob.PackageCoordinates{
@@ -85,12 +81,10 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	} else {
 		coords, err = manifest.ParseCoordinates(target)
 		if err != nil {
-			out.ErrorResult("promote", err.Error())
-			os.Exit(cob.ExitError)
+			return fail(out, "promote", cob.ExitError, "%s", err)
 		}
 		if coords.Version == "" {
-			out.ErrorResult("promote", "version is required for promote (use domain/repo/ns/pkg@version or @latest)")
-			os.Exit(cob.ExitError)
+			return fail(out, "promote", cob.ExitError, "version is required for promote (use domain/repo/ns/pkg@version or @latest)")
 		}
 		srcRepo = coords.Repository
 	}
@@ -100,8 +94,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	// Resolve @latest from the source repo.
 	coords.Repository = srcRepo
 	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		out.ErrorResult("promote", err.Error())
-		os.Exit(cob.ExitNotFound)
+		return fail(out, "promote", cob.ExitNotFound, "%s", err)
 	}
 
 	// Check if version exists in destination.
@@ -114,12 +107,10 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	}
 	exists, err := registry.CheckVersionExists(ctx, destCoords)
 	if err != nil {
-		out.ErrorResult("promote", fmt.Sprintf("checking destination: %s", err))
-		os.Exit(cob.ExitError)
+		return fail(out, "promote", cob.ExitError, "checking destination: %s", err)
 	}
 	if exists && !force {
-		out.ErrorResult("promote", fmt.Sprintf("version %s already exists in %s. Use --force to overwrite.", coords.Version, toRepo))
-		os.Exit(cob.ExitConflict)
+		return fail(out, "promote", cob.ExitConflict, "version %s already exists in %s. Use --force to overwrite.", coords.Version, toRepo)
 	}
 
 	out.Header("Promoting %s/%s@%s: %s -> %s",
@@ -127,22 +118,20 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 
 	if !confirmAction(yes, fmt.Sprintf("Promote to %s?", toRepo)) {
 		fmt.Fprintln(os.Stderr, "Aborted.")
-		os.Exit(0)
+		return nil
 	}
 
 	if exists && force {
 		publisher := cob.NewPublisher(client)
 		if err := publisher.DeleteVersion(ctx, destCoords); err != nil {
-			out.ErrorResult("promote", fmt.Sprintf("deleting existing version in destination: %s", err))
-			os.Exit(cob.ExitError)
+			return fail(out, "promote", cob.ExitError, "deleting existing version in destination: %s", err)
 		}
 	}
 
 	promoter := cob.NewPromoter(client)
 	assetNames, err := promoter.ListAssetsToPromote(ctx, coords, srcRepo)
 	if err != nil {
-		out.ErrorResult("promote", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "promote", cob.ExitError, "%s", err)
 	}
 
 	cmdResult := &cob.CommandResult{
@@ -168,7 +157,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 				err, len(cmdResult.Assets), len(assetNames), toRepo)
 			cmdResult.DurationMs = time.Since(start).Milliseconds()
 			out.CommandResult(cmdResult)
-			os.Exit(cob.ExitError)
+			return &ExitError{Code: cob.ExitError}
 		}
 		cmdResult.Assets = append(cmdResult.Assets, *ar)
 		cmdResult.TotalSize += ar.Size

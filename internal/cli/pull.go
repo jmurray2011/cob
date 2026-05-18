@@ -51,8 +51,7 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		Region:  flagRegion,
 	})
 	if err != nil {
-		out.ErrorResult("pull", err.Error())
-		os.Exit(cob.ExitError)
+		return fail(out, "pull", cob.ExitError, "%s", err)
 	}
 
 	puller := cob.NewPuller(client)
@@ -62,14 +61,12 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		// Manifest mode.
 		version, err := resolveVersion(versionFlag)
 		if err != nil {
-			out.ErrorResult("pull", err.Error())
-			os.Exit(cob.ExitError)
+			return fail(out, "pull", cob.ExitError, "%s", err)
 		}
 
 		m, err := manifest.Load(target)
 		if err != nil {
-			out.ErrorResult("pull", err.Error())
-			os.Exit(cob.ExitError)
+			return fail(out, "pull", cob.ExitError, "%s", err)
 		}
 		warnManifestOverrides(m, out)
 
@@ -84,27 +81,23 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		// Compact coordinates mode.
 		coords, err = manifest.ParseCoordinates(target)
 		if err != nil {
-			out.ErrorResult("pull", err.Error())
-			os.Exit(cob.ExitError)
+			return fail(out, "pull", cob.ExitError, "%s", err)
 		}
 		if coords.Version == "" {
-			out.ErrorResult("pull", "version is required for pull (use domain/repo/ns/pkg@version or @latest)")
-			os.Exit(cob.ExitError)
+			return fail(out, "pull", cob.ExitError, "version is required for pull (use domain/repo/ns/pkg@version or @latest)")
 		}
 	}
 
 	// Resolve @latest if needed.
 	registry := cob.NewRegistry(client)
 	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		out.ErrorResult("pull", err.Error())
-		os.Exit(cob.ExitNotFound)
+		return fail(out, "pull", cob.ExitNotFound, "%s", err)
 	}
 
 	// Fetch all asset metadata in a single API call.
 	allAssets, err := puller.FetchAssetInfo(ctx, coords)
 	if err != nil {
-		out.ErrorResult("pull", fmt.Sprintf("listing assets: %s", err))
-		os.Exit(cob.ExitNotFound)
+		return fail(out, "pull", cob.ExitNotFound, "listing assets: %s", err)
 	}
 
 	// Filter to requested assets.
@@ -118,8 +111,7 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 			}
 		}
 		if len(assets) == 0 {
-			out.ErrorResult("pull", fmt.Sprintf("asset %q not found in %s/%s@%s", assetArg, coords.Namespace, coords.Package, coords.Version))
-			os.Exit(cob.ExitNotFound)
+			return fail(out, "pull", cob.ExitNotFound, "asset %q not found in %s/%s@%s", assetArg, coords.Namespace, coords.Package, coords.Version)
 		}
 	} else if assetsFilter != "" {
 		// Comma-separated filter.
@@ -142,9 +134,8 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 			}
 		}
 		if len(assets) == 0 {
-			out.ErrorResult("pull", fmt.Sprintf("none of the requested assets found in %s/%s@%s",
-				coords.Namespace, coords.Package, coords.Version))
-			os.Exit(cob.ExitNotFound)
+			return fail(out, "pull", cob.ExitNotFound, "none of the requested assets found in %s/%s@%s",
+				coords.Namespace, coords.Package, coords.Version)
 		}
 	} else {
 		assets = allAssets
