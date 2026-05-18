@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -46,7 +47,11 @@ func (c *caStub) DeletePackageVersions(context.Context, *codeartifact.DeletePack
 	return &codeartifact.DeletePackageVersionsOutput{}, nil
 }
 
-type stubSrc struct{ uri, name, sha, body string }
+type stubSrc struct {
+	uri, name, sha, body string
+	origin               *cob.Origin
+	originErr            error
+}
 
 func (s stubSrc) URI() string      { return s.uri }
 func (s stubSrc) Filename() string { return s.name }
@@ -56,6 +61,7 @@ func (s stubSrc) Resolve(context.Context) (*cob.AssetMetadata, error) {
 func (s stubSrc) Open(context.Context) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(s.body)), nil
 }
+func (s stubSrc) Origin(context.Context) (*cob.Origin, error) { return s.origin, s.originErr }
 
 func pubAsset(name, sha string) catypes.AssetSummary {
 	return catypes.AssetSummary{Name: aws.String(name), Hashes: map[string]string{"SHA-256": sha}}
@@ -132,4 +138,56 @@ func TestCompareSHAPrecedence(t *testing.T) {
 		}
 		t.Fatal("deep.bin not found in comparison")
 	})
+}
+
+func TestCompareOriginDrift(t *testing.T) {
+	ctx := context.Background()
+	ca := &caStub{assets: []catypes.AssetSummary{
+		pubAsset("drift.bin", "PSHA"),
+		pubAsset("stable.bin", "PSHA2"),
+	}}
+	reg := cob.NewRegistry(&cob.Client{CodeArtifact: ca})
+	coords := &cob.PackageCoordinates{Domain: "d", Repository: "r", Namespace: "n", Package: "p", Version: "1"}
+
+	prov := &cob.Provenance{Assets: []cob.ProvenanceEntry{
+		{Asset: "drift.bin", SHA256: "PSHA", Origin: &cob.Origin{Type: "s3", ETag: "old"}},
+		{Asset: "stable.bin", SHA256: "PSHA2", Origin: &cob.Origin{Type: "s3", ETag: "same"}},
+	}}
+	sources := []NamedSource{
+		// no content checksum (sha:"") -> falls to recorded-origin drift check
+		{Name: "d", Source: stubSrc{name: "drift.bin", origin: &cob.Origin{Type: "s3", ETag: "NEW"}}},
+		{Name: "s", Source: stubSrc{name: "stable.bin", origin: &cob.Origin{Type: "s3", ETag: "same"}}},
+	}
+
+	cmps, err := compareManifestToPublished(ctx, sources, reg, coords, false, prov)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]assetCompare{}
+	for _, c := range cmps {
+		by[c.Name] = c
+	}
+	if d := by["drift.bin"]; !d.OriginDrift || d.SrcFrom != "origin" {
+		t.Errorf("drift.bin: want OriginDrift+origin, got %+v", d)
+	}
+	if s := by["stable.bin"]; s.OriginDrift || s.SrcFrom != "origin" || s.SrcSHA != "PSHA2" || s.SrcSHA != s.PubSHA {
+		t.Errorf("stable.bin: want origin-confirmed match, got %+v", s)
+	}
+}
+
+func TestCompareOriginUnreadableIsDrift(t *testing.T) {
+	ctx := context.Background()
+	ca := &caStub{assets: []catypes.AssetSummary{pubAsset("x.bin", "PSHA")}}
+	reg := cob.NewRegistry(&cob.Client{CodeArtifact: ca})
+	coords := &cob.PackageCoordinates{Domain: "d", Repository: "r", Namespace: "n", Package: "p", Version: "1"}
+	prov := &cob.Provenance{Assets: []cob.ProvenanceEntry{
+		{Asset: "x.bin", SHA256: "PSHA", Origin: &cob.Origin{Type: "s3", ETag: "old"}},
+	}}
+	sources := []NamedSource{
+		{Name: "x", Source: stubSrc{name: "x.bin", originErr: errors.New("NoSuchKey")}},
+	}
+	cmps, _ := compareManifestToPublished(ctx, sources, reg, coords, false, prov)
+	if !cmps[0].OriginDrift {
+		t.Fatalf("unreadable origin must be treated as drift, got %+v", cmps[0])
+	}
 }

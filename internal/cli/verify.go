@@ -97,6 +97,10 @@ func runVerify(ctx context.Context, manifestPath, versionFlag string, deep bool)
 			failures++
 			ar.Method = "missing"
 			out.AssetFail(c.Name, c.Source, fmt.Errorf("not published"))
+		case c.OriginDrift:
+			failures++
+			ar.Method = "drift"
+			out.AssetFail(c.Name, c.Source, fmt.Errorf("source object changed since publish (etag/version differs from provenance)"))
 		case c.SrcSHA == "":
 			unverified++
 			ar.Method = "unverified"

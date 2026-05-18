@@ -96,6 +96,10 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) e
 			removed++
 			ar.Method = "removed"
 			out.Plain("  - %s  (published, not in manifest)", c.Name)
+		case c.OriginDrift:
+			changed++
+			ar.Method = "changed"
+			out.Plain("  ~ %s  (S3 source changed since publish: etag/version differs)", c.Name)
 		case c.SrcSHA == "":
 			unknown++
 			ar.Method = "unknown"

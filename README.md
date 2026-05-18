@@ -161,17 +161,20 @@ Checks that a published version matches the manifest's sources by SHA-256.
 No mutation. Exits non-zero on any mismatch or missing asset. A CI gate for
 reproducible builds.
 
-Each source's SHA-256 is obtained by this precedence, cheapest first:
+Each source is checked by this precedence, cheapest first:
 
 1. a **known checksum** -- S3 object with `--checksum-algorithm SHA256`,
    a `ca://` source, or a local file (no download);
-2. the version's recorded **`cob-provenance.json`** (see below) -- works
-   even for S3 objects with no checksum, no download;
-3. with **`--deep`**, cob downloads and hashes the source (no S3 writes).
+2. for an unchecksummed S3 source, the recorded **origin** (see Provenance):
+   a `HeadObject` now, comparing `version_id`/`etag` to what was recorded
+   at publish -- a no-download drift signal. Unchanged → the recorded SHA
+   is trusted (`match(origin)`); changed/unreadable → reported as drift;
+3. otherwise the recorded **`cob-provenance.json`** SHA (`match(provenance)`);
+4. with **`--deep`**, cob downloads and hashes the source (no S3 writes).
 
-Only sources with none of the above are reported *unverified* (pass
-`--deep` to force a real hash). The match line shows the basis, e.g.
-`match(source)`, `match(provenance)`, `match(deep)`.
+Only sources with none of the above are reported *unverified*. The match
+line shows the basis, e.g. `match(source)`, `match(origin)`,
+`match(provenance)`, `match(deep)`.
 
 ```bash
 cob verify my-package.yaml --version 2.1.0
@@ -183,8 +186,9 @@ Flags: `--version` (required, or `COB_VERSION`), `--deep`
 ### diff
 
 Shows how the manifest differs from a published version: added (`+`),
-removed (`-`), changed (`~`). Uses the same source-hash precedence as
-`verify` (known checksum → provenance → `--deep`). Exits `1` on any
+removed (`-`), changed (`~`). Uses the same precedence as `verify`
+(known checksum → recorded S3 origin → provenance → `--deep`); a changed
+S3 `etag`/`version_id` shows as `~` with no download. Exits `1` on any
 drift, `0` when identical -- like `diff(1)`. Run before `publish --force`
 to see exactly what would change.
 
@@ -197,14 +201,35 @@ Flags: `--version` (required, or `COB_VERSION`), `--deep`
 
 ### Provenance
 
-Every `cob publish` writes one extra asset, **`cob-provenance.json`**,
-recording each manifest source's resolved URI and the SHA-256 cob computed
-while streaming it. It is published last and finalizes the version. This
-lets `verify`/`diff` confirm a version without re-reading S3 -- crucially,
-even when the S3 objects were uploaded without a checksum. `promote`
-carries it along like any other asset. It will appear in `cob ls <pkg>@ver`
-and be fetched by `cob pull`; it is excluded from `verify`'s
-"not in manifest" reporting.
+Every `cob publish` writes one extra asset, **`cob-provenance.json`** -- a
+chain-of-evidence document, published last (it finalizes the version). It
+records, with **no S3 writes**:
+
+- **`chain`** -- an append-only event log. `publish` records the origin
+  repo/version, time, region, the manifest's SHA-256, and the AWS
+  principal (`account` / `arn` / `user_id`, from STS). `promote` does
+  **not** copy the file verbatim -- it appends a `promote` link (from/to,
+  time, actor), so the chain shows exactly who moved the version where.
+- **`assets[].origin`** -- where each file physically came from at
+  packaging time:
+  - **s3**: `bucket`, `key`, `version_id`, `etag`, `last_modified`,
+    `region` (the no-download drift signal used by `verify`/`diff`);
+  - **ca**: the upstream coordinates, plus the upstream's *own*
+    `cob-provenance.json` embedded recursively -- the full transitive
+    history travels inside the package. An upstream not published by cob
+    is recorded honestly as `upstream_status: no-cob-provenance` rather
+    than failing; a re-check that finds it deleted reports `missing`
+    (non-fatal -- the embedded evidence still stands).
+  - **file**: `path` and `mtime`.
+
+Because each upstream's provenance is already complete when cob reads it,
+`ca://` embedding is one fetch per direct source and terminates naturally
+(publish order is acyclic). The file grows with the dependency closure;
+that's the intended trade-off for a self-contained evidence trail.
+
+`promote` carries `assets` forward unchanged (same bytes) and only appends
+to `chain`. The file appears in `cob ls <pkg>@ver` and is fetched by
+`cob pull`; it is excluded from `verify`'s "not in manifest" reporting.
 
 ### Parallel transfers
 
