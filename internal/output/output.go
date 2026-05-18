@@ -63,20 +63,43 @@ func (w *Writer) Header(format string, args ...any) {
 	}
 }
 
+// AssetStart prints a "starting" status line before a transfer begins.
+// Only emitted in interactive (TTY) non-JSON mode so logs and pipes stay clean.
+// sourceURI is shown when known (publish); pass "" for pull where there is no
+// source URI to display. size is the known content size (or 0 if unknown).
+func (w *Writer) AssetStart(name, sourceURI string, size int64) {
+	if w.json || !w.isTTY {
+		return
+	}
+	line := "  .. " + name
+	if sourceURI != "" {
+		line += "  <-  " + sourceURI
+	}
+	if size > 0 {
+		line += "  (" + FormatSize(size) + ")"
+	}
+	fmt.Fprintln(w.out, line)
+	w.flush()
+}
+
 // AssetOK prints a successful asset transfer line.
 func (w *Writer) AssetOK(r *cob.AssetResult, sourceURI string) {
 	if w.json {
 		return
 	}
 	sizeStr := FormatSize(r.Size)
+	durStr := FormatDuration(r.DurationMs)
 	if w.isTTY {
-		durStr := FormatDuration(r.DurationMs)
-		fmt.Fprintf(w.out, "  OK %-12s <- %-45s (%s)  %s  %s\n",
-			r.Name, truncateURI(sourceURI, 45), sizeStr, durStr, r.Method)
+		line := "  OK " + r.Name
+		if sourceURI != "" {
+			line += "  <-  " + sourceURI
+		}
+		line += "  (" + sizeStr + ") " + durStr + " " + r.Method
+		fmt.Fprintln(w.out, line)
 	} else {
-		durStr := FormatDuration(r.DurationMs)
 		fmt.Fprintf(w.out, "OK %s (%s) %s\n", r.Name, sizeStr, durStr)
 	}
+	w.flush()
 }
 
 // AssetFail prints a failed asset line.
@@ -85,10 +108,16 @@ func (w *Writer) AssetFail(name, sourceURI string, err error) {
 		return
 	}
 	if w.isTTY {
-		fmt.Fprintf(w.out, "  FAIL %-12s <- %-45s %s\n", name, truncateURI(sourceURI, 45), err)
+		line := "  FAIL " + name
+		if sourceURI != "" {
+			line += "  <-  " + sourceURI
+		}
+		line += "  " + err.Error()
+		fmt.Fprintln(w.out, line)
 	} else {
 		fmt.Fprintf(w.out, "FAIL %s %s\n", name, err)
 	}
+	w.flush()
 }
 
 // AssetSkipped prints a skipped asset line.
@@ -97,9 +126,19 @@ func (w *Writer) AssetSkipped(name string) {
 		return
 	}
 	if w.isTTY {
-		fmt.Fprintf(w.out, "       %-12s (skipped)\n", name)
+		fmt.Fprintf(w.out, "  -- %s  (skipped)\n", name)
 	} else {
 		fmt.Fprintf(w.out, "SKIP %s\n", name)
+	}
+	w.flush()
+}
+
+// flush is a best-effort fsync on the underlying stdout. Some terminal
+// integrations (notably WSL piped through IDE terminals) otherwise hold
+// output until the process exits, which makes live progress useless.
+func (w *Writer) flush() {
+	if f, ok := w.out.(*os.File); ok {
+		_ = f.Sync()
 	}
 }
 
@@ -169,13 +208,6 @@ func FormatDuration(ms int64) string {
 		return fmt.Sprintf("%dms", ms)
 	}
 	return fmt.Sprintf("%.1fs", float64(ms)/1000)
-}
-
-func truncateURI(uri string, max int) string {
-	if len(uri) <= max {
-		return uri
-	}
-	return uri[:max-3] + "..."
 }
 
 func isTerminal(f *os.File) bool {

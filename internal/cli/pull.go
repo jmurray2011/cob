@@ -171,6 +171,7 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 			dest = filepath.Join(outputPath, info.Name)
 		}
 
+		out.AssetStart(info.Name, "", info.Size)
 		ar, err := puller.PullAsset(ctx, coords, info, dest)
 		if err != nil {
 			out.AssetFail(info.Name, "", err)

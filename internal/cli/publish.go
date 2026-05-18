@@ -130,6 +130,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 
 	for i, ns := range sources {
 		isLast := i == len(sources)-1
+		out.AssetStart(ns.Name, ns.Source.URI(), 0)
 		ar, err := publisher.PublishAsset(ctx, coords, ns.Name, ns.Source, !isLast)
 		if err != nil {
 			out.AssetFail(ns.Name, ns.Source.URI(), err)

@@ -23,9 +23,10 @@ func NewPromoter(client *Client) *Promoter {
 	return &Promoter{client: client}
 }
 
-// Promote copies all assets from srcRepo to dstRepo for the given package version.
-func (p *Promoter) Promote(ctx context.Context, coords *PackageCoordinates, srcRepo, dstRepo string) ([]AssetResult, error) {
-	// Collect all asset names with pagination.
+// ListAssetsToPromote enumerates the assets in the source repo for the given
+// package version, in the order they should be re-published to the destination.
+// Returns an error with guidance when the version isn't present in srcRepo.
+func (p *Promoter) ListAssetsToPromote(ctx context.Context, coords *PackageCoordinates, srcRepo string) ([]string, error) {
 	var assetNames []string
 	var nextToken *string
 
@@ -55,21 +56,14 @@ func (p *Promoter) Promote(ctx context.Context, coords *PackageCoordinates, srcR
 		return nil, fmt.Errorf("%s/%s@%s not found in %s. Promote to %s first.",
 			coords.Namespace, coords.Package, coords.Version, srcRepo, srcRepo)
 	}
-
-	var results []AssetResult
-	for i, name := range assetNames {
-		isLast := i == len(assetNames)-1
-		result, err := p.promoteAsset(ctx, coords, srcRepo, dstRepo, name, !isLast)
-		if err != nil {
-			return results, err
-		}
-		results = append(results, *result)
-	}
-
-	return results, nil
+	return assetNames, nil
 }
 
-func (p *Promoter) promoteAsset(ctx context.Context, coords *PackageCoordinates, srcRepo, dstRepo, assetName string, unfinished bool) (*AssetResult, error) {
+// PromoteAsset copies a single asset from srcRepo to dstRepo. When unfinished
+// is true the destination version is kept in Unfinished status so more assets
+// can be added. The final asset in a batch must be published with
+// unfinished=false to move the version to Published.
+func (p *Promoter) PromoteAsset(ctx context.Context, coords *PackageCoordinates, srcRepo, dstRepo, assetName string, unfinished bool) (*AssetResult, error) {
 	start := time.Now()
 	result := &AssetResult{Name: assetName, Method: "buffered"}
 

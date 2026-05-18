@@ -138,35 +138,45 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		}
 	}
 
-	start := time.Now()
 	promoter := cob.NewPromoter(client)
-	results, err := promoter.Promote(ctx, coords, srcRepo, toRepo)
+	assetNames, err := promoter.ListAssetsToPromote(ctx, coords, srcRepo)
+	if err != nil {
+		out.ErrorResult("promote", err.Error())
+		os.Exit(cob.ExitError)
+	}
 
 	cmdResult := &cob.CommandResult{
 		Command:    "promote",
 		Package:    fmt.Sprintf("%s/%s@%s", coords.Namespace, coords.Package, coords.Version),
 		Repository: fmt.Sprintf("%s -> %s", srcRepo, toRepo),
-		Assets:     results,
 		Status:     "ok",
 	}
 
-	for _, r := range results {
-		cmdResult.TotalSize += r.Size
-		out.AssetOK(&r, "")
-	}
-
-	if err != nil {
-		cmdResult.Status = "error"
-		cmdResult.Error = err.Error()
-		out.Error("%s\n  Promoted %d assets to %s before failure. Version is in partial state.\n  Re-run with --force to delete and retry.",
-			err, len(results), toRepo)
-		cmdResult.DurationMs = time.Since(start).Milliseconds()
-		out.CommandResult(cmdResult)
-		os.Exit(cob.ExitError)
+	start := time.Now()
+	for i, name := range assetNames {
+		isLast := i == len(assetNames)-1
+		out.AssetStart(name, "", 0)
+		ar, err := promoter.PromoteAsset(ctx, coords, srcRepo, toRepo, name, !isLast)
+		if err != nil {
+			out.AssetFail(name, "", err)
+			for _, remaining := range assetNames[i+1:] {
+				out.AssetSkipped(remaining)
+			}
+			cmdResult.Status = "error"
+			cmdResult.Error = err.Error()
+			out.Error("%s\n  Promoted %d of %d assets to %s before failure. Version is in partial state.\n  Re-run with --force to delete and retry.",
+				err, len(cmdResult.Assets), len(assetNames), toRepo)
+			cmdResult.DurationMs = time.Since(start).Milliseconds()
+			out.CommandResult(cmdResult)
+			os.Exit(cob.ExitError)
+		}
+		cmdResult.Assets = append(cmdResult.Assets, *ar)
+		cmdResult.TotalSize += ar.Size
+		out.AssetOK(ar, "")
 	}
 
 	cmdResult.DurationMs = time.Since(start).Milliseconds()
-	out.Summary("Promoted %d assets in %s", len(results), output.FormatDuration(cmdResult.DurationMs))
+	out.Summary("Promoted %d assets in %s", len(cmdResult.Assets), output.FormatDuration(cmdResult.DurationMs))
 
 	return out.CommandResult(cmdResult)
 }
