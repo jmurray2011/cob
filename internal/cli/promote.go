@@ -147,12 +147,24 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		Status:     "ok",
 	}
 
+	srcCoords := &cob.PackageCoordinates{Domain: coords.Domain, Repository: srcRepo, Namespace: coords.Namespace, Package: coords.Package, Version: coords.Version}
+
+	// The provenance asset is not copied verbatim — it is read, a promote
+	// link is appended, and the updated document is written to the
+	// destination as the finalizer.
+	realNames := make([]string, 0, len(assetNames))
+	for _, n := range assetNames {
+		if n != cob.ProvenanceFile {
+			realNames = append(realNames, n)
+		}
+	}
+
 	start := time.Now()
-	results, _, ok := runFinalizeProtocol(len(assetNames), concurrency,
-		func(i int, unfinished bool) (*cob.AssetResult, error) {
-			name := assetNames[i]
+	results, _, ok := runConcurrent(len(realNames), concurrency,
+		func(i int) (*cob.AssetResult, error) {
+			name := realNames[i]
 			out.AssetStart(name, "", 0)
-			ar, err := promoter.PromoteAsset(ctx, coords, srcRepo, toRepo, name, unfinished)
+			ar, err := promoter.PromoteAsset(ctx, coords, srcRepo, toRepo, name, true)
 			if err != nil {
 				out.AssetFail(name, "", err)
 				return ar, err
@@ -167,16 +179,67 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 			cmdResult.TotalSize += r.Size
 		}
 	}
-	cmdResult.DurationMs = time.Since(start).Milliseconds()
 
 	if !ok {
+		cmdResult.DurationMs = time.Since(start).Milliseconds()
 		cmdResult.Status = "error"
 		cmdResult.Error = firstResultError(results)
 		out.Error("%s\n  Promoted %d of %d assets to %s before failure. Version is in partial state.\n  Re-run with --force to delete and retry.",
-			cmdResult.Error, len(cmdResult.Assets), len(assetNames), toRepo)
+			cmdResult.Error, len(cmdResult.Assets), len(realNames), toRepo)
 		out.CommandResult(cmdResult)
 		return &ExitError{Code: cob.ExitError}
 	}
+
+	// Carry the provenance forward with an appended promote link.
+	reg := cob.NewRegistry(client)
+	prov, _ := cob.FetchProvenance(ctx, client.CodeArtifact, srcCoords)
+	if prov == nil {
+		// Source wasn't cob-published (or pre-provenance): synthesize from
+		// what CodeArtifact reports so the chain still starts somewhere.
+		prov = &cob.Provenance{Package: fmt.Sprintf("%s/%s", coords.Namespace, coords.Package)}
+		if listed, lerr := reg.ListAssets(ctx, srcCoords); lerr == nil {
+			for _, a := range listed {
+				if a.Name == cob.ProvenanceFile {
+					continue
+				}
+				prov.Assets = append(prov.Assets, cob.ProvenanceEntry{Asset: a.Name, SHA256: a.SHA256, Size: a.Size})
+			}
+		}
+	}
+	if len(prov.Chain) == 0 { // pre-v2 doc or synthesized
+		prov.Chain = []cob.ProvenanceEvent{{
+			Event:      "publish",
+			Repository: fmt.Sprintf("%s/%s", coords.Domain, srcRepo),
+			Version:    coords.Version,
+			Time:       cob.NowStamp(),
+		}}
+	}
+	prov.Chain = append(prov.Chain, cob.ProvenanceEvent{
+		Event:      "promote",
+		From:       fmt.Sprintf("%s/%s", coords.Domain, srcRepo),
+		To:         fmt.Sprintf("%s/%s", coords.Domain, toRepo),
+		Time:       cob.NowStamp(),
+		CobVersion: buildVersion,
+		Region:     client.Region,
+		Actor:      client.CallerIdentity(ctx),
+	})
+
+	provSrc := cob.NewBytesSource(cob.ProvenanceFile, prov.Marshal())
+	out.AssetStart(cob.ProvenanceFile, "", 0)
+	par, perr := cob.NewPublisher(client).PublishAsset(ctx, destCoords, cob.ProvenanceFile, provSrc, false)
+	if perr != nil {
+		out.AssetFail(cob.ProvenanceFile, "", perr)
+		cmdResult.DurationMs = time.Since(start).Milliseconds()
+		cmdResult.Status = "error"
+		cmdResult.Error = perr.Error()
+		out.Error("%s\n  Assets promoted but provenance/finalize failed. Version is in partial state.\n  Re-run with --force to delete and retry.", perr)
+		out.CommandResult(cmdResult)
+		return &ExitError{Code: cob.ExitError}
+	}
+	out.AssetOK(par, "")
+	cmdResult.Assets = append(cmdResult.Assets, *par)
+	cmdResult.TotalSize += par.Size
+	cmdResult.DurationMs = time.Since(start).Milliseconds()
 
 	out.Summary("Promoted %d assets in %s", len(cmdResult.Assets), output.FormatDuration(cmdResult.DurationMs))
 	return out.CommandResult(cmdResult)

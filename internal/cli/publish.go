@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"time"
@@ -159,22 +161,32 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		return &ExitError{Code: cob.ExitError}
 	}
 
-	// Build + publish provenance (the finalizer).
-	prov := &cob.Provenance{
-		Package:    fmt.Sprintf("%s/%s", m.Namespace, m.Package),
-		Repository: fmt.Sprintf("%s/%s", m.Domain, m.Repository),
-		Version:    version,
-		CobVersion: buildVersion,
-	}
+	// Build + publish provenance (the finalizer): one publish chain event
+	// plus, per asset, where it physically came from.
+	prov := &cob.Provenance{Package: fmt.Sprintf("%s/%s", m.Namespace, m.Package)}
 	for i, ns := range sources {
-		prov.Assets = append(prov.Assets, cob.ProvenanceEntry{
+		entry := cob.ProvenanceEntry{
 			Key:    ns.Name,
 			Source: ns.Source.URI(),
 			Asset:  ns.Source.Filename(),
 			SHA256: results[i].SHA256,
 			Size:   results[i].Size,
-		})
+		}
+		if o, oerr := ns.Source.Origin(ctx); oerr == nil {
+			entry.Origin = o
+		}
+		prov.Assets = append(prov.Assets, entry)
 	}
+	prov.Chain = []cob.ProvenanceEvent{{
+		Event:          "publish",
+		Repository:     fmt.Sprintf("%s/%s", m.Domain, m.Repository),
+		Version:        version,
+		Time:           cob.NowStamp(),
+		CobVersion:     buildVersion,
+		Region:         client.Region,
+		ManifestSHA256: fileSHA256(manifestPath),
+		Actor:          client.CallerIdentity(ctx),
+	}}
 	provSrc := cob.NewBytesSource(cob.ProvenanceFile, prov.Marshal())
 	out.AssetStart(cob.ProvenanceFile, "", 0)
 	par, err := publisher.PublishAsset(ctx, coords, cob.ProvenanceFile, provSrc, false)
@@ -195,6 +207,17 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 	out.Summary("Published %d assets (%s) in %s",
 		len(result.Assets), output.FormatSize(result.TotalSize), output.FormatDuration(result.DurationMs))
 	return out.CommandResult(result)
+}
+
+// fileSHA256 returns the hex SHA-256 of a file's contents, or "" if it
+// can't be read. Used to stamp the manifest digest into provenance.
+func fileSHA256(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // firstResultError returns the error message of the first failed asset
