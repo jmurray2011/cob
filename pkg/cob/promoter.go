@@ -1,12 +1,8 @@
 package cob
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -82,19 +78,18 @@ func (p *Promoter) PromoteAsset(ctx context.Context, coords *PackageCoordinates,
 		return result, fmt.Errorf("reading %q from %s: %w", assetName, srcRepo, err)
 	}
 
-	// Buffer the content to compute hash and get a ReadSeeker.
-	buf, err := io.ReadAll(getOut.Asset)
+	// Stream to a temp file (bounded memory, no size cap), hashing in the
+	// same pass, to get the io.ReadSeeker PublishPackageVersion needs.
+	ta, err := spillToTemp(getOut.Asset)
 	getOut.Asset.Close()
 	if err != nil {
 		result.SetError(err)
 		return result, fmt.Errorf("buffering %q: %w", assetName, err)
 	}
+	defer ta.Close()
 
-	h := sha256.Sum256(buf)
-	hash := hex.EncodeToString(h[:])
-
-	result.Size = int64(len(buf))
-	result.SHA256 = hash
+	result.Size = ta.Size
+	result.SHA256 = ta.SHA256
 
 	// Publish to destination repo.
 	input := &codeartifact.PublishPackageVersionInput{
@@ -105,8 +100,8 @@ func (p *Promoter) PromoteAsset(ctx context.Context, coords *PackageCoordinates,
 		PackageVersion: aws.String(coords.Version),
 		Format:         FormatGeneric,
 		AssetName:      aws.String(assetName),
-		AssetSHA256:    aws.String(hash),
-		AssetContent:   bytes.NewReader(buf),
+		AssetSHA256:    aws.String(ta.SHA256),
+		AssetContent:   ta.f,
 	}
 	if unfinished {
 		input.Unfinished = aws.Bool(true)

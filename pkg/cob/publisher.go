@@ -1,20 +1,14 @@
 package cob
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 )
-
-const maxBufferSize = 512 * 1024 * 1024 // 512MB
 
 // Publisher handles publishing assets to CodeArtifact.
 type Publisher struct {
@@ -33,11 +27,11 @@ func NewPublisher(client *Client) *Publisher {
 // the manifest's YAML key. The YAML key is just a label for display and for
 // consumers looking up assets by a stable handle in higher-level tooling.
 //
-// All transfers buffer in memory because PublishPackageVersion requires an
-// io.ReadSeeker (for Content-Length + retries), not just an io.Reader. The
-// distinction between "hash known upfront" and "hash computed" still matters:
-// when the source provides a hash we skip the sha256 pass over the buffer.
-// But the bytes always land in memory either way.
+// PublishPackageVersion requires an io.ReadSeeker (for Content-Length +
+// retries), so the source is streamed to a temporary file rather than held
+// in memory — memory stays bounded regardless of asset size and there is no
+// size ceiling. SHA-256 is computed during that single streaming pass; if
+// the source advertised a hash and it disagrees, that's an integrity error.
 //
 // When unfinished is true, the version is kept in Unfinished status so more
 // assets can be added. The final asset should be published with unfinished=false
@@ -65,35 +59,30 @@ func (p *Publisher) PublishAsset(ctx context.Context, coords *PackageCoordinates
 	}
 	result.Size = meta.Size
 
-	// Refuse to buffer huge assets that don't have a hash — same as before.
-	// (Assets *with* a hash still buffer, but at least the user opted in
-	// by uploading a large object to S3 with a checksum.)
-	if meta.SHA256 == "" && meta.Size > maxBufferSize {
-		err := fmt.Errorf("asset %q is %d bytes without SHA-256 metadata; max buffer is %d bytes. Add SHA-256 checksum to the S3 object", name, meta.Size, maxBufferSize)
-		result.SetError(err)
-		return result, err
-	}
-
-	// Step 2: Read the full body into memory.
+	// Step 2: Stream the body to a temp file (bounded memory, no size cap),
+	// hashing in the same pass.
 	reader, err := src.Open(ctx)
 	if err != nil {
 		result.SetError(err)
 		return result, err
 	}
-	buf, err := io.ReadAll(reader)
+	ta, err := spillToTemp(reader)
 	reader.Close()
 	if err != nil {
 		result.SetError(err)
 		return result, fmt.Errorf("reading %s: %w", name, err)
 	}
+	defer ta.Close()
 
-	// Step 3: Determine the hash.
-	hash := meta.SHA256
-	if hash == "" {
-		h := sha256.Sum256(buf)
-		hash = hex.EncodeToString(h[:])
+	// Step 3: The computed hash is authoritative. If the source advertised
+	// one and it disagrees, the bytes changed in flight — refuse.
+	if meta.SHA256 != "" && meta.SHA256 != ta.SHA256 {
+		err := fmt.Errorf("asset %q: source SHA-256 %s != streamed %s", name, meta.SHA256, ta.SHA256)
+		result.SetError(err)
+		return result, err
 	}
-	result.SHA256 = hash
+	result.Size = ta.Size
+	result.SHA256 = ta.SHA256
 
 	// Step 4: Publish to CodeArtifact.
 	input := &codeartifact.PublishPackageVersionInput{
@@ -104,8 +93,8 @@ func (p *Publisher) PublishAsset(ctx context.Context, coords *PackageCoordinates
 		PackageVersion: aws.String(coords.Version),
 		Format:         FormatGeneric,
 		AssetName:      aws.String(assetName),
-		AssetSHA256:    aws.String(hash),
-		AssetContent:   bytes.NewReader(buf),
+		AssetSHA256:    aws.String(ta.SHA256),
+		AssetContent:   ta.f,
 	}
 	if unfinished {
 		input.Unfinished = aws.Bool(true)
