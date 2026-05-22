@@ -102,45 +102,13 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		return fail(out, "pull", codeFor(err), "listing assets: %s", err)
 	}
 
-	// Filter to requested assets.
-	var assets []cob.AssetInfo
-	if assetArg != "" {
-		// Single asset by positional arg.
-		for _, a := range allAssets {
-			if a.Name == assetArg {
-				assets = append(assets, a)
-				break
-			}
-		}
-		if len(assets) == 0 {
-			return fail(out, "pull", cob.ExitNotFound, "asset %q not found in %s/%s@%s", assetArg, coords.Namespace, coords.Package, coords.Version)
-		}
-	} else if assetsFilter != "" {
-		// Comma-separated filter.
-		wanted := make(map[string]bool)
-		for _, name := range strings.Split(assetsFilter, ",") {
-			wanted[strings.TrimSpace(name)] = true
-		}
-		matched := make(map[string]bool)
-		for _, a := range allAssets {
-			if wanted[a.Name] {
-				assets = append(assets, a)
-				matched[a.Name] = true
-			}
-		}
-		// Warn about names in the filter that didn't match any asset.
-		for name := range wanted {
-			if !matched[name] {
-				out.Warn("asset %q not found in %s/%s@%s, skipping",
-					name, coords.Namespace, coords.Package, coords.Version)
-			}
-		}
-		if len(assets) == 0 {
-			return fail(out, "pull", cob.ExitNotFound, "none of the requested assets found in %s/%s@%s",
-				coords.Namespace, coords.Package, coords.Version)
-		}
-	} else {
-		assets = allAssets
+	// Narrow to the requested assets.
+	assets, unmatched, err := selectAssets(allAssets, assetArg, assetsFilter)
+	for _, name := range unmatched {
+		out.Warn("asset %q not found in %s/%s@%s, skipping", name, coords.Namespace, coords.Package, coords.Version)
+	}
+	if err != nil {
+		return fail(out, "pull", cob.ExitNotFound, "%s in %s/%s@%s", err, coords.Namespace, coords.Package, coords.Version)
 	}
 
 	if outputPath == "" {
@@ -231,6 +199,46 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		writePulledManifest(ctx, client, coords, assets, outputPath, out)
 	}
 	return out.CommandResult(result)
+}
+
+// selectAssets narrows the full asset list to what the caller asked for: a
+// single positional asset, a comma-separated --assets filter, or — given
+// neither — everything. unmatched holds any --assets names that matched no
+// asset (the caller warns on each). A non-nil error means nothing matched
+// at all; it carries no coordinates, so the caller frames it.
+func selectAssets(all []cob.AssetInfo, assetArg, assetsFilter string) (selected []cob.AssetInfo, unmatched []string, err error) {
+	switch {
+	case assetArg != "":
+		for _, a := range all {
+			if a.Name == assetArg {
+				return []cob.AssetInfo{a}, nil, nil
+			}
+		}
+		return nil, nil, fmt.Errorf("asset %q not found", assetArg)
+	case assetsFilter != "":
+		wanted := make(map[string]bool)
+		for _, name := range strings.Split(assetsFilter, ",") {
+			wanted[strings.TrimSpace(name)] = true
+		}
+		matched := make(map[string]bool)
+		for _, a := range all {
+			if wanted[a.Name] {
+				selected = append(selected, a)
+				matched[a.Name] = true
+			}
+		}
+		for name := range wanted {
+			if !matched[name] {
+				unmatched = append(unmatched, name)
+			}
+		}
+		if len(selected) == 0 {
+			return nil, unmatched, fmt.Errorf("none of the requested assets found")
+		}
+		return selected, unmatched, nil
+	default:
+		return all, nil, nil
+	}
 }
 
 func writePulledManifest(ctx context.Context, client *cob.Client, coords *cob.PackageCoordinates, assets []cob.AssetInfo, dir string, out *output.Writer) {

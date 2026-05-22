@@ -133,8 +133,12 @@ func (p *Provenance) Marshal() []byte {
 	return append(b, '\n')
 }
 
+// now is the time source for provenance stamps. It is a package var so a
+// test can pin it and compare generated provenance against a golden value.
+var now = time.Now
+
 // NowStamp is the RFC3339 UTC timestamp used for chain events.
-func NowStamp() string { return time.Now().UTC().Format(time.RFC3339) }
+func NowStamp() string { return now().UTC().Format(time.RFC3339) }
 
 // bytesSource is an in-memory AssetSource used to publish the generated
 // provenance document through the normal publish path.

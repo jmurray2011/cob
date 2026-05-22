@@ -147,8 +147,6 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		Status:     "ok",
 	}
 
-	srcCoords := &cob.PackageCoordinates{Domain: coords.Domain, Repository: srcRepo, Namespace: coords.Namespace, Package: coords.Package, Version: coords.Version}
-
 	// The provenance asset is not copied verbatim — it is read, a promote
 	// link is appended, and the updated document is written to the
 	// destination as the finalizer.
@@ -191,12 +189,33 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		return &ExitError{Code: cob.ExitError}
 	}
 
-	// Carry the provenance forward with an appended promote link.
-	prov, perr := cob.FetchProvenance(ctx, client.CodeArtifact, srcCoords)
-	if perr != nil {
-		// A transient/corrupt fetch must not be mistaken for "no provenance"
-		// — synthesizing a fresh chain there would discard real history.
-		return fail(out, "promote", cob.ExitError, "reading source provenance: %s", perr)
+	prov, err := carryForwardProvenance(ctx, client, coords, srcRepo, toRepo, realNames, results)
+	if err != nil {
+		return fail(out, "promote", cob.ExitError, "%s", err)
+	}
+
+	if err := finalizeProvenance(ctx, cob.NewPublisher(client), destCoords, prov, out, cmdResult, start,
+		"Assets promoted but provenance/finalize failed. Version is in partial state."); err != nil {
+		return err
+	}
+
+	out.Summary("Promoted %d assets in %s", len(cmdResult.Assets), output.FormatDuration(cmdResult.DurationMs))
+	return out.CommandResult(cmdResult)
+}
+
+// carryForwardProvenance reads the source version's provenance, rebuilds its
+// asset list to match what was actually promoted, and appends a promote
+// event — producing the document to publish as the destination finalizer. A
+// source that predates cob provenance yields a synthesized document; a
+// transient fetch error is returned (it must not be read as "absent",
+// which would discard real chain history). coords must already carry the
+// source repository.
+func carryForwardProvenance(ctx context.Context, client *cob.Client, coords *cob.PackageCoordinates,
+	srcRepo, toRepo string, realNames []string, results []*cob.AssetResult) (*cob.Provenance, error) {
+
+	prov, err := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
+	if err != nil {
+		return nil, fmt.Errorf("reading source provenance: %w", err)
 	}
 	if prov == nil {
 		// Source wasn't cob-published (or pre-provenance): synthesize so the
@@ -227,14 +246,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		Region:     client.Region,
 		Actor:      client.CallerIdentity(ctx),
 	})
-
-	if err := finalizeProvenance(ctx, cob.NewPublisher(client), destCoords, prov, out, cmdResult, start,
-		"Assets promoted but provenance/finalize failed. Version is in partial state."); err != nil {
-		return err
-	}
-
-	out.Summary("Promoted %d assets in %s", len(cmdResult.Assets), output.FormatDuration(cmdResult.DurationMs))
-	return out.CommandResult(cmdResult)
+	return prov, nil
 }
 
 // reconcilePromotedAssets rebuilds the provenance asset list so it describes

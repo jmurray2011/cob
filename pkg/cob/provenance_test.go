@@ -6,10 +6,20 @@ import (
 	"encoding/json"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 )
+
+func TestNowStampSeam(t *testing.T) {
+	orig := now
+	defer func() { now = orig }()
+	now = func() time.Time { return time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC) }
+	if got := NowStamp(); got != "2026-03-04T05:06:07Z" {
+		t.Errorf("NowStamp() = %q, want the pinned time (clock seam must be honoured)", got)
+	}
+}
 
 func sampleProv() *Provenance {
 	tru := true
