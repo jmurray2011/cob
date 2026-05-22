@@ -183,10 +183,17 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 			return ar, nil
 		})
 
+	// Record every asset that ran — successes and failures — so a --json
+	// consumer can see which one failed. Only successes count toward bytes.
+	succeeded := 0
 	for _, r := range results {
-		if r != nil && r.Error == nil {
-			cmdResult.Assets = append(cmdResult.Assets, *r)
+		if r == nil {
+			continue // never scheduled: an earlier task failed first
+		}
+		cmdResult.Assets = append(cmdResult.Assets, *r)
+		if r.Error == nil {
 			cmdResult.TotalSize += r.Size
+			succeeded++
 		}
 	}
 
@@ -195,7 +202,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		cmdResult.Status = "error"
 		cmdResult.Error = firstResultError(results)
 		out.Error("%s\n  Promoted %d of %d assets to %s before failure. Version is in partial state.\n  Re-run with --force to delete and retry.",
-			cmdResult.Error, len(cmdResult.Assets), len(realNames), toRepo)
+			cmdResult.Error, succeeded, len(realNames), toRepo)
 		out.CommandResult(cmdResult)
 		return &ExitError{Code: cob.ExitError}
 	}

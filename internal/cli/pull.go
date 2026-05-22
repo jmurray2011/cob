@@ -171,10 +171,17 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		return ar, nil
 	})
 
+	// Record every asset that ran — successes and failures — so a --json
+	// consumer can see which one failed. Only successes count toward bytes.
+	succeeded := 0
 	for _, r := range results {
-		if r != nil && r.Error == nil {
-			result.Assets = append(result.Assets, *r)
+		if r == nil {
+			continue // never scheduled: an earlier task failed first
+		}
+		result.Assets = append(result.Assets, *r)
+		if r.Error == nil {
 			result.TotalSize += r.Size
+			succeeded++
 		}
 	}
 	if !ok {
@@ -183,7 +190,7 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 	}
 
 	result.DurationMs = time.Since(start).Milliseconds()
-	out.Summary("Pulled %d assets to %s", len(result.Assets), outputPath)
+	out.Summary("Pulled %d assets to %s", succeeded, outputPath)
 
 	// A failed asset must surface as a non-zero exit (a CI step that does
 	// `cob pull && deploy` otherwise deploys with missing/partial assets).

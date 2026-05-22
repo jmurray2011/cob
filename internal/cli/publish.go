@@ -150,10 +150,18 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 			return ar, nil
 		})
 
+	// Record every asset that ran — successes and failures — so a --json
+	// consumer can see which one failed (the per-asset error field marks
+	// it). Only successes count toward the transferred byte total.
+	succeeded := 0
 	for _, r := range results {
-		if r != nil && r.Error == nil {
-			result.Assets = append(result.Assets, *r)
+		if r == nil {
+			continue // never scheduled: an earlier task failed first
+		}
+		result.Assets = append(result.Assets, *r)
+		if r.Error == nil {
 			result.TotalSize += r.Size
+			succeeded++
 		}
 	}
 
@@ -162,7 +170,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		result.Status = "error"
 		result.Error = firstResultError(results)
 		out.Error("%s\n  Published %d of %d assets. Version is in unfinished state.\n  Re-run with --force to delete and retry.",
-			result.Error, len(result.Assets), len(sources))
+			result.Error, succeeded, len(sources))
 		out.CommandResult(result)
 		return &ExitError{Code: cob.ExitError}
 	}
