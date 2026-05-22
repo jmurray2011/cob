@@ -161,6 +161,44 @@ func TestLoadInvalidManifest(t *testing.T) {
 	}
 }
 
+func TestLoadStrictDecode(t *testing.T) {
+	valid := `domain: d
+repository: r
+namespace: n
+package: p
+sources:
+  a: s3://b/k
+`
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{"unknown top-level key", "repositroy: r\n" + valid},
+		{"unknown key under promote", valid + "promote:\n  stagess: [dev]\n"},
+		{"empty file", ""},
+		{"source value is not a scalar", `domain: d
+repository: r
+namespace: n
+package: p
+sources:
+  a:
+    nested: oops
+`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "m.yaml")
+			if err := os.WriteFile(path, []byte(tt.yaml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatalf("expected Load to reject %s", tt.name)
+			}
+		})
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

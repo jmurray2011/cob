@@ -1,7 +1,10 @@
 package manifest
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,23 +19,25 @@ type SourceEntry struct {
 	URI  string
 }
 
-// Manifest represents a parsed cob manifest file.
+// Manifest represents a parsed cob manifest file. It is built from a
+// manifestDoc by Load; it is not itself a YAML decode target, so it carries
+// no yaml tags.
 type Manifest struct {
-	Domain     string         `yaml:"domain"`
-	Repository string         `yaml:"repository"`
-	Namespace  string         `yaml:"namespace"`
-	Package    string         `yaml:"package"`
-	Promote    *PromoteConfig `yaml:"promote,omitempty"`
+	Domain     string
+	Repository string
+	Namespace  string
+	Package    string
+	Promote    *PromoteConfig
 
 	// Sources preserves the order from the YAML file.
-	Sources []SourceEntry `yaml:"-"`
+	Sources []SourceEntry
 
 	// Dir is the directory containing the manifest file.
 	// Used for resolving relative paths in sources.
-	Dir string `yaml:"-"`
+	Dir string
 
 	// Overrides records which manifest fields were overridden by env vars.
-	Overrides []EnvOverride `yaml:"-"`
+	Overrides []EnvOverride
 }
 
 // PromoteConfig holds the promotion stage list.
@@ -40,32 +45,18 @@ type PromoteConfig struct {
 	Stages []string `yaml:"stages"`
 }
 
-// allowedManifestKeys is the set of recognised top-level manifest fields.
-var allowedManifestKeys = map[string]bool{
-	"domain": true, "repository": true, "namespace": true,
-	"package": true, "promote": true, "sources": true,
-}
-
-// checkManifestKeys rejects any unrecognised top-level field — almost always
-// a typo that would otherwise be silently ignored.
-func checkManifestKeys(data []byte) error {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return err
-	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		return nil
-	}
-	root := doc.Content[0]
-	if root.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if key := root.Content[i].Value; !allowedManifestKeys[key] {
-			return fmt.Errorf("unknown field %q", key)
-		}
-	}
-	return nil
+// manifestDoc is the on-disk shape of a manifest and the sole YAML decode
+// target. Every recognised key is a struct field, so decoding with
+// KnownFields(true) turns a typo (repositroy:, promtoe:) into a hard error
+// instead of a silently dropped field. `sources` is decoded as a raw node so
+// its key order survives — a Go map would lose it.
+type manifestDoc struct {
+	Domain     string         `yaml:"domain"`
+	Repository string         `yaml:"repository"`
+	Namespace  string         `yaml:"namespace"`
+	Package    string         `yaml:"package"`
+	Promote    *PromoteConfig `yaml:"promote,omitempty"`
+	Sources    yaml.Node      `yaml:"sources"`
 }
 
 // Load reads and parses a manifest file from disk.
@@ -76,38 +67,41 @@ func Load(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("reading manifest: %w", err)
 	}
 
-	// Reject unknown top-level fields up front so a typo (repositroy:,
-	// promtoe:) fails loudly instead of being silently dropped.
-	if err := checkManifestKeys(data); err != nil {
+	var doc manifestDoc
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&doc); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("invalid manifest %s: file is empty", path)
+		}
 		return nil, fmt.Errorf("invalid manifest %s: %w", path, err)
 	}
 
-	// First pass: decode the scalar fields normally.
-	var m Manifest
-	if err := yaml.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("parsing manifest %s: %w", path, err)
-	}
-
-	// Second pass: parse sources as a yaml.Node to preserve key order.
-	sources, err := parseOrderedSources(data)
+	sources, err := sourcesFromNode(&doc.Sources)
 	if err != nil {
-		return nil, fmt.Errorf("parsing sources in %s: %w", path, err)
+		return nil, fmt.Errorf("invalid manifest %s: %w", path, err)
 	}
-	m.Sources = sources
 
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	m.Dir = filepath.Dir(abs)
 
+	m := &Manifest{
+		Domain:     doc.Domain,
+		Repository: doc.Repository,
+		Namespace:  doc.Namespace,
+		Package:    doc.Package,
+		Promote:    doc.Promote,
+		Sources:    sources,
+		Dir:        filepath.Dir(abs),
+	}
 	m.Overrides = m.applyEnvOverrides()
 
 	if err := m.validate(); err != nil {
 		return nil, fmt.Errorf("invalid manifest %s: %w", path, err)
 	}
-
-	return &m, nil
+	return m, nil
 }
 
 // EnvOverride records a single manifest field overridden by an env var.
@@ -137,39 +131,25 @@ func (m *Manifest) applyEnvOverrides() []EnvOverride {
 	return overrides
 }
 
-// parseOrderedSources extracts the "sources" mapping from raw YAML,
-// preserving the key order from the file.
-func parseOrderedSources(data []byte) ([]SourceEntry, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, err
+// sourcesFromNode converts the raw `sources:` mapping node into ordered
+// SourceEntry values. A zero node (the key was absent) yields nil, which
+// validate() then rejects with a clearer "at least one source" message.
+func sourcesFromNode(node *yaml.Node) ([]SourceEntry, error) {
+	if node == nil || node.Kind == 0 {
+		return nil, nil
 	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		return nil, fmt.Errorf("unexpected YAML structure")
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("sources must be a mapping")
 	}
-	root := doc.Content[0]
-	if root.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("expected mapping at top level")
-	}
-
-	// Find the "sources" key.
-	for i := 0; i < len(root.Content)-1; i += 2 {
-		if root.Content[i].Value == "sources" {
-			srcNode := root.Content[i+1]
-			if srcNode.Kind != yaml.MappingNode {
-				return nil, fmt.Errorf("sources must be a mapping")
-			}
-			var entries []SourceEntry
-			for j := 0; j < len(srcNode.Content)-1; j += 2 {
-				entries = append(entries, SourceEntry{
-					Name: srcNode.Content[j].Value,
-					URI:  srcNode.Content[j+1].Value,
-				})
-			}
-			return entries, nil
+	entries := make([]SourceEntry, 0, len(node.Content)/2)
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, val := node.Content[i], node.Content[i+1]
+		if val.Kind != yaml.ScalarNode {
+			return nil, fmt.Errorf("source %q must be a string URI", key.Value)
 		}
+		entries = append(entries, SourceEntry{Name: key.Value, URI: val.Value})
 	}
-	return nil, nil
+	return entries, nil
 }
 
 func (m *Manifest) validate() error {
