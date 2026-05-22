@@ -10,6 +10,7 @@ var (
 	flagProfile string
 	flagRegion  string
 	flagJSON    bool
+	flagDebug   bool
 
 	// buildVersion is the cob version, recorded in provenance documents.
 	buildVersion string
@@ -44,6 +45,7 @@ func NewRootCmd(version string) *cobra.Command {
 	root.PersistentFlags().StringVar(&flagProfile, "profile", "", "AWS profile")
 	root.PersistentFlags().StringVar(&flagRegion, "region", "", "AWS region")
 	root.PersistentFlags().BoolVar(&flagJSON, "json", false, "Machine-readable JSON output")
+	root.PersistentFlags().BoolVar(&flagDebug, "debug", false, "Log AWS API requests/responses to stderr")
 
 	root.AddCommand(
 		newPublishCmd(),

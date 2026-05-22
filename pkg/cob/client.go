@@ -44,6 +44,8 @@ type Client struct {
 type ClientOptions struct {
 	Profile string
 	Region  string
+	// Debug enables AWS SDK request/response logging to stderr.
+	Debug bool
 }
 
 // NewClient creates a Client using the standard credential chain.
@@ -55,6 +57,11 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 	}
 	if opts.Region != "" {
 		cfgOpts = append(cfgOpts, config.WithRegion(opts.Region))
+	}
+	if opts.Debug {
+		// Headers and status lines to stderr — not bodies, which would dump
+		// whole asset transfers. The SDK's default logger targets stderr.
+		cfgOpts = append(cfgOpts, config.WithClientLogMode(aws.LogRequest|aws.LogResponse|aws.LogRetries))
 	}
 
 	cfg, err := config.LoadDefaultConfig(ctx, cfgOpts...)

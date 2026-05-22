@@ -67,7 +67,7 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 		Namespace: m.Namespace, Package: m.Package, Version: version,
 	}
 
-	client, err := newClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
+	client, err := dialClient(ctx)
 	if err != nil {
 		return fail(out, "verify", cob.ExitError, "%s", err)
 	}
@@ -185,7 +185,7 @@ func runVerifyCoords(ctx context.Context, target, versionFlag string) error {
 		coords.Version = v
 	}
 
-	client, err := newClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
+	client, err := dialClient(ctx)
 	if err != nil {
 		return fail(out, "verify", cob.ExitError, "%s", err)
 	}

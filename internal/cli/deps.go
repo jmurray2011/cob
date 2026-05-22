@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+
 	"github.com/jmurray2011/cob/internal/output"
 	"github.com/jmurray2011/cob/pkg/cob"
 )
@@ -13,3 +15,14 @@ var (
 	newClient = cob.NewClient
 	newWriter = output.New
 )
+
+// dialClient builds the AWS client from the current global flags. Every
+// command goes through it, so a flag affecting client construction is wired
+// in exactly one place.
+func dialClient(ctx context.Context) (*cob.Client, error) {
+	return newClient(ctx, cob.ClientOptions{
+		Profile: flagProfile,
+		Region:  flagRegion,
+		Debug:   flagDebug,
+	})
+}

@@ -98,10 +98,7 @@ func classifyLs(coords *cob.PackageCoordinates, target string, allRepos bool) (l
 func runLs(ctx context.Context, target string, allRepos bool) error {
 	out := newWriter(flagJSON)
 
-	client, err := newClient(ctx, cob.ClientOptions{
-		Profile: flagProfile,
-		Region:  flagRegion,
-	})
+	client, err := dialClient(ctx)
 	if err != nil {
 		return fail(out, "ls", cob.ExitError, "%s", err)
 	}

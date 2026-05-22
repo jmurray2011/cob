@@ -55,7 +55,7 @@ func runManifest(ctx context.Context, target, versionFlag string) error {
 		coords.Version = v
 	}
 
-	client, err := newClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
+	client, err := dialClient(ctx)
 	if err != nil {
 		return fail(out, "manifest", cob.ExitError, "%s", err)
 	}

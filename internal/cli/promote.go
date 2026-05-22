@@ -50,10 +50,7 @@ func newPromoteCmd() *cobra.Command {
 func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, yes bool, concurrency int) error {
 	out := newWriter(flagJSON)
 
-	client, err := newClient(ctx, cob.ClientOptions{
-		Profile: flagProfile,
-		Region:  flagRegion,
-	})
+	client, err := dialClient(ctx)
 	if err != nil {
 		return fail(out, "promote", cob.ExitError, "%s", err)
 	}

@@ -75,10 +75,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		Version:    version,
 	}
 
-	client, err := newClient(ctx, cob.ClientOptions{
-		Profile: flagProfile,
-		Region:  flagRegion,
-	})
+	client, err := dialClient(ctx)
 	if err != nil {
 		return fail(out, "publish", cob.ExitError, "%s", err)
 	}

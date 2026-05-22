@@ -53,10 +53,7 @@ func newPullCmd() *cobra.Command {
 func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
 	out := newWriter(flagJSON)
 
-	client, err := newClient(ctx, cob.ClientOptions{
-		Profile: flagProfile,
-		Region:  flagRegion,
-	})
+	client, err := dialClient(ctx)
 	if err != nil {
 		return fail(out, "pull", cob.ExitError, "%s", err)
 	}

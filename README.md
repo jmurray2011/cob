@@ -363,7 +363,12 @@ COB_VAR_GIT_SHA=abc123 cob publish my-package.yaml --version 2.1.0
 --profile    AWS profile
 --region     AWS region
 --json       Machine-readable JSON output
+--debug      Log AWS API requests/responses to stderr
 ```
+
+`--debug` is the first thing to reach for when an AWS call fails for a
+non-obvious reason (region, credentials, throttling) -- it logs every
+request and response line to stderr without touching stdout.
 
 ## Authentication
 

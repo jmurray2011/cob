@@ -54,7 +54,7 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) e
 		Namespace: m.Namespace, Package: m.Package, Version: version,
 	}
 
-	client, err := newClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
+	client, err := dialClient(ctx)
 	if err != nil {
 		return fail(out, "diff", cob.ExitError, "%s", err)
 	}

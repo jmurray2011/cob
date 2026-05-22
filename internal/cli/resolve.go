@@ -38,10 +38,7 @@ func runResolve(ctx context.Context, target string) error {
 		return fail(out, "resolve", cob.ExitError, "full coordinates required (domain/repo/namespace/package)")
 	}
 
-	client, err := newClient(ctx, cob.ClientOptions{
-		Profile: flagProfile,
-		Region:  flagRegion,
-	})
+	client, err := dialClient(ctx)
 	if err != nil {
 		return fail(out, "resolve", cob.ExitError, "%s", err)
 	}
