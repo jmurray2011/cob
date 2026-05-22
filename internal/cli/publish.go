@@ -349,7 +349,7 @@ func gatePublish(ctx context.Context, registry *cob.Registry, coords *cob.Packag
 		}
 	case exists && !force:
 		return nil, cob.ExitConflict, fmt.Errorf(
-			"version %s already exists in %s/%s. Use --force to overwrite, or --resume to continue an unfinished publish.",
+			"version %s already exists in %s/%s -- use --force to overwrite, or --resume to continue an unfinished publish",
 			coords.Version, coords.Domain, coords.Repository)
 	}
 	return present, cob.ExitOK, nil

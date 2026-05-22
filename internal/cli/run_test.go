@@ -277,13 +277,13 @@ func TestRunPromote(t *testing.T) {
 	t.Run("conflict when destination version exists", func(t *testing.T) {
 		// Default DescribePackageVersion reports the dest version as existing.
 		useFake(t, &fakeCA{})
-		err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, 4)
+		err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, false, 4)
 		wantExit(t, err, cob.ExitConflict)
 	})
 
 	t.Run("@latest with no source versions -> not found", func(t *testing.T) {
 		useFake(t, &fakeCA{}) // ListPackageVersions default: empty
-		err := runPromote(ctx, "dom/dev/ns/pkg@latest", "", "prod", false, true, false, 4)
+		err := runPromote(ctx, "dom/dev/ns/pkg@latest", "", "prod", false, true, false, false, 4)
 		wantExit(t, err, cob.ExitNotFound)
 	})
 
@@ -292,12 +292,49 @@ func TestRunPromote(t *testing.T) {
 		// existing; --dry-run must preview, not exit with a conflict.
 		ca := &fakeCA{listAssetsFn: oneAsset("app.bin", 9)}
 		stdout, _ := useFake(t, ca)
-		if err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, 4); err != nil {
+		if err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run with existing dest must not error, got %v", err)
 		}
 		if !strings.Contains(stdout.String(), "app.bin") {
 			t.Errorf("dry-run should still list the asset: %q", stdout.String())
 		}
+	})
+
+	t.Run("resume copies only the missing assets", func(t *testing.T) {
+		var copied int
+		ca := &fakeCA{
+			describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+				return &codeartifact.DescribePackageVersionOutput{
+					PackageVersion: &catypes.PackageVersionDescription{Status: catypes.PackageVersionStatusUnfinished},
+				}, nil
+			},
+			listAssetsFn: oneAsset("app.bin", 9), // already in dest
+			publishFn: func(*codeartifact.PublishPackageVersionInput) (*codeartifact.PublishPackageVersionOutput, error) {
+				copied++
+				return &codeartifact.PublishPackageVersionOutput{}, nil
+			},
+		}
+		useFake(t, ca)
+		if err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4); err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		// app.bin already present -> skipped; only cob-provenance.json publishes.
+		if copied != 1 {
+			t.Errorf("resume copied %d times, want 1 (just the provenance finalizer)", copied)
+		}
+	})
+
+	t.Run("resume with no unfinished dest version errors", func(t *testing.T) {
+		ca := &fakeCA{describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+			return nil, &catypes.ResourceNotFoundException{}
+		}}
+		useFake(t, ca)
+		wantExit(t, runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4), cob.ExitError)
+	})
+
+	t.Run("resume and force are mutually exclusive", func(t *testing.T) {
+		useFake(t, &fakeCA{})
+		wantExit(t, runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", true, true, false, true, 4), cob.ExitError)
 	})
 
 	t.Run("dry-run lists assets and promotes nothing", func(t *testing.T) {
@@ -313,7 +350,7 @@ func TestRunPromote(t *testing.T) {
 			},
 		}
 		stdout, _ := useFake(t, ca)
-		if err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, 4); err != nil {
+		if err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run: %v", err)
 		}
 		if published != 0 {

@@ -138,9 +138,14 @@ cob promote my-domain/dev/my-namespace/my-package@latest --to staging
 
 # Preview the move without copying anything
 cob promote my-domain/dev/my-namespace/my-package@2.1.0 --to staging --dry-run
+
+# Finish an interrupted promote without re-copying what already landed
+cob promote my-domain/dev/my-namespace/my-package@2.1.0 --to staging --resume
 ```
 
-Flags: `--to` (required), `--version`, `--force`, `--yes`, `--dry-run`, `--concurrency`
+Flags: `--to` (required), `--version`, `--force`, `--resume`, `--yes`, `--dry-run`, `--concurrency`
+
+`--resume` works the same way as on `publish`: it requires the destination version to be **Unfinished** (left behind by a partial promote), copies only assets not already present, then writes the finalizer. Mutually exclusive with `--force`.
 
 ### ls
 
@@ -554,7 +559,6 @@ Name packages for what they are, not for the fact that they're shared. `tools/sh
 ## Known limitations
 
 - **`--force` is not atomic.** Deletes the existing version then re-publishes. Brief window where the version doesn't exist.
-- **`promote` has no resume.** A partially-failed promote must be re-run with `--force`, which re-copies every asset. (`publish` has `--resume`, which doesn't.)
 - **Transfers spill to a temp file, not memory.** CodeArtifact's API requires an `io.ReadSeeker` (Content-Length + retries), so true end-to-end streaming isn't possible; cob streams each asset through a temp file in `$TMPDIR` instead of buffering in RAM. Memory stays bounded and there is no asset size limit, but a publish/promote needs free temp disk for the largest single asset. Note that `$TMPDIR` is `tmpfs` (RAM-backed) on many Linux systems -- for large assets, point `--tmpdir`/`COB_TMPDIR` at real disk with room for `concurrency` × the largest asset.
 - **`@latest` resolves by timestamp, not semver.** The most recently published version wins, regardless of version string ordering.
 

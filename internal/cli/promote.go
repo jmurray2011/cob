@@ -19,6 +19,7 @@ func newPromoteCmd() *cobra.Command {
 		flagForce       bool
 		flagYes         bool
 		flagDryRun      bool
+		flagResume      bool
 		flagConcurrency int
 	)
 
@@ -30,10 +31,13 @@ func newPromoteCmd() *cobra.Command {
   cob promote acme/dev/tools/my-app@2.1.0 --to staging
 
   # preview the move without copying anything
-  cob promote acme/dev/tools/my-app@2.1.0 --to staging --dry-run`,
+  cob promote acme/dev/tools/my-app@2.1.0 --to staging --dry-run
+
+  # finish an interrupted promote without re-copying what already landed
+  cob promote acme/dev/tools/my-app@2.1.0 --to staging --resume`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPromote(cmd.Context(), args[0], flagVersion, flagTo, flagForce, flagYes, flagDryRun, flagConcurrency)
+			return runPromote(cmd.Context(), args[0], flagVersion, flagTo, flagForce, flagYes, flagDryRun, flagResume, flagConcurrency)
 		},
 	}
 
@@ -42,14 +46,19 @@ func newPromoteCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&flagForce, "force", "f", false, "Overwrite if version exists in destination")
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Skip confirmation")
 	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Show what would be promoted, copy nothing")
+	cmd.Flags().BoolVar(&flagResume, "resume", false, "Continue an unfinished promote: copy only the missing assets")
 	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential)")
 	cmd.MarkFlagRequired("to")
 
 	return cmd
 }
 
-func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, yes, dryRun bool, concurrency int) error {
+func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, yes, dryRun, resume bool, concurrency int) error {
 	out := newWriter(flagJSON)
+
+	if resume && force {
+		return fail(out, "promote", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")
+	}
 
 	client, err := dialClient(ctx)
 	if err != nil {
@@ -110,25 +119,54 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		Package:    coords.Package,
 		Version:    coords.Version,
 	}
-	exists, err := registry.CheckVersionExists(ctx, destCoords)
+	status, exists, err := registry.VersionStatus(ctx, destCoords)
 	if err != nil {
 		return fail(out, "promote", cob.ExitError, "checking destination: %s", err)
 	}
 
-	// Dry-run before the conflict gate: a preview mutates nothing and is
-	// most useful precisely when the destination version already exists.
+	// Dry-run before the conflict/resume gate: a preview mutates nothing and
+	// is most useful precisely when the destination version already exists.
 	if dryRun {
 		return runPromoteDryRun(ctx, cob.NewPromoter(client), coords, srcRepo, toRepo, exists, out)
 	}
 
-	if exists && !force {
-		return fail(out, "promote", cob.ExitConflict, "version %s already exists in %s. Use --force to overwrite.", coords.Version, toRepo)
+	// present holds the assets already in an unfinished destination version
+	// being resumed; for a normal promote it stays nil, so nothing is skipped.
+	var present map[string]cob.AssetSummary
+	switch {
+	case resume:
+		if !exists {
+			return fail(out, "promote", cob.ExitError,
+				"no version %s in %s to resume — run promote without --resume", coords.Version, toRepo)
+		}
+		if status != "Unfinished" {
+			return fail(out, "promote", cob.ExitError,
+				"version %s in %s is not resumable (status %q) — only an unfinished promote can be resumed; use --force to overwrite", coords.Version, toRepo, status)
+		}
+		listed, lerr := registry.ListAssets(ctx, destCoords)
+		if lerr != nil {
+			return fail(out, "promote", cob.ExitError, "listing already-promoted assets: %s", lerr)
+		}
+		present = make(map[string]cob.AssetSummary, len(listed))
+		for _, a := range listed {
+			present[a.Name] = a
+		}
+	case exists && !force:
+		return fail(out, "promote", cob.ExitConflict,
+			"version %s already exists in %s. Use --force to overwrite, or --resume to continue an unfinished promote.",
+			coords.Version, toRepo)
 	}
 
-	out.Header("Promoting %s/%s@%s: %s -> %s",
-		coords.Namespace, coords.Package, coords.Version, srcRepo, toRepo)
+	verb := "Promoting"
+	prompt := fmt.Sprintf("Promote to %s?", toRepo)
+	if resume {
+		verb = "Resuming promote of"
+		prompt = fmt.Sprintf("Resume promote to %s?", toRepo)
+	}
+	out.Header("%s %s/%s@%s: %s -> %s",
+		verb, coords.Namespace, coords.Package, coords.Version, srcRepo, toRepo)
 
-	proceed, err := confirmAction(ctx, yes, fmt.Sprintf("Promote to %s?", toRepo))
+	proceed, err := confirmAction(ctx, yes, prompt)
 	if err != nil {
 		return fail(out, "promote", cob.ExitError, "%s", err)
 	}
@@ -173,31 +211,72 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	}
 
 	start := time.Now()
-	concurrency = resolveConcurrency(concurrency, out)
-	results, ok := runConcurrent(len(realNames), concurrency,
-		func(i int) (*cob.AssetResult, error) {
-			name := realNames[i]
-			out.AssetStart(name, "", 0)
-			ar, err := promoter.PromoteAsset(ctx, coords, srcRepo, toRepo, name, true)
-			if err != nil {
-				out.AssetFail(name, "", err)
-				return ar, err
-			}
-			out.AssetOK(ar, "")
-			return ar, nil
-		})
 
-	// Record every asset that ran — successes and failures — so a --json
-	// consumer can see which one failed. Only successes count toward bytes.
-	succeeded := 0
+	// Pre-fill skipped results (on --resume) and collect the names that
+	// still need copying.
+	results := make([]*cob.AssetResult, len(realNames))
+	var todos []int
+	for i, name := range realNames {
+		if a, done := present[name]; done {
+			out.AssetSkipped(name)
+			results[i] = &cob.AssetResult{Name: name, SHA256: a.SHA256, Size: a.Size, Method: "skipped"}
+			continue
+		}
+		todos = append(todos, i)
+	}
+
+	promoteOne := func(i int) (*cob.AssetResult, error) {
+		name := realNames[i]
+		out.AssetStart(name, "", 0)
+		ar, err := promoter.PromoteAsset(ctx, coords, srcRepo, toRepo, name, true)
+		if err != nil {
+			out.AssetFail(name, "", err)
+			return ar, err
+		}
+		out.AssetOK(ar, "")
+		return ar, nil
+	}
+
+	// Sync-promote the first to-copy asset so concurrent goroutines don't
+	// race CodeArtifact's implicit version creation. On --resume the dest
+	// version already exists, so this is a no-op race-wise — still cheap.
+	ok := true
+	if len(todos) > 0 {
+		first := todos[0]
+		ar, err := promoteOne(first)
+		results[first] = ar
+		if err != nil {
+			ok = false
+		}
+		todos = todos[1:]
+	}
+
+	if ok && len(todos) > 0 {
+		concurrency = resolveConcurrency(concurrency, out)
+		rest, restOk := runConcurrent(len(todos), concurrency, func(j int) (*cob.AssetResult, error) {
+			return promoteOne(todos[j])
+		})
+		for j, r := range rest {
+			results[todos[j]] = r
+		}
+		ok = restOk
+	}
+
+	// Record every asset that ran — copied, skipped, or failed — so a --json
+	// consumer sees the full picture. Only fresh copies count toward bytes.
+	copied, skipped := 0, 0
 	for _, r := range results {
 		if r == nil {
-			continue // never scheduled: an earlier task failed first
+			continue
 		}
 		cmdResult.Assets = append(cmdResult.Assets, *r)
-		if r.Error == nil {
+		switch {
+		case r.Error != nil:
+		case r.Method == "skipped":
+			skipped++
+		default:
 			cmdResult.TotalSize += r.Size
-			succeeded++
+			copied++
 		}
 	}
 
@@ -205,8 +284,8 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		cmdResult.DurationMs = time.Since(start).Milliseconds()
 		cmdResult.Status = "error"
 		cmdResult.Error = firstResultError(results)
-		out.Error("%s\n  Promoted %d of %d assets to %s before failure. Version is in partial state.\n  Re-run with --force to delete and retry.",
-			cmdResult.Error, succeeded, len(realNames), toRepo)
+		out.Error("%s\n  %d of %d assets in place in %s. Version is unfinished — re-run with --resume to continue.",
+			cmdResult.Error, copied+skipped, len(realNames), toRepo)
 		out.CommandResult(cmdResult)
 		return &ExitError{Code: cob.ExitError}
 	}
@@ -217,11 +296,16 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	}
 
 	if err := finalizeProvenance(ctx, cob.NewPublisher(client), destCoords, prov, out, cmdResult, start,
-		"Assets promoted but provenance/finalize failed. Version is in a partial state — re-run with --force to delete and retry."); err != nil {
+		"Assets promoted but provenance/finalize failed. Version is unfinished — re-run with --resume to finalize it."); err != nil {
 		return err
 	}
 
-	out.Summary("Promoted %d assets in %s", len(cmdResult.Assets), output.FormatDuration(cmdResult.DurationMs))
+	if skipped > 0 {
+		out.Summary("Resumed: %d copied, %d already present in %s in %s",
+			copied, skipped, toRepo, output.FormatDuration(cmdResult.DurationMs))
+	} else {
+		out.Summary("Promoted %d assets in %s", len(cmdResult.Assets), output.FormatDuration(cmdResult.DurationMs))
+	}
 	return out.CommandResult(cmdResult)
 }
 
