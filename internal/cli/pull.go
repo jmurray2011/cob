@@ -43,7 +43,7 @@ func newPullCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Specific version (required with manifest)")
-	cmd.Flags().StringVar(&flagOutput, "output", "", "Output path (directory or filename)")
+	cmd.Flags().StringVarP(&flagOutput, "output", "o", "", "Output path (directory or filename)")
 	cmd.Flags().StringVar(&flagAssets, "assets", "", "Pull specific assets only (comma-separated)")
 	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets downloaded in parallel (1 = sequential)")
 

@@ -41,7 +41,8 @@ func newLsCmd() *cobra.Command {
 type lsKind int
 
 const (
-	lsKindDomains lsKind = iota
+	lsKindInvalid lsKind = iota // zero value: returned only with a message
+	lsKindDomains
 	lsKindRepos
 	lsKindPackages
 	lsKindVersions
@@ -78,11 +79,11 @@ func classifyLs(coords *cob.PackageCoordinates, target string, allRepos bool) (l
 	full := coords.Namespace != "" && coords.Package != ""
 
 	if wildcard && coords.Namespace == "" {
-		return 0, "--all-repos requires full coordinates (domain/*/namespace/package@version)"
+		return lsKindInvalid, "--all-repos requires full coordinates (domain/*/namespace/package@version)"
 	}
 	if coords.Repository == "*" || (allRepos && full) {
 		if coords.Version == "" {
-			return 0, "version is required for wildcard repo listing (use domain/*/ns/pkg@version or @latest)"
+			return lsKindInvalid, "version is required for wildcard repo listing (use domain/*/ns/pkg@version or @latest)"
 		}
 		return lsKindPromotion, ""
 	}

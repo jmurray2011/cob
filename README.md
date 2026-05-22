@@ -16,7 +16,9 @@ Or build from source:
 go build -o cob ./cmd/cob
 ```
 
-`go install` needs a Go toolchain at the version in [go.mod](go.mod) or newer.
+`go install` needs a Go toolchain at the version in [go.mod](go.mod) or newer
+(currently Go 1.25 -- chosen so a build picks up the latest standard-library
+security patches, which `govulncheck` enforces in CI).
 
 ### Verifying release binaries
 
@@ -318,6 +320,8 @@ leaves the version Unfinished exactly as before.
 | `./` or path | Local file | `./local-config.yaml` |
 
 Relative paths resolve from the manifest file's directory, not the working directory. Bare filenames (without `./` prefix) are also treated as relative paths.
+
+A manifest is executable configuration -- like a Makefile. `publish` and `validate` read whatever local files it names, so don't run a manifest you don't trust.
 
 `@latest` is not supported in `ca://` source URIs. Use `${VERSION}` instead.
 

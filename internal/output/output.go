@@ -99,7 +99,6 @@ func (w *Writer) AssetStart(name, sourceURI string, size int64) {
 		line += "  (" + FormatSize(size) + ")"
 	}
 	fmt.Fprintln(w.out, line)
-	w.flush()
 }
 
 // AssetOK prints a successful asset transfer line.
@@ -123,7 +122,6 @@ func (w *Writer) AssetOK(r *cob.AssetResult, sourceURI string) {
 		// (match(origin), match(provenance), skipped, ...).
 		fmt.Fprintf(w.out, "OK %s (%s) %s %s\n", r.Name, sizeStr, durStr, r.Method)
 	}
-	w.flush()
 }
 
 // AssetFail prints a failed asset line.
@@ -143,7 +141,6 @@ func (w *Writer) AssetFail(name, sourceURI string, err error) {
 	} else {
 		fmt.Fprintf(w.out, "FAIL %s %s\n", name, err)
 	}
-	w.flush()
 }
 
 // AssetSkipped prints a skipped asset line.
@@ -158,21 +155,6 @@ func (w *Writer) AssetSkipped(name string) {
 	} else {
 		fmt.Fprintf(w.out, "SKIP %s\n", name)
 	}
-	w.flush()
-}
-
-// flush is a best-effort fsync on the underlying stdout. Some terminal
-// integrations (notably WSL piped through IDE terminals) otherwise hold
-// output until the process exits, which makes live progress useless.
-func (w *Writer) flush() {
-	// Only fsync to a terminal — the WSL/IDE case this exists for. When
-	// stdout is redirected to a file, per-line fsync is needless I/O.
-	if !w.isTTY {
-		return
-	}
-	if f, ok := w.out.(*os.File); ok {
-		_ = f.Sync()
-	}
 }
 
 // Plain prints a formatted line to stdout (non-JSON mode only). For ad-hoc
@@ -184,7 +166,6 @@ func (w *Writer) Plain(format string, args ...any) {
 		return
 	}
 	fmt.Fprintf(w.out, format+"\n", args...)
-	w.flush()
 }
 
 // Summary prints the final summary line.

@@ -63,7 +63,8 @@ func buildSources(m *manifest.Manifest, client *cob.Client) ([]NamedSource, erro
 type uriKind int
 
 const (
-	uriS3 uriKind = iota
+	uriInvalid uriKind = iota // zero value: returned only alongside an error
+	uriS3
 	uriCA
 	uriFile
 )
@@ -89,7 +90,7 @@ func classifyURI(uri, manifestDir string) (uriKind, string, error) {
 		// A "scheme://" we don't recognise is a mistake, not a local file —
 		// reject it rather than silently turning gs://b/x into a path.
 		if i := strings.Index(uri, "://"); i > 0 {
-			return 0, "", fmt.Errorf("unsupported source scheme in %q (use s3://, ca://, or a file path)", uri)
+			return uriInvalid, "", fmt.Errorf("unsupported source scheme in %q (use s3://, ca://, or a file path)", uri)
 		}
 		// Otherwise a relative path from the manifest directory — covers
 		// bare filenames like "README.md" or "subdir/file.bin".
