@@ -3,8 +3,8 @@ package cli
 import (
 	"fmt"
 
+	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/output"
-	"github.com/jmurray2011/cob/pkg/cob"
 )
 
 // ExitError carries an intended process exit code out of a run* function.

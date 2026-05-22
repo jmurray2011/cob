@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jmurray2011/cob/pkg/cob"
+	"github.com/jmurray2011/cob/internal/cob"
 )
 
 // ParseCoordinates parses compact coordinate strings:

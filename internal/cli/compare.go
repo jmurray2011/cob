@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 
-	"github.com/jmurray2011/cob/pkg/cob"
+	"github.com/jmurray2011/cob/internal/cob"
 )
 
 // assetCompare is one asset's manifest-vs-published comparison, shared by

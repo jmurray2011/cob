@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jmurray2011/cob/pkg/cob"
+	"github.com/jmurray2011/cob/internal/cob"
 )
 
 func TestFormatSize(t *testing.T) {

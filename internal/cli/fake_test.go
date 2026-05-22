@@ -10,13 +10,13 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 
+	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/output"
-	"github.com/jmurray2011/cob/pkg/cob"
 )
 
 // fakeCA is an in-memory cob.CodeArtifactAPI for cli-level tests. Only the
 // methods a test exercises need a *Fn hook; the rest return empty, no-error
-// responses. (pkg/cob has its own equivalent — Go test fakes do not cross
+// responses. (internal/cob has its own equivalent — Go test fakes do not cross
 // package boundaries, so each package carries one.)
 type fakeCA struct {
 	describeFn     func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error)

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jmurray2011/cob/pkg/cob"
+	"github.com/jmurray2011/cob/internal/cob"
 )
 
 func b(v bool) *bool { return &v }

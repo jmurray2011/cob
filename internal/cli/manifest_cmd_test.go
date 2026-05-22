@@ -6,7 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/jmurray2011/cob/pkg/cob"
+	"github.com/jmurray2011/cob/internal/cob"
 )
 
 func mcoords() *cob.PackageCoordinates {

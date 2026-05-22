@@ -3,8 +3,8 @@ package cli
 import (
 	"context"
 
+	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/output"
-	"github.com/jmurray2011/cob/pkg/cob"
 )
 
 // Test seams. Production code uses the real constructors; tests reassign

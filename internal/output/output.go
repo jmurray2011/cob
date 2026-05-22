@@ -9,7 +9,7 @@ import (
 	"sync"
 	"text/tabwriter"
 
-	"github.com/jmurray2011/cob/pkg/cob"
+	"github.com/jmurray2011/cob/internal/cob"
 )
 
 // Writer handles formatted output for cob commands. The per-asset line

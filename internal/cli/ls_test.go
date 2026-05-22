@@ -3,8 +3,8 @@ package cli
 import (
 	"testing"
 
+	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
-	"github.com/jmurray2011/cob/pkg/cob"
 )
 
 func TestClassifyLs(t *testing.T) {

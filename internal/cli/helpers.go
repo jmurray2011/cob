@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/internal/output"
-	"github.com/jmurray2011/cob/pkg/cob"
 )
 
 // resolveVersion returns the version from the flag, env var, or an error.

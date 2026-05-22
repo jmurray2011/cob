@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/jmurray2011/cob/internal/cli"
-	"github.com/jmurray2011/cob/pkg/cob"
+	"github.com/jmurray2011/cob/internal/cob"
 )
 
 var version = "dev"

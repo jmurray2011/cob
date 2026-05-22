@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmurray2011/cob/pkg/cob"
+	"github.com/jmurray2011/cob/internal/cob"
 )
 
 func TestRunConcurrentEnforcesCeiling(t *testing.T) {

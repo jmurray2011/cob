@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/internal/output"
-	"github.com/jmurray2011/cob/pkg/cob"
 )
 
 func newLsCmd() *cobra.Command {
