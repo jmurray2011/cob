@@ -115,12 +115,15 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	if err != nil {
 		return fail(out, "promote", cob.ExitError, "checking destination: %s", err)
 	}
-	if exists && !force {
-		return fail(out, "promote", cob.ExitConflict, "version %s already exists in %s. Use --force to overwrite.", coords.Version, toRepo)
-	}
 
+	// Dry-run before the conflict gate: a preview mutates nothing and is
+	// most useful precisely when the destination version already exists.
 	if dryRun {
 		return runPromoteDryRun(ctx, cob.NewPromoter(client), coords, srcRepo, toRepo, exists, out)
+	}
+
+	if exists && !force {
+		return fail(out, "promote", cob.ExitConflict, "version %s already exists in %s. Use --force to overwrite.", coords.Version, toRepo)
 	}
 
 	out.Header("Promoting %s/%s@%s: %s -> %s",
@@ -239,7 +242,7 @@ func runPromoteDryRun(ctx context.Context, promoter *cob.Promoter, coords *cob.P
 		result.Assets = append(result.Assets, cob.AssetResult{Name: name, Method: "dry-run"})
 	}
 	if destExists {
-		out.Warn("version already exists in %s; the real run overwrites it (--force)", toRepo)
+		out.Warn("version already exists in %s; a real promote needs --force to overwrite it", toRepo)
 	}
 	out.Summary("Dry run: %d assets would be promoted to %s", len(result.Assets), toRepo)
 	return out.CommandResult(result)

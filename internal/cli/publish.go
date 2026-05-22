@@ -83,13 +83,13 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 	publisher := cob.NewPublisher(client)
 	registry := cob.NewRegistry(client)
 
-	// Check if version already exists.
+	// Check whether the version already exists. The conflict gate runs
+	// *after* the dry-run dispatch below: a dry run mutates nothing, so it
+	// must work even when the version is present — which is exactly when you
+	// want a preview before deciding to --force.
 	exists, err := registry.CheckVersionExists(ctx, coords)
 	if err != nil {
 		return fail(out, "publish", cob.ExitError, "checking version: %s", err)
-	}
-	if exists && !force {
-		return fail(out, "publish", cob.ExitConflict, "version %s already exists in %s/%s. Use --force to overwrite.", version, m.Domain, m.Repository)
 	}
 
 	sources, err := buildSources(m, client)
@@ -97,11 +97,16 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
 
-	out.Header("Publishing %s/%s@%s -> %s/%s", m.Namespace, m.Package, version, m.Domain, m.Repository)
-
 	if dryRun {
+		out.Header("Publishing %s/%s@%s -> %s/%s (dry run)", m.Namespace, m.Package, version, m.Domain, m.Repository)
 		return runDryRun(ctx, coords, sources, out)
 	}
+
+	if exists && !force {
+		return fail(out, "publish", cob.ExitConflict, "version %s already exists in %s/%s. Use --force to overwrite.", version, m.Domain, m.Repository)
+	}
+
+	out.Header("Publishing %s/%s@%s -> %s/%s", m.Namespace, m.Package, version, m.Domain, m.Repository)
 
 	proceed, err := confirmAction(yes, fmt.Sprintf("Publish %d assets?", len(sources)))
 	if err != nil {

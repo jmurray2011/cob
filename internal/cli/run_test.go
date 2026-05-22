@@ -119,6 +119,16 @@ func TestRunPublish(t *testing.T) {
 		wantExit(t, err, cob.ExitConflict)
 	})
 
+	t.Run("dry-run works even when the version already exists", func(t *testing.T) {
+		// Default DescribePackageVersion reports the version as existing; a
+		// dry run must still preview rather than exit with a conflict.
+		useFake(t, &fakeCA{})
+		mf := writeManifest(t)
+		if err := runPublish(ctx, mf, "1.0.0", false, true, true, 4); err != nil {
+			t.Fatalf("dry-run with existing version must not error, got %v", err)
+		}
+	})
+
 	t.Run("success publishes assets plus provenance", func(t *testing.T) {
 		var published int
 		ca := &fakeCA{
@@ -156,6 +166,19 @@ func TestRunPromote(t *testing.T) {
 		useFake(t, &fakeCA{}) // ListPackageVersions default: empty
 		err := runPromote(ctx, "dom/dev/ns/pkg@latest", "", "prod", false, true, false, 4)
 		wantExit(t, err, cob.ExitNotFound)
+	})
+
+	t.Run("dry-run works even when the destination version exists", func(t *testing.T) {
+		// Default DescribePackageVersion reports the dest version as
+		// existing; --dry-run must preview, not exit with a conflict.
+		ca := &fakeCA{listAssetsFn: oneAsset("app.bin", 9)}
+		stdout, _ := useFake(t, ca)
+		if err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, 4); err != nil {
+			t.Fatalf("dry-run with existing dest must not error, got %v", err)
+		}
+		if !strings.Contains(stdout.String(), "app.bin") {
+			t.Errorf("dry-run should still list the asset: %q", stdout.String())
+		}
 	})
 
 	t.Run("dry-run lists assets and promotes nothing", func(t *testing.T) {
