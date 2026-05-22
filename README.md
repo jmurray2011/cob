@@ -196,9 +196,11 @@ Checks a published version's integrity. No mutation; exits non-zero on any
 mismatch. Takes a manifest **or** compact coordinates.
 
 **Coordinates (no manifest)** -- self-verifies a version against its own
-recorded `cob-provenance.json`: every recorded asset must still hash to what
-was recorded, and the chain of evidence (who published/promoted it, where
-each file came from, recursing through `ca://`) is printed. Audit a version
+recorded `cob-provenance.json`: CodeArtifact's stored SHA-256 for each asset
+is compared against the SHA recorded in provenance (CodeArtifact validates
+asset hashes on publish, so a mismatch means the recorded provenance and the
+stored asset disagree). The chain of evidence (who published/promoted it,
+where each file came from, recursing through `ca://`) is printed. Audit a version
 you didn't build, with nothing but its coordinates:
 
 ```bash

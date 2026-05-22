@@ -20,8 +20,14 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run tests
-        run: go test ./...
+      - name: Run tests (race)
+        run: go test -race ./...
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
+
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 
       - name: Build binaries
         env:
