@@ -187,22 +187,10 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		ManifestSHA256: fileSHA256(manifestPath),
 		Actor:          client.CallerIdentity(ctx),
 	}}
-	provSrc := cob.NewBytesSource(cob.ProvenanceFile, prov.Marshal())
-	out.AssetStart(cob.ProvenanceFile, "", 0)
-	par, err := publisher.PublishAsset(ctx, coords, cob.ProvenanceFile, provSrc, false)
-	if err != nil {
-		out.AssetFail(cob.ProvenanceFile, "", err)
-		result.DurationMs = time.Since(start).Milliseconds()
-		result.Status = "error"
-		result.Error = err.Error()
-		out.Error("%s\n  Assets published but provenance/finalize failed. Version is in unfinished state.\n  Re-run with --force to delete and retry.", err)
-		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitError}
+	if err := finalizeProvenance(ctx, publisher, coords, prov, out, result, start,
+		"Assets published but provenance/finalize failed. Version is in unfinished state."); err != nil {
+		return err
 	}
-	out.AssetOK(par, "")
-	result.Assets = append(result.Assets, *par)
-	result.TotalSize += par.Size
-	result.DurationMs = time.Since(start).Milliseconds()
 
 	out.Summary("Published %d assets (%s) in %s",
 		len(result.Assets), output.FormatSize(result.TotalSize), output.FormatDuration(result.DurationMs))

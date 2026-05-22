@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/internal/output"
@@ -136,4 +137,33 @@ func isInteractive() bool {
 		return false
 	}
 	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
+// finalizeProvenance publishes the cob-provenance.json finalizer for a
+// freshly published or promoted version and folds the result into cmdResult.
+// Publishing it with unfinished=false also flips the CodeArtifact version to
+// Published. On failure it emits the operator guidance — failureHint is the
+// command-specific middle line, since publish and promote describe the
+// resulting half-written state differently — and returns a non-zero
+// ExitError for the caller to return as-is.
+func finalizeProvenance(ctx context.Context, publisher *cob.Publisher, coords *cob.PackageCoordinates,
+	prov *cob.Provenance, out *output.Writer, cmdResult *cob.CommandResult, start time.Time, failureHint string) error {
+
+	provSrc := cob.NewBytesSource(cob.ProvenanceFile, prov.Marshal())
+	out.AssetStart(cob.ProvenanceFile, "", 0)
+	par, err := publisher.PublishAsset(ctx, coords, cob.ProvenanceFile, provSrc, false)
+	if err != nil {
+		out.AssetFail(cob.ProvenanceFile, "", err)
+		cmdResult.DurationMs = time.Since(start).Milliseconds()
+		cmdResult.Status = "error"
+		cmdResult.Error = err.Error()
+		out.Error("%s\n  %s\n  Re-run with --force to delete and retry.", err, failureHint)
+		out.CommandResult(cmdResult)
+		return &ExitError{Code: cob.ExitError}
+	}
+	out.AssetOK(par, "")
+	cmdResult.Assets = append(cmdResult.Assets, *par)
+	cmdResult.TotalSize += par.Size
+	cmdResult.DurationMs = time.Since(start).Milliseconds()
+	return nil
 }

@@ -228,22 +228,10 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		Actor:      client.CallerIdentity(ctx),
 	})
 
-	provSrc := cob.NewBytesSource(cob.ProvenanceFile, prov.Marshal())
-	out.AssetStart(cob.ProvenanceFile, "", 0)
-	par, perr := cob.NewPublisher(client).PublishAsset(ctx, destCoords, cob.ProvenanceFile, provSrc, false)
-	if perr != nil {
-		out.AssetFail(cob.ProvenanceFile, "", perr)
-		cmdResult.DurationMs = time.Since(start).Milliseconds()
-		cmdResult.Status = "error"
-		cmdResult.Error = perr.Error()
-		out.Error("%s\n  Assets promoted but provenance/finalize failed. Version is in partial state.\n  Re-run with --force to delete and retry.", perr)
-		out.CommandResult(cmdResult)
-		return &ExitError{Code: cob.ExitError}
+	if err := finalizeProvenance(ctx, cob.NewPublisher(client), destCoords, prov, out, cmdResult, start,
+		"Assets promoted but provenance/finalize failed. Version is in partial state."); err != nil {
+		return err
 	}
-	out.AssetOK(par, "")
-	cmdResult.Assets = append(cmdResult.Assets, *par)
-	cmdResult.TotalSize += par.Size
-	cmdResult.DurationMs = time.Since(start).Milliseconds()
 
 	out.Summary("Promoted %d assets in %s", len(cmdResult.Assets), output.FormatDuration(cmdResult.DurationMs))
 	return out.CommandResult(cmdResult)
