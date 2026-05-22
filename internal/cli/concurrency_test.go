@@ -5,9 +5,30 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jmurray2011/cob/pkg/cob"
 )
+
+func TestRunConcurrentEnforcesCeiling(t *testing.T) {
+	const n = 200
+	var inFlight, peak int32
+	runConcurrent(n, 5000, func(int) (*cob.AssetResult, error) {
+		cur := atomic.AddInt32(&inFlight, 1)
+		for {
+			p := atomic.LoadInt32(&peak)
+			if cur <= p || atomic.CompareAndSwapInt32(&peak, p, cur) {
+				break
+			}
+		}
+		time.Sleep(time.Millisecond)
+		atomic.AddInt32(&inFlight, -1)
+		return &cob.AssetResult{}, nil
+	})
+	if peak > maxConcurrency {
+		t.Fatalf("peak concurrency %d exceeded ceiling %d (--concurrency must be clamped)", peak, maxConcurrency)
+	}
+}
 
 func TestClampConcurrency(t *testing.T) {
 	for in, want := range map[int]int{-3: 1, 0: 1, 1: 1, 4: 4, 32: 32, 5000: 32} {

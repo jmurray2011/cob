@@ -172,6 +172,7 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		Status:     "ok",
 	}
 
+	concurrency = resolveConcurrency(concurrency, out)
 	results, ok := runConcurrent(len(assets), concurrency, func(i int) (*cob.AssetResult, error) {
 		info := assets[i]
 		dest := outputPath

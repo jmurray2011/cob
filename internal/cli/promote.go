@@ -160,6 +160,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	}
 
 	start := time.Now()
+	concurrency = resolveConcurrency(concurrency, out)
 	results, ok := runConcurrent(len(realNames), concurrency,
 		func(i int) (*cob.AssetResult, error) {
 			name := realNames[i]
