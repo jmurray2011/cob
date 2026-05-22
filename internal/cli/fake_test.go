@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
+	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/output"
@@ -71,7 +72,9 @@ func (f *fakeCA) GetPackageVersionAsset(_ context.Context, in *codeartifact.GetP
 	if f.getAssetFn != nil {
 		return f.getAssetFn(in)
 	}
-	return &codeartifact.GetPackageVersionAssetOutput{}, nil
+	// Default to "asset doesn't exist": an empty output has a nil Asset
+	// reader, which would panic in any caller that streamed it.
+	return nil, &catypes.ResourceNotFoundException{}
 }
 
 func (f *fakeCA) ListDomains(_ context.Context, in *codeartifact.ListDomainsInput, _ ...func(*codeartifact.Options)) (*codeartifact.ListDomainsOutput, error) {

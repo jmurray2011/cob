@@ -379,6 +379,84 @@ func TestReconcilePromotedAssets(t *testing.T) {
 	}
 }
 
+// helloSHA is sha256("hello") — used by the verify/diff tests against a
+// manifest whose local source is the literal "hello".
+const helloSHA = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+// publishedAsset returns a listAssetsFn that reports a single named asset
+// with the given size and SHA-256 (e.g. what compareManifestToPublished
+// reads back from CodeArtifact).
+func publishedAsset(name string, size int64, sha string) func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
+	return func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
+		return &codeartifact.ListPackageVersionAssetsOutput{
+			Assets: []catypes.AssetSummary{{
+				Name:   aws.String(name),
+				Size:   aws.Int64(size),
+				Hashes: map[string]string{"SHA-256": sha},
+			}},
+		}, nil
+	}
+}
+
+// writeHelloManifest writes a one-source manifest whose asset is the local
+// file "hello" (SHA-256 = helloSHA).
+func writeHelloManifest(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, dir, "payload.txt", "hello")
+	return writeFile(t, dir, "m.yaml",
+		"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  payload: ./payload.txt\n")
+}
+
+func TestRunVerify(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("clean match -> exit 0", func(t *testing.T) {
+		useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
+		if err := runVerify(ctx, writeHelloManifest(t), "1.0.0", true); err != nil {
+			t.Fatalf("verify clean: %v", err)
+		}
+	})
+
+	t.Run("SHA mismatch -> exit 4 (ExitMismatch)", func(t *testing.T) {
+		useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5,
+			"deadbeef0000000000000000000000000000000000000000000000000000beef")})
+		wantExit(t, runVerify(ctx, writeHelloManifest(t), "1.0.0", true), cob.ExitMismatch)
+	})
+
+	t.Run("source resolution failure -> exit 1 (ExitError)", func(t *testing.T) {
+		// publisher claims payload.txt exists, but the local source is missing
+		// -> per-asset Resolve fails -> opErrors > 0 -> the check didn't run.
+		useFake(t, &fakeCA{listAssetsFn: publishedAsset("missing.txt", 5, helloSHA)})
+		dir := t.TempDir()
+		mf := writeFile(t, dir, "m.yaml",
+			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  payload: ./missing.txt\n")
+		wantExit(t, runVerify(ctx, mf, "1.0.0", true), cob.ExitError)
+	})
+
+	t.Run("coords @latest with no published versions -> exit 2", func(t *testing.T) {
+		useFake(t, &fakeCA{}) // ListPackageVersions default: empty
+		wantExit(t, runVerify(ctx, "dom/repo/ns/pkg", "latest", false), cob.ExitNotFound)
+	})
+}
+
+func TestRunDiff(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("clean -> exit 0", func(t *testing.T) {
+		useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
+		if err := runDiff(ctx, writeHelloManifest(t), "1.0.0", true); err != nil {
+			t.Fatalf("diff clean: %v", err)
+		}
+	})
+
+	t.Run("drift -> exit 4 (ExitMismatch)", func(t *testing.T) {
+		useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5,
+			"deadbeef0000000000000000000000000000000000000000000000000000beef")})
+		wantExit(t, runDiff(ctx, writeHelloManifest(t), "1.0.0", true), cob.ExitMismatch)
+	})
+}
+
 // oneAsset returns a listAssetsFn that reports a single named asset with the
 // given size and no recorded hash.
 func oneAsset(name string, size int64) func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
