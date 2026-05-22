@@ -59,6 +59,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// After the first signal, restore default handling so a second Ctrl-C
+	// force-quits — otherwise a hung cleanup would be uninterruptible.
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+
 	root := cli.NewRootCmd(resolveBuildVersion())
 	if err := root.ExecuteContext(ctx); err != nil {
 		// ExitError already had its message emitted by the command layer;

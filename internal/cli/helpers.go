@@ -146,7 +146,7 @@ func resolveLatestIfNeeded(ctx context.Context, coords *cob.PackageCoordinates, 
 // A non-nil error means the action must not run and the command should fail
 // loudly. (false, nil) means the user declined at the prompt — a clean,
 // expected abort.
-func confirmAction(yes bool, prompt string) (bool, error) {
+func confirmAction(ctx context.Context, yes bool, prompt string) (bool, error) {
 	if yes {
 		return true, nil
 	}
@@ -154,9 +154,24 @@ func confirmAction(yes bool, prompt string) (bool, error) {
 		return false, fmt.Errorf("refusing to proceed without confirmation: stdin is not a TTY; pass --yes to confirm")
 	}
 	fmt.Fprintf(os.Stderr, "%s [y/N] ", prompt)
-	var response string
-	fmt.Scanln(&response)
-	return strings.HasPrefix(strings.ToLower(response), "y"), nil
+
+	// Read in a goroutine so a SIGINT (which cancels ctx) interrupts the
+	// prompt — fmt.Scanln is a blocking stdin read with no context awareness,
+	// so without this Ctrl-C does nothing until the user presses Enter. The
+	// buffered channel lets the goroutine finish even if ctx won the select.
+	ch := make(chan string, 1)
+	go func() {
+		var response string
+		_, _ = fmt.Scanln(&response) // a read error declines; nothing to handle
+		ch <- response
+	}()
+	select {
+	case <-ctx.Done():
+		fmt.Fprintln(os.Stderr) // move off the "[y/N] " line
+		return false, ctx.Err()
+	case response := <-ch:
+		return strings.HasPrefix(strings.ToLower(response), "y"), nil
+	}
 }
 
 // finalizeProvenance publishes the cob-provenance.json finalizer for a

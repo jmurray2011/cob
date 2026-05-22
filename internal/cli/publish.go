@@ -108,7 +108,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 
 	out.Header("Publishing %s/%s@%s -> %s/%s", m.Namespace, m.Package, version, m.Domain, m.Repository)
 
-	proceed, err := confirmAction(yes, fmt.Sprintf("Publish %d assets?", len(sources)))
+	proceed, err := confirmAction(ctx, yes, fmt.Sprintf("Publish %d assets?", len(sources)))
 	if err != nil {
 		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
