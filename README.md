@@ -503,3 +503,7 @@ Name packages for what they are, not for the fact that they're shared. `tools/sh
 - **No resume on partial failure.** `--force` re-publishes all assets.
 - **Transfers spill to a temp file, not memory.** CodeArtifact's API requires an `io.ReadSeeker` (Content-Length + retries), so true end-to-end streaming isn't possible; cob streams each asset through a temp file in `$TMPDIR` instead of buffering in RAM. Memory stays bounded and there is no asset size limit, but a publish/promote needs free temp disk for the largest single asset.
 - **`@latest` resolves by timestamp, not semver.** The most recently published version wins, regardless of version string ordering.
+
+## License
+
+MIT -- see [LICENSE](LICENSE).
