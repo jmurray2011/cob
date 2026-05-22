@@ -18,7 +18,11 @@ func newLsCmd() *cobra.Command {
 		Use:   "ls [coordinates]",
 		Short: "List packages, versions, or assets",
 		Long:  "Drill into CodeArtifact: domain/repo (packages), .../ns/pkg (versions), ...@ver (assets).",
-		Args:  cobra.MaximumNArgs(1),
+		Example: `  cob ls                        # domains
+  cob ls acme/dev               # packages in a repo
+  cob ls acme/dev/tools/my-app  # versions of a package
+  cob ls acme/*/tools/my-app@2.1.0   # promotion status across repos`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := ""
 			if len(args) > 0 {

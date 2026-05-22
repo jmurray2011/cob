@@ -27,6 +27,11 @@ func newVerifyCmd() *cobra.Command {
 			"still hash to what was recorded — and prints the chain of evidence " +
 			"(who published/promoted it, where each file came from). No " +
 			"mutation; exits non-zero on any mismatch.",
+		Example: `  # verify a published version against its recorded provenance
+  cob verify acme/dev/tools/my-app@2.1.0
+
+  # verify a manifest still matches what was published
+  cob verify ./my-package.yaml --version 2.1.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runVerify(cmd.Context(), args[0], flagVersion, flagDeep)

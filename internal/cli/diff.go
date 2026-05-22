@@ -24,6 +24,8 @@ func newDiffCmd() *cobra.Command {
 			"known checksum → recorded cob-provenance.json → (with --deep) " +
 			"download+hash. Exits 1 on any drift (like `diff`), 0 when " +
 			"identical. Run before `publish --force` to see what would change.",
+		Example: `  # show how a manifest differs from a published version
+  cob diff ./my-package.yaml --version 2.1.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDiff(cmd.Context(), args[0], flagVersion, flagDeep)

@@ -26,7 +26,12 @@ func newPromoteCmd() *cobra.Command {
 		Use:   "promote <manifest|coordinates>",
 		Short: "Copy a package version between repositories",
 		Long:  "Copies a package version from one repo to another, streaming in constant memory (via a temp file).",
-		Args:  cobra.ExactArgs(1),
+		Example: `  # promote a version to the next stage
+  cob promote acme/dev/tools/my-app@2.1.0 --to staging
+
+  # preview the move without copying anything
+  cob promote acme/dev/tools/my-app@2.1.0 --to staging --dry-run`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPromote(cmd.Context(), args[0], flagVersion, flagTo, flagForce, flagYes, flagConcurrency)
 		},

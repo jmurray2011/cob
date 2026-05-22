@@ -18,6 +18,10 @@ import (
 )
 
 // S3Source reads an asset from an S3 object.
+//
+// An S3Source is not safe for concurrent use: correctRegion and Open mutate
+// it without locking. cob's transfer workers each own a distinct source, so
+// the invariant holds today — use one source per goroutine.
 type S3Source struct {
 	client S3API
 	bucket string

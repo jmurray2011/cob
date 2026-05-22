@@ -26,7 +26,12 @@ func newPublishCmd() *cobra.Command {
 		Use:   "publish <manifest>",
 		Short: "Publish a package from a manifest",
 		Long:  "Reads a manifest file, resolves variables, pulls from each source, and publishes to CodeArtifact.",
-		Args:  cobra.ExactArgs(1),
+		Example: `  # publish a manifest at an explicit version
+  cob publish ./my-package.yaml --version 2.1.0
+
+  # CI: skip the confirmation prompt
+  cob publish ./my-package.yaml --version 2.1.0 --yes`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPublish(cmd.Context(), args[0], flagVersion, flagForce, flagDryRun, flagYes, flagConcurrency)
 		},

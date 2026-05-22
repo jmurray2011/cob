@@ -150,21 +150,13 @@ func confirmAction(yes bool, prompt string) (bool, error) {
 	if yes {
 		return true, nil
 	}
-	if !isInteractive() {
+	if !output.IsTerminal(os.Stdin) {
 		return false, fmt.Errorf("refusing to proceed without confirmation: stdin is not a TTY; pass --yes to confirm")
 	}
 	fmt.Fprintf(os.Stderr, "%s [y/N] ", prompt)
 	var response string
 	fmt.Scanln(&response)
 	return strings.HasPrefix(strings.ToLower(response), "y"), nil
-}
-
-func isInteractive() bool {
-	info, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
 // finalizeProvenance publishes the cob-provenance.json finalizer for a

@@ -26,6 +26,8 @@ func newManifestCmd() *cobra.Command {
 			"itself via ca://, since a non-cob version doesn't record where " +
 			"its files came from. Re-publishing that manifest reproduces the " +
 			"same bytes.",
+		Example: `  # reconstruct a manifest from a published version
+  cob manifest acme/dev/tools/my-app@2.1.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runManifest(cmd.Context(), args[0], flagVersion)

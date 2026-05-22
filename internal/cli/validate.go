@@ -20,6 +20,8 @@ func newValidateCmd() *cobra.Command {
 		Long: "Validates manifest schema, variable resolvability, and source URI " +
 			"syntax without contacting AWS. Local file sources are checked for " +
 			"existence. Designed for pre-commit and CI lint stages.",
+		Example: `  cob validate ./my-package.yaml
+  cob validate ./my-package.yaml --version 2.1.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runValidate(args[0], flagVersion)

@@ -28,7 +28,7 @@ type Writer struct {
 // Otherwise it auto-detects TTY for human-friendly output.
 func New(jsonMode bool) *Writer {
 	w := NewWithWriters(os.Stdout, os.Stderr, jsonMode)
-	w.isTTY = isTerminal(os.Stdout)
+	w.isTTY = IsTerminal(os.Stdout)
 	return w
 }
 
@@ -261,7 +261,9 @@ func FormatDuration(ms int64) string {
 	return fmt.Sprintf("%.1fs", float64(ms)/1000)
 }
 
-func isTerminal(f *os.File) bool {
+// IsTerminal reports whether f is a character device (an interactive
+// terminal). Shared so callers needn't re-implement the Stat dance.
+func IsTerminal(f *os.File) bool {
 	info, err := f.Stat()
 	if err != nil {
 		return false

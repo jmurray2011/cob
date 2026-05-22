@@ -17,7 +17,9 @@ func newResolveCmd() *cobra.Command {
 		Use:   "resolve <coordinates>",
 		Short: "Resolve the latest version of a package",
 		Long:  "Resolves the most recently published version by timestamp and prints the version string. Designed for scripting: VERSION=$(cob resolve domain/repo/ns/pkg).",
-		Args:  cobra.ExactArgs(1),
+		Example: `  # print the latest published version (for scripting)
+  VERSION=$(cob resolve acme/dev/tools/my-app)`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runResolve(cmd.Context(), args[0])
 		},

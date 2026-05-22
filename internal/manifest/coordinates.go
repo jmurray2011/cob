@@ -56,7 +56,7 @@ func ParseCoordinates(s string) (*cob.PackageCoordinates, error) {
 			Version:    version,
 		}, nil
 	default:
-		return nil, fmt.Errorf("expected domain, domain/repo, domain/repo/package, or domain/repo/namespace/package, got %d segments", len(parts))
+		return nil, fmt.Errorf("expected domain, domain/repo, or domain/repo/namespace/package, got %d segments", len(parts))
 	}
 }
 

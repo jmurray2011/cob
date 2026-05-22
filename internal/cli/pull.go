@@ -27,7 +27,12 @@ func newPullCmd() *cobra.Command {
 		Use:   "pull <manifest|coordinates> [asset]",
 		Short: "Download assets from CodeArtifact",
 		Long:  "Downloads assets to a local directory. Use with a manifest (all assets) or compact coordinates (ad-hoc).",
-		Args:  cobra.RangeArgs(1, 2),
+		Example: `  # pull every asset of a version into a directory
+  cob pull acme/dev/tools/my-app@2.1.0 --output ./assets/
+
+  # pull one asset, resolving the latest version
+  cob pull acme/dev/tools/my-app@latest app.tar.gz --output ./app.tar.gz`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var assetName string
 			if len(args) > 1 {
