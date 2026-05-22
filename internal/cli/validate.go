@@ -76,7 +76,7 @@ func runValidate(manifestPath, versionFlag string) error {
 		}
 		ar.Source = resolved
 
-		asset, err := validateSourceURI(resolved, m.Dir)
+		asset, size, err := validateSourceURI(resolved, m.Dir)
 		if err != nil {
 			ar.SetError(err)
 			out.AssetFail(s.Name, resolved, err)
@@ -84,6 +84,7 @@ func runValidate(manifestPath, versionFlag string) error {
 			result.Assets = append(result.Assets, ar)
 			continue
 		}
+		ar.Size = size
 		if prev, dup := byAsset[asset]; dup {
 			e := fmt.Errorf("collides with source %q: both publish as asset %q", prev, asset)
 			ar.SetError(e)
@@ -115,21 +116,23 @@ func runValidate(manifestPath, versionFlag string) error {
 
 // validateSourceURI checks a (variable-resolved) source URI's syntax without
 // any network call and returns the stored asset name (basename) it would
-// publish as. Local files are additionally checked for existence.
-func validateSourceURI(uri, manifestDir string) (string, error) {
+// publish as, plus its size. Local files are additionally checked for
+// existence and report their real size; remote sources report 0 because
+// sizing them would need a network call validate deliberately avoids.
+func validateSourceURI(uri, manifestDir string) (string, int64, error) {
 	switch {
 	case strings.HasPrefix(uri, "s3://"):
 		s, err := cob.NewS3Source(nil, uri)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
-		return s.Filename(), nil
+		return s.Filename(), 0, nil
 	case strings.HasPrefix(uri, "ca://"):
 		s, err := cob.NewCASource(nil, uri)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
-		return s.Filename(), nil
+		return s.Filename(), 0, nil
 	default:
 		path := uri
 		if !filepath.IsAbs(path) {
@@ -137,12 +140,12 @@ func validateSourceURI(uri, manifestDir string) (string, error) {
 		}
 		info, err := os.Stat(path)
 		if err != nil {
-			return "", fmt.Errorf("local source not found: %s", path)
+			return "", 0, fmt.Errorf("local source not found: %s", path)
 		}
 		if info.IsDir() {
-			return "", fmt.Errorf("local source is a directory: %s", path)
+			return "", 0, fmt.Errorf("local source is a directory: %s", path)
 		}
-		return filepath.Base(path), nil
+		return filepath.Base(path), info.Size(), nil
 	}
 }
 
