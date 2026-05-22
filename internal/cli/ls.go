@@ -166,6 +166,20 @@ func resolvePromotionLatest(ctx context.Context, registry *cob.Registry, coords 
 		coords.Namespace, coords.Package, coords.Domain)
 }
 
+// failEmptyList reports a not-found for a list command. In --json mode it
+// emits an empty array of the documented element type — so a consumer always
+// gets a parseable array, never an error object — and writes the message to
+// stderr; the exit code (2) already signals not-found. Non-JSON behaves like
+// fail.
+func failEmptyList(out *output.Writer, emptyList any, format string, args ...any) error {
+	if flagJSON {
+		out.JSON(emptyList)
+		out.Error(format, args...)
+		return &ExitError{Code: cob.ExitNotFound}
+	}
+	return fail(out, "ls", cob.ExitNotFound, format, args...)
+}
+
 func runLsPackages(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {
 	packages, err := registry.ListPackages(ctx, coords.Domain, coords.Repository)
 	if err != nil {
@@ -173,7 +187,7 @@ func runLsPackages(ctx context.Context, registry *cob.Registry, coords *cob.Pack
 	}
 
 	if len(packages) == 0 {
-		return fail(out, "ls", cob.ExitNotFound, "no packages found in %s/%s", coords.Domain, coords.Repository)
+		return failEmptyList(out, []cob.PackageSummary{}, "no packages found in %s/%s", coords.Domain, coords.Repository)
 	}
 
 	if out.JSON(packages) {
@@ -196,7 +210,7 @@ func runLsVersions(ctx context.Context, registry *cob.Registry, coords *cob.Pack
 	}
 
 	if len(versions) == 0 {
-		return fail(out, "ls", cob.ExitNotFound, "no versions found for %s/%s in %s/%s",
+		return failEmptyList(out, []cob.VersionSummary{}, "no versions found for %s/%s in %s/%s",
 			coords.Namespace, coords.Package, coords.Domain, coords.Repository)
 	}
 
@@ -224,7 +238,7 @@ func runLsAssets(ctx context.Context, registry *cob.Registry, coords *cob.Packag
 	}
 
 	if len(assets) == 0 {
-		return fail(out, "ls", cob.ExitNotFound, "no assets found for %s/%s@%s",
+		return failEmptyList(out, []cob.AssetSummary{}, "no assets found for %s/%s@%s",
 			coords.Namespace, coords.Package, coords.Version)
 	}
 
@@ -252,7 +266,7 @@ func runLsDomains(ctx context.Context, registry *cob.Registry, out *output.Write
 	}
 
 	if len(domains) == 0 {
-		return fail(out, "ls", cob.ExitNotFound, "no domains found")
+		return failEmptyList(out, []cob.DomainSummary{}, "no domains found")
 	}
 
 	if out.JSON(domains) {
@@ -275,7 +289,7 @@ func runLsRepos(ctx context.Context, registry *cob.Registry, domain string, out 
 	}
 
 	if len(repos) == 0 {
-		return fail(out, "ls", cob.ExitNotFound, "no repositories found in %s", domain)
+		return failEmptyList(out, []string{}, "no repositories found in %s", domain)
 	}
 
 	if out.JSON(repos) {

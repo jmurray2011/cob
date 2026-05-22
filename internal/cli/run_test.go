@@ -68,6 +68,15 @@ func TestRunLs(t *testing.T) {
 		useFake(t, &fakeCA{}) // ListPackageVersionAssets default: empty
 		wantExit(t, runLs(ctx, "dom/repo/ns/pkg@1.0.0", false), cob.ExitNotFound)
 	})
+
+	t.Run("--json not-found emits an empty array, not an object", func(t *testing.T) {
+		stdout, _ := useFake(t, &fakeCA{})
+		flagJSON = true // useFake restores it on cleanup
+		wantExit(t, runLs(ctx, "dom/repo", false), cob.ExitNotFound)
+		if got := strings.TrimSpace(stdout.String()); got != "[]" {
+			t.Errorf("ls --json not-found stdout = %q, want []", got)
+		}
+	})
 }
 
 func TestRunPull(t *testing.T) {
