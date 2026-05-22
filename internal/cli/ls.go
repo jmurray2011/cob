@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -10,6 +11,10 @@ import (
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/internal/output"
 )
+
+// promotionStatusConcurrency bounds the parallel per-repo VersionStatus calls
+// in `ls dom/*/ns/pkg@v` (mirrors registry.versionMetaConcurrency).
+const promotionStatusConcurrency = 8
 
 func newLsCmd() *cobra.Command {
 	var flagAllRepos bool
@@ -312,35 +317,51 @@ func runLsPromotionStatus(ctx context.Context, registry *cob.Registry, coords *c
 		return fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
-	var statuses []cob.PromotionStatus
-	for _, repo := range repos {
-		checkCoords := &cob.PackageCoordinates{
-			Domain:     coords.Domain,
-			Repository: repo,
-			Namespace:  coords.Namespace,
-			Package:    coords.Package,
-			Version:    coords.Version,
+	// Probe each repo's VersionStatus in parallel — a domain with many
+	// repos was needlessly slow when this ran one-at-a-time. Bounded so a
+	// busy ls doesn't hammer CodeArtifact into throttling.
+	//
+	// Render the version's real status. CheckVersionExists (used by
+	// publish/--force) reports any status as "exists"; hardcoding
+	// "Published" here would mislabel an Unfinished/Archived version. A
+	// transient failure (throttle, network, access-denied) is distinct
+	// from "absent" — surface it as "?" so an operator never reads a
+	// check that never completed as "not promoted to this repo".
+	statuses := make([]cob.PromotionStatus, len(repos))
+	sem := make(chan struct{}, promotionStatusConcurrency)
+	var wg sync.WaitGroup
+	for i, repo := range repos {
+		if ctx.Err() != nil {
+			break
 		}
-		status := cob.PromotionStatus{Repository: repo, Version: "-", Status: "-"}
-		// Render the version's real status. CheckVersionExists (used by
-		// publish/--force) now reports any status as "exists"; hardcoding
-		// "Published" here would mislabel an Unfinished/Archived version. A
-		// transient failure (throttle, network, access-denied) is distinct
-		// from "absent" — surface it as "?" so an operator never reads a
-		// check that never completed as "not promoted to this repo".
-		st, found, err := registry.VersionStatus(ctx, checkCoords)
-		switch {
-		case err != nil:
-			status.Version, status.Status = "?", "?"
-		case found:
-			status.Version = coords.Version
-			if st == "" {
-				st = "-"
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(i int, repo string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			checkCoords := &cob.PackageCoordinates{
+				Domain:     coords.Domain,
+				Repository: repo,
+				Namespace:  coords.Namespace,
+				Package:    coords.Package,
+				Version:    coords.Version,
 			}
-			status.Status = st
-		}
-		statuses = append(statuses, status)
+			s := cob.PromotionStatus{Repository: repo, Version: "-", Status: "-"}
+			st, found, err := registry.VersionStatus(ctx, checkCoords)
+			switch {
+			case err != nil:
+				s.Version, s.Status = "?", "?"
+			case found:
+				s.Version = coords.Version
+				if st == "" {
+					st = "-"
+				}
+				s.Status = st
+			}
+			statuses[i] = s
+		}(i, repo)
 	}
+	wg.Wait()
 
 	if out.JSON(statuses) {
 		return nil
