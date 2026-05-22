@@ -104,7 +104,10 @@ func (r *Registry) ListRepositories(ctx context.Context, domain string) ([]strin
 	return repos, nil
 }
 
-// ListPackages returns packages in a repository.
+// ListPackages returns packages in a repository, with LatestVersion and
+// VersionCount populated. Those two cost a paginated ListPackageVersions per
+// package, so the lookups are fanned out with bounded concurrency rather than
+// run one-at-a-time.
 func (r *Registry) ListPackages(ctx context.Context, domain, repo string) ([]PackageSummary, error) {
 	var results []PackageSummary
 	var nextToken *string
@@ -125,20 +128,7 @@ func (r *Registry) ListPackages(ctx context.Context, domain, repo string) ([]Pac
 			if p.Namespace != nil {
 				ns = *p.Namespace
 			}
-			pkg := aws.ToString(p.Package)
-
-			latest, count, err := r.getLatestVersion(ctx, domain, repo, ns, pkg)
-			if err != nil {
-				latest = "?"
-				count = 0
-			}
-
-			results = append(results, PackageSummary{
-				Namespace:     ns,
-				Package:       pkg,
-				LatestVersion: latest,
-				VersionCount:  count,
-			})
+			results = append(results, PackageSummary{Namespace: ns, Package: aws.ToString(p.Package)})
 		}
 
 		if out.NextToken == nil {
@@ -147,7 +137,44 @@ func (r *Registry) ListPackages(ctx context.Context, domain, repo string) ([]Pac
 		nextToken = out.NextToken
 	}
 
+	if err := r.populatePackageMeta(ctx, domain, repo, results); err != nil {
+		return nil, err
+	}
 	return results, nil
+}
+
+// populatePackageMeta fills LatestVersion and VersionCount for every package
+// in place, fanning the per-package lookups out with bounded concurrency
+// (mirrors populateVersionMeta). Per-package metadata is best-effort: a
+// package whose versions can't be listed degrades to "?" rather than failing
+// the whole listing. Only context cancellation is surfaced.
+func (r *Registry) populatePackageMeta(ctx context.Context, domain, repo string, pkgs []PackageSummary) error {
+	sem := make(chan struct{}, versionMetaConcurrency)
+	var wg sync.WaitGroup
+
+	for i := range pkgs {
+		if ctx.Err() != nil {
+			break
+		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				return
+			}
+			latest, count, err := r.getLatestVersion(ctx, domain, repo, pkgs[i].Namespace, pkgs[i].Package)
+			if err != nil {
+				pkgs[i].LatestVersion, pkgs[i].VersionCount = "?", 0
+				return
+			}
+			pkgs[i].LatestVersion, pkgs[i].VersionCount = latest, count
+		}(i)
+	}
+
+	wg.Wait()
+	return ctx.Err()
 }
 
 // ListVersions returns versions of a specific package, newest first, with

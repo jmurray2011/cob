@@ -305,16 +305,18 @@ func runLsPromotionStatus(ctx context.Context, registry *cob.Registry, coords *c
 			Package:    coords.Package,
 			Version:    coords.Version,
 		}
+		status := cob.PromotionStatus{Repository: repo, Version: "-", Status: "-"}
 		// Render the version's real status. CheckVersionExists (used by
 		// publish/--force) now reports any status as "exists"; hardcoding
-		// "Published" here would mislabel an Unfinished/Archived version.
-		st, found, _ := registry.VersionStatus(ctx, checkCoords)
-		status := cob.PromotionStatus{
-			Repository: repo,
-			Version:    "-",
-			Status:     "-",
-		}
-		if found {
+		// "Published" here would mislabel an Unfinished/Archived version. A
+		// transient failure (throttle, network, access-denied) is distinct
+		// from "absent" — surface it as "?" so an operator never reads a
+		// check that never completed as "not promoted to this repo".
+		st, found, err := registry.VersionStatus(ctx, checkCoords)
+		switch {
+		case err != nil:
+			status.Version, status.Status = "?", "?"
+		case found:
 			status.Version = coords.Version
 			if st == "" {
 				st = "-"
