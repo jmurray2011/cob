@@ -41,9 +41,9 @@ func newPublishCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Package version (required, or set COB_VERSION)")
-	cmd.Flags().BoolVar(&flagForce, "force", false, "Overwrite existing version")
+	cmd.Flags().BoolVarP(&flagForce, "force", "f", false, "Overwrite existing version")
 	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Verify sources exist, show plan, don't publish")
-	cmd.Flags().BoolVar(&flagYes, "yes", false, "Skip confirmation")
+	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Skip confirmation")
 	cmd.Flags().BoolVar(&flagResume, "resume", false, "Continue an unfinished publish: upload only the missing assets")
 	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential)")
 

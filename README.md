@@ -428,6 +428,9 @@ COB_PACKAGE      Override manifest package
 COB_PROFILE      AWS profile (--profile fallback)
 COB_REGION       AWS region (--region fallback)
 COB_TMPDIR       Spill directory (--tmpdir fallback)
+COB_JSON         Set 1/true to default to --json output
+COB_QUIET        Set 1/true to default to --quiet output
+COB_DEBUG        Set 1/true to default to --debug logging
 COB_VAR_*        Values for ${env.*} in source URIs (see Variable substitution)
 ```
 

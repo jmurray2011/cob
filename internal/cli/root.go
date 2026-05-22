@@ -2,9 +2,23 @@ package cli
 
 import (
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 )
+
+// envBool reads a COB_* boolean env var. Returns (set=false) when the var is
+// unset or empty; an unparseable non-empty value is treated as true (set).
+func envBool(name string) (set, val bool) {
+	v, ok := os.LookupEnv(name)
+	if !ok || v == "" {
+		return false, false
+	}
+	if b, err := strconv.ParseBool(v); err == nil {
+		return true, b
+	}
+	return true, true
+}
 
 var (
 	flagProfile string
@@ -44,6 +58,21 @@ func NewRootCmd(version string) *cobra.Command {
 			if !cmd.Flags().Changed("tmpdir") {
 				if v := os.Getenv("COB_TMPDIR"); v != "" {
 					flagTmpDir = v
+				}
+			}
+			if !cmd.Flags().Changed("json") {
+				if set, b := envBool("COB_JSON"); set {
+					flagJSON = b
+				}
+			}
+			if !cmd.Flags().Changed("quiet") {
+				if set, b := envBool("COB_QUIET"); set {
+					flagQuiet = b
+				}
+			}
+			if !cmd.Flags().Changed("debug") {
+				if set, b := envBool("COB_DEBUG"); set {
+					flagDebug = b
 				}
 			}
 		},

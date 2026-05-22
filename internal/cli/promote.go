@@ -39,8 +39,8 @@ func newPromoteCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Specific version (required with manifest)")
 	cmd.Flags().StringVar(&flagTo, "to", "", "Destination repository (required)")
-	cmd.Flags().BoolVar(&flagForce, "force", false, "Overwrite if version exists in destination")
-	cmd.Flags().BoolVar(&flagYes, "yes", false, "Skip confirmation")
+	cmd.Flags().BoolVarP(&flagForce, "force", "f", false, "Overwrite if version exists in destination")
+	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Skip confirmation")
 	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Show what would be promoted, copy nothing")
 	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential)")
 	cmd.MarkFlagRequired("to")
