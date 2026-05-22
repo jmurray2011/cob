@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"time"
@@ -185,7 +183,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		Time:           cob.NowStamp(),
 		CobVersion:     buildVersion,
 		Region:         client.Region,
-		ManifestSHA256: fileSHA256(manifestPath),
+		ManifestSHA256: m.SHA256(),
 		Actor:          client.CallerIdentity(ctx),
 	}}
 	if err := finalizeProvenance(ctx, publisher, coords, prov, out, result, start,
@@ -196,17 +194,6 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 	out.Summary("Published %d assets (%s) in %s",
 		len(result.Assets), output.FormatSize(result.TotalSize), output.FormatDuration(result.DurationMs))
 	return out.CommandResult(result)
-}
-
-// fileSHA256 returns the hex SHA-256 of a file's contents, or "" if it
-// can't be read. Used to stamp the manifest digest into provenance.
-func fileSHA256(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
 }
 
 // firstResultError returns the error message of the first failed asset

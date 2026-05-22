@@ -1,30 +1,12 @@
 package cli
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/jmurray2011/cob/pkg/cob"
 )
-
-func TestFileSHA256(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "m.yaml")
-	content := []byte("domain: d\n")
-	if err := os.WriteFile(p, content, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	want := func() string { s := sha256.Sum256(content); return hex.EncodeToString(s[:]) }()
-	if got := fileSHA256(p); got != want {
-		t.Errorf("fileSHA256 = %q, want %q", got, want)
-	}
-	if got := fileSHA256(filepath.Join(dir, "nope")); got != "" {
-		t.Errorf("missing file should give \"\", got %q", got)
-	}
-}
 
 func b(v bool) *bool { return &v }
 
@@ -73,5 +55,27 @@ func TestSafeJoin(t *testing.T) {
 		if _, err := safeJoin(root, bad); err == nil {
 			t.Errorf("safeJoin(%q,%q) should reject traversal", root, bad)
 		}
+	}
+}
+
+func TestSafeJoinRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	// A symlinked subdirectory of root that points outside root: a lexical
+	// check passes "evil/x.bin" but the write would land in `outside`.
+	if err := os.Symlink(outside, filepath.Join(root, "evil")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := safeJoin(root, "evil/x.bin"); err == nil {
+		t.Error("safeJoin must reject a path that escapes via a symlinked subdirectory")
+	}
+
+	// A real (non-symlinked) subdirectory is still fine.
+	if err := os.Mkdir(filepath.Join(root, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := safeJoin(root, "real/x.bin"); err != nil {
+		t.Errorf("safeJoin rejected a legitimate subdirectory: %v", err)
 	}
 }

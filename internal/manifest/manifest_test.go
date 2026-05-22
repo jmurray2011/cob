@@ -1,10 +1,35 @@
 package manifest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestManifestSHA256(t *testing.T) {
+	if (&Manifest{}).SHA256() != "" {
+		t.Error("a manifest without Raw must report an empty SHA256")
+	}
+	dir := t.TempDir()
+	body := "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x\n"
+	path := filepath.Join(dir, "m.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(m.Raw) != body {
+		t.Errorf("Raw = %q, want the verbatim file bytes", m.Raw)
+	}
+	sum := sha256.Sum256([]byte(body))
+	if want := hex.EncodeToString(sum[:]); m.SHA256() != want {
+		t.Errorf("SHA256 = %q, want %q", m.SHA256(), want)
+	}
+}
 
 func TestExpandVars(t *testing.T) {
 	t.Setenv("COB_VAR_GIT_SHA", "abc123") // ${env.GIT_SHA} reads COB_VAR_GIT_SHA

@@ -2,6 +2,8 @@ package manifest
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -38,6 +40,22 @@ type Manifest struct {
 
 	// Overrides records which manifest fields were overridden by env vars.
 	Overrides []EnvOverride
+
+	// Raw is the exact byte content Load decoded, kept so SHA256 can digest
+	// the manifest that actually produced a publish without re-reading it.
+	Raw []byte
+}
+
+// SHA256 returns the hex SHA-256 of the manifest's raw bytes, or "" if it was
+// not built by Load. Stamped into provenance — digesting the bytes already in
+// hand (rather than re-reading the file) closes a TOCTOU gap for a field
+// whose whole purpose is integrity.
+func (m *Manifest) SHA256() string {
+	if m.Raw == nil {
+		return ""
+	}
+	sum := sha256.Sum256(m.Raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // PromoteConfig holds the promotion stage list.
@@ -95,6 +113,7 @@ func Load(path string) (*Manifest, error) {
 		Promote:    doc.Promote,
 		Sources:    sources,
 		Dir:        filepath.Dir(abs),
+		Raw:        data,
 	}
 	m.Overrides = m.applyEnvOverrides()
 
