@@ -199,18 +199,17 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		return fail(out, "promote", cob.ExitError, "reading source provenance: %s", perr)
 	}
 	if prov == nil {
-		// Source wasn't cob-published (or pre-provenance): synthesize from
-		// what CodeArtifact reports so the chain still starts somewhere.
+		// Source wasn't cob-published (or pre-provenance): synthesize so the
+		// chain still starts somewhere.
 		prov = &cob.Provenance{Package: fmt.Sprintf("%s/%s", coords.Namespace, coords.Package)}
-		if listed, lerr := registry.ListAssets(ctx, srcCoords); lerr == nil {
-			for _, a := range listed {
-				if a.Name == cob.ProvenanceFile {
-					continue
-				}
-				prov.Assets = append(prov.Assets, cob.ProvenanceEntry{Asset: a.Name, SHA256: a.SHA256, Size: a.Size})
-			}
-		}
 	}
+	// The recorded asset list can drift from reality if an asset was added or
+	// removed out-of-band after cob published the source. The destination
+	// provenance must describe the destination, so rebuild the list from what
+	// was actually promoted — keeping each recorded entry's Origin/Source
+	// where the asset names still agree.
+	prov.Assets = reconcilePromotedAssets(prov.Assets, realNames, results)
+
 	if len(prov.Chain) == 0 { // pre-v2 doc or synthesized
 		prov.Chain = []cob.ProvenanceEvent{{
 			Event:      "publish",
@@ -236,4 +235,31 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 
 	out.Summary("Promoted %d assets in %s", len(cmdResult.Assets), output.FormatDuration(cmdResult.DurationMs))
 	return out.CommandResult(cmdResult)
+}
+
+// reconcilePromotedAssets rebuilds the provenance asset list so it describes
+// exactly what landed in the destination. realNames and results are
+// authoritative for membership and content hash; the recorded entry, where
+// the asset name still agrees, contributes the original publish's
+// Key/Source/Origin (which a promote does not regenerate).
+func reconcilePromotedAssets(recorded []cob.ProvenanceEntry, realNames []string, results []*cob.AssetResult) []cob.ProvenanceEntry {
+	byName := make(map[string]cob.ProvenanceEntry, len(recorded))
+	for _, e := range recorded {
+		byName[e.Asset] = e
+	}
+	out := make([]cob.ProvenanceEntry, 0, len(realNames))
+	for i, name := range realNames {
+		entry := cob.ProvenanceEntry{Asset: name}
+		if i < len(results) && results[i] != nil {
+			entry.SHA256 = results[i].SHA256
+			entry.Size = results[i].Size
+		}
+		if rec, ok := byName[name]; ok {
+			entry.Key = rec.Key
+			entry.Source = rec.Source
+			entry.Origin = rec.Origin
+		}
+		out = append(out, entry)
+	}
+	return out
 }
