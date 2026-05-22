@@ -90,6 +90,29 @@ func TestAssetResultSetError(t *testing.T) {
 	}
 }
 
+func TestFileSourceResolve(t *testing.T) {
+	dir := t.TempDir()
+	p := dir + "/x.txt"
+	if err := os.WriteFile(p, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := NewFileSource(p, "./x.txt").Resolve(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Size != 5 {
+		t.Errorf("Size = %d, want 5", meta.Size)
+	}
+	// A local file is ground truth — no advertised hash; the streaming pass
+	// in the publish path computes the authoritative one.
+	if meta.SHA256 != "" {
+		t.Errorf("SHA256 = %q, want empty", meta.SHA256)
+	}
+	if _, err := NewFileSource(dir, "./").Resolve(context.Background()); err == nil {
+		t.Error("Resolve must reject a directory")
+	}
+}
+
 func TestFileSourceOrigin(t *testing.T) {
 	dir := t.TempDir()
 	p := dir + "/x.txt"
