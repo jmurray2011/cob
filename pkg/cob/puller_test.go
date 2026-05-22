@@ -32,6 +32,11 @@ func TestPullAssetVerifiesAndWrites(t *testing.T) {
 	if string(got) != "abc" {
 		t.Errorf("file content = %q", got)
 	}
+	// A pulled asset must land at the conventional 0644, not the 0600
+	// os.CreateTemp gives the staging file.
+	if fi, _ := os.Stat(dst); fi.Mode().Perm() != 0o644 {
+		t.Errorf("pulled file mode = %o, want 644", fi.Mode().Perm())
+	}
 }
 
 func TestPullAssetRejectsHashMismatch(t *testing.T) {
