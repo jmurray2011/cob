@@ -90,7 +90,7 @@ func (p *Puller) FetchAssetInfo(ctx context.Context, coords *PackageCoordinates)
 // skipped (Method "skipped").
 func (p *Puller) PullAsset(ctx context.Context, coords *PackageCoordinates, info AssetInfo, outputPath string) (*AssetResult, error) {
 	start := time.Now()
-	result := &AssetResult{Name: info.Name, Size: info.Size, Method: "buffered"}
+	result := &AssetResult{Name: info.Name, Size: info.Size, Method: "spilled"}
 
 	// Skip if it already exists with the expected hash.
 	if info.SHA256 != "" {
@@ -134,7 +134,7 @@ func (p *Puller) PullAsset(ctx context.Context, coords *PackageCoordinates, info
 	h := sha256.New()
 	var src io.Reader = out.Asset
 	if p.Progress != nil {
-		src = countingReader{r: src, report: p.Progress}
+		src = &countingReader{r: src, report: p.Progress}
 	}
 	n, copyErr := io.Copy(io.MultiWriter(tmp, h), src)
 	closeErr := tmp.Close()

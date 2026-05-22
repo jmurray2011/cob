@@ -39,7 +39,7 @@ type CommandResult struct {
 	Assets     []AssetResult `json:"assets"`
 	TotalSize  int64         `json:"total_size"`
 	DurationMs int64         `json:"duration_ms"`
-	Status     string        `json:"status"` // "ok", "error", "mismatch" (verify), "drift" (diff)
+	Status     string        `json:"status"` // "ok", "error", "mismatch" (verify), "drift" (diff), "aborted" (declined)
 	Error      string        `json:"error,omitempty"`
 	// Warnings carries every warning emitted during the command so a --json
 	// consumer sees them too — warnings go to stderr, never the stdout JSON.

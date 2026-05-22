@@ -50,7 +50,7 @@ func (p *Publisher) PublishAsset(ctx context.Context, coords *PackageCoordinates
 	result := &AssetResult{
 		Name:   name,
 		Source: src.URI(),
-		Method: "buffered",
+		Method: "spilled",
 	}
 
 	// Step 1: Resolve — get metadata (size, possibly hash).

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -164,7 +163,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
 	if !proceed {
-		fmt.Fprintln(os.Stderr, "Aborted.")
+		out.Aborted("publish")
 		return nil
 	}
 
@@ -344,7 +343,7 @@ func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []Na
 		meta, err := ns.Source.Resolve(ctx)
 		if err != nil {
 			out.AssetFail(ns.Name, ns.Source.URI(), err)
-			ar := cob.AssetResult{Name: ns.Name, Source: ns.Source.URI(), Method: "buffered"}
+			ar := cob.AssetResult{Name: ns.Name, Source: ns.Source.URI(), Method: "spilled"}
 			ar.SetError(err)
 			result.Assets = append(result.Assets, ar)
 			failures++
@@ -355,7 +354,7 @@ func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []Na
 			Source: ns.Source.URI(),
 			Size:   meta.Size,
 			SHA256: meta.SHA256,
-			Method: "buffered",
+			Method: "spilled",
 		}
 		out.AssetOK(&ar, ns.Source.URI())
 		result.Assets = append(result.Assets, ar)

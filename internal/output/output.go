@@ -59,6 +59,17 @@ func NewWithWriters(out, errOut io.Writer, jsonMode bool) *Writer {
 // than os.Stdout directly) keeps that output capturable in tests.
 func (w *Writer) Stdout() io.Writer { return w.out }
 
+// Aborted reports a user-declined confirmation. Stderr gets a one-line
+// human message; --json gets a parseable CommandResult so a CI consumer
+// can tell "the user declined" from a silent exit-0 success.
+func (w *Writer) Aborted(command string) {
+	if w.json {
+		w.CommandResult(&cob.CommandResult{Command: command, Status: "aborted"})
+		return
+	}
+	fmt.Fprintln(w.errOut, "Aborted.")
+}
+
 // Progress renders a single status line in place (carriage return, no
 // newline) on stderr. TTY-only and silenced by --json/--quiet, so it never
 // pollutes piped or machine-readable output. Call ClearProgress when done.

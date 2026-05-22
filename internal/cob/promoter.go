@@ -63,7 +63,7 @@ func (p *Promoter) ListAssetsToPromote(ctx context.Context, coords *PackageCoord
 // unfinished=false to move the version to Published.
 func (p *Promoter) PromoteAsset(ctx context.Context, coords *PackageCoordinates, srcRepo, dstRepo, assetName string, unfinished bool) (*AssetResult, error) {
 	start := time.Now()
-	result := &AssetResult{Name: assetName, Method: "buffered"}
+	result := &AssetResult{Name: assetName, Method: "spilled"}
 
 	// Download from source repo.
 	getOut, err := p.client.CodeArtifact.GetPackageVersionAsset(ctx, &codeartifact.GetPackageVersionAssetInput{

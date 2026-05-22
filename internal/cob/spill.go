@@ -36,7 +36,7 @@ type countingReader struct {
 	report func(int64)
 }
 
-func (c countingReader) Read(p []byte) (int, error) {
+func (c *countingReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
 	if n > 0 && c.report != nil {
 		c.report(int64(n))
@@ -61,7 +61,7 @@ func spillToTemp(r io.Reader, dir string, report func(int64)) (*tempAsset, error
 	}
 
 	if report != nil {
-		r = countingReader{r: r, report: report}
+		r = &countingReader{r: r, report: report}
 	}
 	h := sha256.New()
 	n, err := io.Copy(io.MultiWriter(f, h), r)

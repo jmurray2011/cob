@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -134,7 +133,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		return fail(out, "promote", cob.ExitError, "%s", err)
 	}
 	if !proceed {
-		fmt.Fprintln(os.Stderr, "Aborted.")
+		out.Aborted("promote")
 		return nil
 	}
 
