@@ -10,6 +10,36 @@ import (
 
 func b(v bool) *bool { return &v }
 
+func TestClassifyURI(t *testing.T) {
+	cases := []struct {
+		uri     string
+		kind    uriKind
+		wantErr bool
+	}{
+		{"s3://bucket/key", uriS3, false},
+		{"ca://dom/repo/ns/pkg@1.0.0/asset.jar", uriCA, false},
+		{"./local.txt", uriFile, false},
+		{"/abs/local.txt", uriFile, false},
+		{"bare.txt", uriFile, false},
+		// An unrecognised scheme is rejected, never silently treated as a
+		// file path — publish and validate must agree on this.
+		{"gs://bucket/key", 0, true},
+		{"https://example.com/x", 0, true},
+	}
+	for _, c := range cases {
+		kind, _, err := classifyURI(c.uri, "/manifest/dir")
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("classifyURI(%q) should reject an unknown scheme", c.uri)
+			}
+			continue
+		}
+		if err != nil || kind != c.kind {
+			t.Errorf("classifyURI(%q) = (%d, %v), want kind %d", c.uri, kind, err, c.kind)
+		}
+	}
+}
+
 func TestOriginS3Changed(t *testing.T) {
 	cases := []struct {
 		name     string

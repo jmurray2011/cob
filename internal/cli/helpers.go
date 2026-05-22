@@ -59,27 +59,55 @@ func buildSources(m *manifest.Manifest, client *cob.Client) ([]NamedSource, erro
 	return sources, nil
 }
 
-func buildSource(uri, manifestDir string, client *cob.Client) (cob.AssetSource, error) {
+// uriKind is the scheme classification of a source URI.
+type uriKind int
+
+const (
+	uriS3 uriKind = iota
+	uriCA
+	uriFile
+)
+
+// classifyURI determines what kind of source a (variable-resolved) URI is.
+// For a file URI it also returns the path resolved against manifestDir. An
+// unrecognised "scheme://" is an error, not a file path — buildSource (used
+// by publish) and validateSourceURI (used by validate) both go through here,
+// so the two commands cannot disagree on what a valid source is.
+func classifyURI(uri, manifestDir string) (uriKind, string, error) {
 	switch {
 	case strings.HasPrefix(uri, "s3://"):
-		return cob.NewS3Source(client.S3, uri)
+		return uriS3, "", nil
 	case strings.HasPrefix(uri, "ca://"):
-		return cob.NewCASource(client.CodeArtifact, uri)
+		return uriCA, "", nil
 	case strings.HasPrefix(uri, "./"), strings.HasPrefix(uri, "/"):
 		path := uri
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(manifestDir, path)
 		}
-		return cob.NewFileSource(path, uri), nil
+		return uriFile, path, nil
 	default:
 		// A "scheme://" we don't recognise is a mistake, not a local file —
 		// reject it rather than silently turning gs://b/x into a path.
 		if i := strings.Index(uri, "://"); i > 0 {
-			return nil, fmt.Errorf("unsupported source scheme in %q (use s3://, ca://, or a file path)", uri)
+			return 0, "", fmt.Errorf("unsupported source scheme in %q (use s3://, ca://, or a file path)", uri)
 		}
 		// Otherwise a relative path from the manifest directory — covers
 		// bare filenames like "README.md" or "subdir/file.bin".
-		path := filepath.Join(manifestDir, uri)
+		return uriFile, filepath.Join(manifestDir, uri), nil
+	}
+}
+
+func buildSource(uri, manifestDir string, client *cob.Client) (cob.AssetSource, error) {
+	kind, path, err := classifyURI(uri, manifestDir)
+	if err != nil {
+		return nil, err
+	}
+	switch kind {
+	case uriS3:
+		return cob.NewS3Source(client.S3, uri)
+	case uriCA:
+		return cob.NewCASource(client.CodeArtifact, uri)
+	default: // uriFile
 		return cob.NewFileSource(path, uri), nil
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -117,26 +116,28 @@ func runValidate(manifestPath, versionFlag string) error {
 // any network call and returns the stored asset name (basename) it would
 // publish as, plus its size. Local files are additionally checked for
 // existence and report their real size; remote sources report 0 because
-// sizing them would need a network call validate deliberately avoids.
+// sizing them would need a network call validate deliberately avoids. It
+// shares classifyURI with publish's buildSource, so the two commands agree
+// on which URIs are valid.
 func validateSourceURI(uri, manifestDir string) (string, int64, error) {
-	switch {
-	case strings.HasPrefix(uri, "s3://"):
+	kind, path, err := classifyURI(uri, manifestDir)
+	if err != nil {
+		return "", 0, err
+	}
+	switch kind {
+	case uriS3:
 		s, err := cob.NewS3Source(nil, uri)
 		if err != nil {
 			return "", 0, err
 		}
 		return s.Filename(), 0, nil
-	case strings.HasPrefix(uri, "ca://"):
+	case uriCA:
 		s, err := cob.NewCASource(nil, uri)
 		if err != nil {
 			return "", 0, err
 		}
 		return s.Filename(), 0, nil
-	default:
-		path := uri
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(manifestDir, path)
-		}
+	default: // uriFile
 		info, err := os.Stat(path)
 		if err != nil {
 			return "", 0, fmt.Errorf("local source not found: %s", path)
