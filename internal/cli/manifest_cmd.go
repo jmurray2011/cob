@@ -69,7 +69,7 @@ func runManifest(ctx context.Context, target, versionFlag string) error {
 	if err != nil {
 		return fail(out, "manifest", codeFor(err), "%s", err)
 	}
-	fmt.Print(yaml)
+	fmt.Fprint(out.Stdout(), yaml)
 	return nil
 }
 

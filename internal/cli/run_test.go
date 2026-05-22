@@ -28,17 +28,42 @@ func TestRunResolve(t *testing.T) {
 		wantExit(t, runResolve(ctx, "dom/repo/ns/pkg"), cob.ExitNotFound)
 	})
 
-	t.Run("success", func(t *testing.T) {
+	t.Run("success prints the resolved version", func(t *testing.T) {
 		ca := &fakeCA{listVersionsFn: func(*codeartifact.ListPackageVersionsInput) (*codeartifact.ListPackageVersionsOutput, error) {
 			return &codeartifact.ListPackageVersionsOutput{
 				Versions: []catypes.PackageVersionSummary{{Version: aws.String("2.1.0")}},
 			}, nil
 		}}
-		useFake(t, ca)
+		stdout, _ := useFake(t, ca)
 		if err := runResolve(ctx, "dom/repo/ns/pkg"); err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
+		if got := strings.TrimSpace(stdout.String()); got != "2.1.0" {
+			t.Errorf("resolve printed %q, want 2.1.0", got)
+		}
 	})
+}
+
+func TestRunManifest(t *testing.T) {
+	ca := &fakeCA{
+		getAssetFn: func(*codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
+			return nil, &catypes.ResourceNotFoundException{} // no cob-provenance.json
+		},
+		listAssetsFn: oneAsset("app.bin", 7),
+	}
+	stdout, _ := useFake(t, ca)
+	if err := runManifest(context.Background(), "dom/repo/ns/pkg@1.0.0", ""); err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"domain: dom", "repository: repo", "package: pkg", "sources:",
+		"app.bin: ca://dom/repo/ns/pkg@1.0.0/app.bin",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("manifest output missing %q:\n%s", want, got)
+		}
+	}
 }
 
 func TestRunLs(t *testing.T) {

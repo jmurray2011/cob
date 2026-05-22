@@ -44,6 +44,12 @@ func NewWithWriters(out, errOut io.Writer, jsonMode bool) *Writer {
 	}
 }
 
+// Stdout returns the writer's stdout sink, for command output that is
+// neither an asset line, a table, nor a CommandResult — resolve's bare
+// version string and manifest's YAML document. Routing through here (rather
+// than os.Stdout directly) keeps that output capturable in tests.
+func (w *Writer) Stdout() io.Writer { return w.out }
+
 // CommandResult writes the final result of a command. Any warnings emitted
 // during the command are folded in first, so a --json consumer (which never
 // sees the stderr warning lines) still gets them.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -65,11 +64,11 @@ func runResolve(ctx context.Context, target string) error {
 			Repository: fmt.Sprintf("%s/%s", coords.Domain, coords.Repository),
 			Version:    version,
 		}
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(out.Stdout())
 		enc.SetIndent("", "  ")
 		return enc.Encode(result)
 	}
 
-	fmt.Println(version)
+	fmt.Fprintln(out.Stdout(), version)
 	return nil
 }
