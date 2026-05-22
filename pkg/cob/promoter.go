@@ -49,7 +49,7 @@ func (p *Promoter) ListAssetsToPromote(ctx context.Context, coords *PackageCoord
 	}
 
 	if len(assetNames) == 0 {
-		return nil, fmt.Errorf("%s/%s@%s not found in %s. Promote to %s first.",
+		return nil, fmt.Errorf("%s/%s@%s not found in %s -- promote it to %s first",
 			coords.Namespace, coords.Package, coords.Version, srcRepo, srcRepo)
 	}
 	return assetNames, nil
