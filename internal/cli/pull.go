@@ -176,7 +176,14 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		info := assets[i]
 		dest := outputPath
 		if dirTarget {
-			dest = filepath.Join(outputPath, info.Name)
+			d, jerr := safeJoin(outputPath, info.Name)
+			if jerr != nil {
+				out.AssetFail(info.Name, "", jerr)
+				ar := &cob.AssetResult{Name: info.Name}
+				ar.SetError(jerr)
+				return ar, jerr
+			}
+			dest = d
 		}
 
 		out.AssetStart(info.Name, "", info.Size)
@@ -243,6 +250,19 @@ func writePulledManifest(ctx context.Context, client *cob.Client, coords *cob.Pa
 		return
 	}
 	out.Plain("Wrote %s", p)
+}
+
+// safeJoin joins an asset name under root and confirms it stays within
+// root. CodeArtifact asset names are path-like and could contain ../
+// traversal; cob must not write outside the chosen output directory
+// regardless of what the server returns.
+func safeJoin(root, name string) (string, error) {
+	dest := filepath.Join(root, name)
+	rel, err := filepath.Rel(root, dest)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("asset %q escapes the output directory", name)
+	}
+	return dest, nil
 }
 
 func isDir(path string) bool {

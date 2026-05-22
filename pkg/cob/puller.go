@@ -78,25 +78,28 @@ func (p *Puller) FetchAssetInfo(ctx context.Context, coords *PackageCoordinates)
 }
 
 // PullAsset downloads a single asset from CodeArtifact to a local path.
-// If the file already exists with a matching SHA-256, it is skipped and
-// the result has Method "skipped".
+//
+// The download is hashed while streaming and the SHA-256 is checked against
+// the expected value — a corrupt or truncated transfer is rejected, never
+// silently accepted. Bytes land in a temp file in the destination directory
+// and are renamed into place only after the hash verifies, so an
+// interrupted pull can't leave a truncated file (or destroy the prior one).
+// If the file already exists with a matching SHA-256 the download is
+// skipped (Method "skipped").
 func (p *Puller) PullAsset(ctx context.Context, coords *PackageCoordinates, info AssetInfo, outputPath string) (*AssetResult, error) {
 	start := time.Now()
-	result := &AssetResult{
-		Name:   info.Name,
-		Size:   info.Size,
-		SHA256: info.SHA256,
-		Method: "buffered",
+	result := &AssetResult{Name: info.Name, Size: info.Size, Method: "buffered"}
+
+	// Skip if it already exists with the expected hash.
+	if info.SHA256 != "" {
+		if existing, err := hashFile(outputPath); err == nil && existing == info.SHA256 {
+			result.Method = "skipped"
+			result.SHA256 = existing
+			result.DurationMs = time.Since(start).Milliseconds()
+			return result, nil
+		}
 	}
 
-	// Check if already exists with matching hash.
-	if existingHash, err := hashFile(outputPath); err == nil && existingHash == info.SHA256 {
-		result.Method = "skipped"
-		result.DurationMs = time.Since(start).Milliseconds()
-		return result, nil
-	}
-
-	// Download the asset.
 	out, err := p.client.CodeArtifact.GetPackageVersionAsset(ctx, &codeartifact.GetPackageVersionAssetInput{
 		Domain:         aws.String(coords.Domain),
 		Repository:     aws.String(coords.Repository),
@@ -112,24 +115,48 @@ func (p *Puller) PullAsset(ctx context.Context, coords *PackageCoordinates, info
 	}
 	defer out.Asset.Close()
 
-	// Ensure output directory exists.
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+	dir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		result.SetError(err)
 		return result, err
 	}
 
-	f, err := os.Create(outputPath)
+	// Stream to a temp file in the destination dir (same filesystem → atomic
+	// rename), hashing as we go.
+	tmp, err := os.CreateTemp(dir, ".cob-pull-*")
 	if err != nil {
 		result.SetError(err)
 		return result, err
 	}
-	defer f.Close()
-
-	if _, err := io.Copy(f, out.Asset); err != nil {
+	tmpName := tmp.Name()
+	h := sha256.New()
+	n, copyErr := io.Copy(io.MultiWriter(tmp, h), out.Asset)
+	closeErr := tmp.Close()
+	if copyErr != nil || closeErr != nil {
+		os.Remove(tmpName)
+		err := copyErr
+		if err == nil {
+			err = closeErr
+		}
 		result.SetError(err)
 		return result, fmt.Errorf("writing %s: %w", outputPath, err)
 	}
 
+	got := hex.EncodeToString(h.Sum(nil))
+	if info.SHA256 != "" && got != info.SHA256 {
+		os.Remove(tmpName)
+		err := fmt.Errorf("asset %q: downloaded SHA-256 %s != expected %s", info.Name, got, info.SHA256)
+		result.SetError(err)
+		return result, err
+	}
+	if err := os.Rename(tmpName, outputPath); err != nil {
+		os.Remove(tmpName)
+		result.SetError(err)
+		return result, err
+	}
+
+	result.SHA256 = got
+	result.Size = n
 	result.DurationMs = time.Since(start).Milliseconds()
 	return result, nil
 }

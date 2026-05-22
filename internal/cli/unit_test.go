@@ -55,3 +55,23 @@ func TestOriginS3Changed(t *testing.T) {
 		}
 	}
 }
+
+func TestSafeJoin(t *testing.T) {
+	root := "/out"
+	ok := []struct{ name, wantSuffix string }{
+		{"app.bin", "/out/app.bin"},
+		{"sub/dir/app.bin", "/out/sub/dir/app.bin"},
+		{"/etc/passwd", "/out/etc/passwd"}, // absolute-looking name stays under root
+	}
+	for _, c := range ok {
+		got, err := safeJoin(root, c.name)
+		if err != nil || got != c.wantSuffix {
+			t.Errorf("safeJoin(%q,%q) = (%q,%v), want (%q,nil)", root, c.name, got, err, c.wantSuffix)
+		}
+	}
+	for _, bad := range []string{"../../etc/passwd", "..", "sub/../../escape", "../sibling"} {
+		if _, err := safeJoin(root, bad); err == nil {
+			t.Errorf("safeJoin(%q,%q) should reject traversal", root, bad)
+		}
+	}
+}
