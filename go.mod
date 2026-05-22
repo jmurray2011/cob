@@ -1,6 +1,6 @@
 module github.com/jmurray2011/cob
 
-go 1.25.3
+go 1.25
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.5
