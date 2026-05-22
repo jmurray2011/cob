@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"runtime/debug"
+	"syscall"
 
 	"github.com/jmurray2011/cob/internal/cli"
 	"github.com/jmurray2011/cob/pkg/cob"
@@ -12,19 +15,52 @@ import (
 
 var version = "dev"
 
+// resolveBuildVersion returns a version string, enriched (when cob was built
+// without an explicit -ldflags version) with the VCS revision/time and Go
+// version that the toolchain embeds.
 func resolveBuildVersion() string {
-	if version != "dev" {
-		return version
+	info, ok := debug.ReadBuildInfo()
+	v := version
+	if v == "dev" && ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		v = info.Main.Version
 	}
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
+	if !ok {
+		return v
 	}
-	return version
+	var rev, t string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if len(s.Value) > 12 {
+				rev = s.Value[:12]
+			} else {
+				rev = s.Value
+			}
+		case "vcs.time":
+			t = s.Value
+		}
+	}
+	extra := info.GoVersion
+	if rev != "" {
+		extra = rev + ", " + extra
+	}
+	if t != "" {
+		extra += ", " + t
+	}
+	if extra != "" {
+		return v + " (" + extra + ")"
+	}
+	return v
 }
 
 func main() {
+	// Ctrl-C / SIGTERM cancels the command's context so in-flight AWS calls
+	// abort and deferred cleanup (temp files) runs.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	root := cli.NewRootCmd(resolveBuildVersion())
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(ctx); err != nil {
 		// ExitError already had its message emitted by the command layer;
 		// just carry the code out. Anything else is unexpected — print it.
 		var ee *cli.ExitError

@@ -96,7 +96,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	// Resolve @latest from the source repo.
 	coords.Repository = srcRepo
 	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		return fail(out, "promote", cob.ExitNotFound, "%s", err)
+		return fail(out, "promote", codeFor(err), "%s", err)
 	}
 
 	// Check if version exists in destination.

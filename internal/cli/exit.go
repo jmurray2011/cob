@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/jmurray2011/cob/internal/output"
+	"github.com/jmurray2011/cob/pkg/cob"
 )
 
 // ExitError carries an intended process exit code out of a run* function.
@@ -22,4 +23,14 @@ func (e *ExitError) Error() string { return fmt.Sprintf("exit status %d", e.Code
 func fail(out *output.Writer, command string, code int, format string, args ...any) error {
 	out.ErrorResult(command, fmt.Sprintf(format, args...))
 	return &ExitError{Code: code}
+}
+
+// codeFor maps an error to an exit code: ExitNotFound when it represents a
+// missing package/version/asset, ExitError otherwise — so a network/throttle
+// failure isn't misreported to CI as "not found".
+func codeFor(err error) int {
+	if cob.IsNotFound(err) {
+		return cob.ExitNotFound
+	}
+	return cob.ExitError
 }

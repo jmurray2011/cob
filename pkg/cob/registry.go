@@ -17,10 +17,21 @@ import (
 // the CodeArtifact API into throttling.
 const versionMetaConcurrency = 8
 
+// ErrNotFound is wrapped into cob-level "not found" errors (e.g. no
+// published versions) that aren't an AWS ResourceNotFoundException, so
+// callers can map them to a not-found exit code.
+var ErrNotFound = errors.New("not found")
+
 // isNotFound returns true if the error is a CodeArtifact ResourceNotFoundException.
 func isNotFound(err error) bool {
 	var rnf *catypes.ResourceNotFoundException
 	return errors.As(err, &rnf)
+}
+
+// IsNotFound reports whether err represents a missing package/version/asset
+// — either an AWS ResourceNotFoundException or a wrapped ErrNotFound.
+func IsNotFound(err error) bool {
+	return isNotFound(err) || errors.Is(err, ErrNotFound)
 }
 
 // Registry handles listing and querying CodeArtifact.
@@ -371,15 +382,15 @@ func (r *Registry) ResolveLatest(ctx context.Context, coords *PackageCoordinates
 	})
 	if err != nil {
 		if isNotFound(err) {
-			return "", fmt.Errorf("no published versions of %s/%s in %s/%s",
-				coords.Namespace, coords.Package, coords.Domain, coords.Repository)
+			return "", fmt.Errorf("no published versions of %s/%s in %s/%s: %w",
+				coords.Namespace, coords.Package, coords.Domain, coords.Repository, ErrNotFound)
 		}
 		return "", fmt.Errorf("resolving latest version of %s/%s in %s/%s: %w",
 			coords.Namespace, coords.Package, coords.Domain, coords.Repository, err)
 	}
 	if len(out.Versions) == 0 {
-		return "", fmt.Errorf("no published versions of %s/%s in %s/%s",
-			coords.Namespace, coords.Package, coords.Domain, coords.Repository)
+		return "", fmt.Errorf("no published versions of %s/%s in %s/%s: %w",
+			coords.Namespace, coords.Package, coords.Domain, coords.Repository, ErrNotFound)
 	}
 	return aws.ToString(out.Versions[0].Version), nil
 }

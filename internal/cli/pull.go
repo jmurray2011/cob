@@ -93,13 +93,13 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 	// Resolve @latest if needed.
 	registry := cob.NewRegistry(client)
 	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		return fail(out, "pull", cob.ExitNotFound, "%s", err)
+		return fail(out, "pull", codeFor(err), "%s", err)
 	}
 
 	// Fetch all asset metadata in a single API call.
 	allAssets, err := puller.FetchAssetInfo(ctx, coords)
 	if err != nil {
-		return fail(out, "pull", cob.ExitNotFound, "listing assets: %s", err)
+		return fail(out, "pull", codeFor(err), "listing assets: %s", err)
 	}
 
 	// Filter to requested assets.

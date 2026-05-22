@@ -54,7 +54,7 @@ func runResolve(ctx context.Context, target string) error {
 
 	version, err := registry.ResolveLatest(ctx, coords)
 	if err != nil {
-		return fail(out, "resolve", cob.ExitNotFound, "%s", err)
+		return fail(out, "resolve", codeFor(err), "%s", err)
 	}
 
 	if flagJSON {

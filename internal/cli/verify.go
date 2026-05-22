@@ -83,7 +83,7 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 	}
 	cmps, err := compareManifestToPublished(ctx, sources, cob.NewRegistry(client), coords, deep, prov)
 	if err != nil {
-		return fail(out, "verify", cob.ExitNotFound, "%s", err)
+		return fail(out, "verify", codeFor(err), "%s", err)
 	}
 
 	out.Header("Verifying %s/%s@%s against %s", m.Namespace, m.Package, version, manifestPath)
@@ -177,7 +177,7 @@ func runVerifyCoords(ctx context.Context, target, versionFlag string) error {
 	}
 	registry := cob.NewRegistry(client)
 	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		return fail(out, "verify", cob.ExitNotFound, "%s", err)
+		return fail(out, "verify", codeFor(err), "%s", err)
 	}
 
 	prov, err := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
@@ -192,7 +192,7 @@ func runVerifyCoords(ctx context.Context, target, versionFlag string) error {
 
 	assets, err := registry.ListAssets(ctx, coords)
 	if err != nil {
-		return fail(out, "verify", cob.ExitNotFound, "%s", err)
+		return fail(out, "verify", codeFor(err), "%s", err)
 	}
 	pubSHA := make(map[string]string, len(assets))
 	for _, a := range assets {

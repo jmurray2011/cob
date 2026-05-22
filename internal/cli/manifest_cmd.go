@@ -60,12 +60,12 @@ func runManifest(ctx context.Context, target, versionFlag string) error {
 	}
 	registry := cob.NewRegistry(client)
 	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		return fail(out, "manifest", cob.ExitNotFound, "%s", err)
+		return fail(out, "manifest", codeFor(err), "%s", err)
 	}
 
 	yaml, err := manifestYAMLFor(ctx, client, coords)
 	if err != nil {
-		return fail(out, "manifest", cob.ExitNotFound, "%s", err)
+		return fail(out, "manifest", codeFor(err), "%s", err)
 	}
 	fmt.Print(yaml)
 	return nil
@@ -140,7 +140,7 @@ func renderManifest(c *cob.PackageCoordinates, prov *cob.Provenance, assets []co
 		}
 	}
 	if len(sources) == 0 {
-		return "", fmt.Errorf("no assets found for %s/%s@%s", c.Namespace, c.Package, c.Version)
+		return "", fmt.Errorf("no assets found for %s/%s@%s: %w", c.Namespace, c.Package, c.Version, cob.ErrNotFound)
 	}
 	for _, s := range sources {
 		if hasControl(s.key) || hasControl(s.uri) {

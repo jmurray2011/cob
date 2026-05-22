@@ -71,7 +71,7 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) e
 	}
 	cmps, err := compareManifestToPublished(ctx, sources, cob.NewRegistry(client), coords, deep, prov)
 	if err != nil {
-		return fail(out, "diff", cob.ExitNotFound, "%s", err)
+		return fail(out, "diff", codeFor(err), "%s", err)
 	}
 
 	out.Header("diff %s/%s@%s vs %s", m.Namespace, m.Package, version, manifestPath)

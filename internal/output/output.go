@@ -159,6 +159,11 @@ func (w *Writer) AssetSkipped(name string) {
 // integrations (notably WSL piped through IDE terminals) otherwise hold
 // output until the process exits, which makes live progress useless.
 func (w *Writer) flush() {
+	// Only fsync to a terminal — the WSL/IDE case this exists for. When
+	// stdout is redirected to a file, per-line fsync is needless I/O.
+	if !w.isTTY {
+		return
+	}
 	if f, ok := w.out.(*os.File); ok {
 		_ = f.Sync()
 	}
