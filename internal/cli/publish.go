@@ -83,6 +83,12 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 	publisher := cob.NewPublisher(client)
 	registry := cob.NewRegistry(client)
 
+	// Asset sizes aren't known until each source is resolved, so the meter
+	// shows bytes/rate without a percentage.
+	meter := newProgressMeter(out, 0)
+	publisher.Progress = meter.add
+	defer meter.finish()
+
 	// Check whether the version already exists. The conflict gate runs
 	// *after* the dry-run dispatch below: a dry run mutates nothing, so it
 	// must work even when the version is present — which is exactly when you

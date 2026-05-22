@@ -17,7 +17,7 @@ func TestSpillToTemp(t *testing.T) {
 	wantHex := hex.EncodeToString(want[:])
 
 	dir := t.TempDir()
-	ta, err := spillToTemp(strings.NewReader(content), dir)
+	ta, err := spillToTemp(strings.NewReader(content), dir, nil)
 	if err != nil {
 		t.Fatalf("spillToTemp: %v", err)
 	}
@@ -60,7 +60,7 @@ type errReader struct{}
 func (errReader) Read([]byte) (int, error) { return 0, errors.New("boom") }
 
 func TestSpillToTempReadError(t *testing.T) {
-	if _, err := spillToTemp(errReader{}, ""); err == nil {
+	if _, err := spillToTemp(errReader{}, "", nil); err == nil {
 		t.Fatal("expected an error when the source read fails")
 	}
 }

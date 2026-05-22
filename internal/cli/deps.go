@@ -13,7 +13,13 @@ import (
 // cobra wiring and run* signatures stay unchanged.
 var (
 	newClient = cob.NewClient
-	newWriter = output.New
+	// newWriter builds the output writer for a command, applying the global
+	// --quiet flag (which output.New itself doesn't know about).
+	newWriter = func(json bool) *output.Writer {
+		w := output.New(json)
+		w.SetQuiet(flagQuiet)
+		return w
+	}
 )
 
 // dialClient builds the AWS client from the current global flags. Every

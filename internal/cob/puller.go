@@ -24,6 +24,8 @@ type AssetInfo struct {
 // Puller handles downloading assets from CodeArtifact.
 type Puller struct {
 	client *Client
+	// Progress, when set, receives byte-count deltas during each download.
+	Progress func(int64)
 }
 
 // NewPuller creates a Puller.
@@ -130,7 +132,11 @@ func (p *Puller) PullAsset(ctx context.Context, coords *PackageCoordinates, info
 	}
 	tmpName := tmp.Name()
 	h := sha256.New()
-	n, copyErr := io.Copy(io.MultiWriter(tmp, h), out.Asset)
+	var src io.Reader = out.Asset
+	if p.Progress != nil {
+		src = countingReader{r: src, report: p.Progress}
+	}
+	n, copyErr := io.Copy(io.MultiWriter(tmp, h), src)
 	closeErr := tmp.Close()
 	if copyErr != nil || closeErr != nil {
 		os.Remove(tmpName)

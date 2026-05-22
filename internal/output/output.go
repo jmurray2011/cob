@@ -20,9 +20,18 @@ type Writer struct {
 	errOut   io.Writer
 	json     bool
 	isTTY    bool
+	quiet    bool
 	mu       sync.Mutex
 	warnings []string
+	progress bool // an in-place progress line is currently on screen
 }
+
+// progressWidth bounds the in-place progress line so it can't wrap.
+const progressWidth = 80
+
+// SetQuiet suppresses headers, summaries, and per-asset/progress lines.
+// Errors and warnings still print. For scripts that want just the exit code.
+func (w *Writer) SetQuiet(q bool) { w.quiet = q }
 
 // New creates a Writer. If jsonMode is true, output is JSON.
 // Otherwise it auto-detects TTY for human-friendly output.
@@ -49,6 +58,39 @@ func NewWithWriters(out, errOut io.Writer, jsonMode bool) *Writer {
 // version string and manifest's YAML document. Routing through here (rather
 // than os.Stdout directly) keeps that output capturable in tests.
 func (w *Writer) Stdout() io.Writer { return w.out }
+
+// Progress renders a single status line in place (carriage return, no
+// newline) on stderr. TTY-only and silenced by --json/--quiet, so it never
+// pollutes piped or machine-readable output. Call ClearProgress when done.
+func (w *Writer) Progress(line string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.json || w.quiet || !w.isTTY {
+		return
+	}
+	if len(line) > progressWidth {
+		line = line[:progressWidth]
+	}
+	fmt.Fprintf(w.errOut, "\r%-*s", progressWidth, line)
+	w.progress = true
+}
+
+// ClearProgress erases the in-place progress line, if one is showing.
+func (w *Writer) ClearProgress() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.clearProgressLocked()
+}
+
+// clearProgressLocked erases the progress line; the caller must hold mu. The
+// per-asset line methods call it first so their output and the progress line
+// never overwrite each other.
+func (w *Writer) clearProgressLocked() {
+	if w.progress {
+		fmt.Fprintf(w.errOut, "\r%-*s\r", progressWidth, "")
+		w.progress = false
+	}
+}
 
 // CommandResult writes the final result of a command. Any warnings emitted
 // during the command are folded in first, so a --json consumer (which never
@@ -79,9 +121,9 @@ func (w *Writer) ErrorResult(command, errMsg string) {
 	}
 }
 
-// Header prints the initial command header (non-JSON mode).
+// Header prints the initial command header (non-JSON, non-quiet mode).
 func (w *Writer) Header(format string, args ...any) {
-	if !w.json {
+	if !w.json && !w.quiet {
 		fmt.Fprintf(w.out, format+"\n", args...)
 		fmt.Fprintln(w.out)
 	}
@@ -94,9 +136,10 @@ func (w *Writer) Header(format string, args ...any) {
 func (w *Writer) AssetStart(name, sourceURI string, size int64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.json || !w.isTTY {
+	if w.json || w.quiet || !w.isTTY {
 		return
 	}
+	w.clearProgressLocked()
 	line := "  .. " + name
 	if sourceURI != "" {
 		line += "  <-  " + sourceURI
@@ -111,9 +154,10 @@ func (w *Writer) AssetStart(name, sourceURI string, size int64) {
 func (w *Writer) AssetOK(r *cob.AssetResult, sourceURI string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.json {
+	if w.json || w.quiet {
 		return
 	}
+	w.clearProgressLocked()
 	sizeStr := FormatSize(r.Size)
 	durStr := FormatDuration(r.DurationMs)
 	if w.isTTY {
@@ -137,6 +181,7 @@ func (w *Writer) AssetFail(name, sourceURI string, err error) {
 	if w.json {
 		return
 	}
+	w.clearProgressLocked()
 	if w.isTTY {
 		line := "  FAIL " + name
 		if sourceURI != "" {
@@ -153,9 +198,10 @@ func (w *Writer) AssetFail(name, sourceURI string, err error) {
 func (w *Writer) AssetSkipped(name string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.json {
+	if w.json || w.quiet {
 		return
 	}
+	w.clearProgressLocked()
 	if w.isTTY {
 		fmt.Fprintf(w.out, "  -- %s  (skipped)\n", name)
 	} else {
@@ -168,15 +214,16 @@ func (w *Writer) AssetSkipped(name string) {
 func (w *Writer) Plain(format string, args ...any) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.json {
+	if w.json || w.quiet {
 		return
 	}
+	w.clearProgressLocked()
 	fmt.Fprintf(w.out, format+"\n", args...)
 }
 
 // Summary prints the final summary line.
 func (w *Writer) Summary(format string, args ...any) {
-	if !w.json {
+	if !w.json && !w.quiet {
 		fmt.Fprintln(w.out)
 		fmt.Fprintf(w.out, format+"\n", args...)
 	}

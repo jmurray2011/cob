@@ -151,6 +151,11 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		return fail(out, "promote", cob.ExitError, "%s", err)
 	}
 
+	// Promote doesn't know asset sizes up front, so the meter shows bytes/rate.
+	meter := newProgressMeter(out, 0)
+	promoter.Progress = meter.add
+	defer meter.finish()
+
 	cmdResult := &cob.CommandResult{
 		Command:    "promote",
 		Package:    fmt.Sprintf("%s/%s@%s", coords.Namespace, coords.Package, coords.Version),

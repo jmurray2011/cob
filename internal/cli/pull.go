@@ -142,6 +142,10 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		Status:     "ok",
 	}
 
+	meter := newProgressMeter(out, totalAssetSize(assets))
+	puller.Progress = meter.add
+	defer meter.finish()
+
 	concurrency = resolveConcurrency(concurrency, out)
 	results, ok := runConcurrent(len(assets), concurrency, func(i int) (*cob.AssetResult, error) {
 		info := assets[i]
@@ -208,6 +212,15 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		writePulledManifest(ctx, client, coords, assets, outputPath, out)
 	}
 	return out.CommandResult(result)
+}
+
+// totalAssetSize sums known asset sizes, for the transfer progress meter.
+func totalAssetSize(assets []cob.AssetInfo) int64 {
+	var n int64
+	for _, a := range assets {
+		n += a.Size
+	}
+	return n
 }
 
 // selectAssets narrows the full asset list to what the caller asked for: a

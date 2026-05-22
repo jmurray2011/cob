@@ -12,6 +12,8 @@ import (
 // Promoter handles copying package versions between repositories.
 type Promoter struct {
 	client *Client
+	// Progress, when set, receives byte-count deltas during each transfer.
+	Progress func(int64)
 }
 
 // NewPromoter creates a Promoter.
@@ -80,7 +82,7 @@ func (p *Promoter) PromoteAsset(ctx context.Context, coords *PackageCoordinates,
 
 	// Stream to a temp file (bounded memory, no size cap), hashing in the
 	// same pass, to get the io.ReadSeeker PublishPackageVersion needs.
-	ta, err := spillToTemp(getOut.Asset, p.client.TmpDir)
+	ta, err := spillToTemp(getOut.Asset, p.client.TmpDir, p.Progress)
 	getOut.Asset.Close()
 	if err != nil {
 		result.SetError(err)

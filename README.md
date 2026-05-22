@@ -383,12 +383,17 @@ COB_VAR_GIT_SHA=abc123 cob publish my-package.yaml --version 2.1.0
 ## Global flags
 
 ```
---profile    AWS profile
---region     AWS region
---json       Machine-readable JSON output
---debug      Log AWS API responses/retries to stderr
---tmpdir     Directory for streaming spill files (default: $TMPDIR)
+--profile      AWS profile
+--region       AWS region
+--json         Machine-readable JSON output
+--quiet, -q    Suppress headers, summaries, and progress (errors still print)
+--debug        Log AWS API responses/retries to stderr
+--tmpdir       Directory for streaming spill files (default: $TMPDIR)
 ```
+
+On an interactive terminal, `publish`/`pull`/`promote` show a live
+byte-count progress line while transferring; it is automatically silenced
+when output is piped, `--json`, or `--quiet`.
 
 `--debug` is the first thing to reach for when an AWS call fails for a
 non-obvious reason (region, credentials, throttling) -- it logs every AWS

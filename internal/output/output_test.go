@@ -66,3 +66,22 @@ func TestWarnSurfacesInJSONMode(t *testing.T) {
 		t.Errorf("Warnings = %v, want the override notice", got.Warnings)
 	}
 }
+
+func TestQuietSuppressesChatter(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	w := NewWithWriters(&stdout, &stderr, false)
+	w.SetQuiet(true)
+
+	w.Header("Publishing X")
+	w.Summary("done")
+	w.Plain("a note")
+	if stdout.Len() != 0 {
+		t.Errorf("--quiet must suppress header/summary/plain, got %q", stdout.String())
+	}
+
+	// Errors must still reach the user.
+	w.Error("boom")
+	if !strings.Contains(stderr.String(), "boom") {
+		t.Errorf("--quiet must not suppress errors, stderr = %q", stderr.String())
+	}
+}
