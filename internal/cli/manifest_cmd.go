@@ -79,7 +79,10 @@ const generatedManifestFile = "cob-manifest.yaml"
 // self-references) the manifest YAML for a resolved version. Shared by the
 // `manifest` command and `pull`.
 func manifestYAMLFor(ctx context.Context, client *cob.Client, coords *cob.PackageCoordinates) (string, error) {
-	prov, _ := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
+	prov, err := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", cob.ProvenanceFile, err)
+	}
 
 	var assets []cob.AssetSummary
 	if prov == nil || len(prov.Assets) == 0 {

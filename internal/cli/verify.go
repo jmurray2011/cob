@@ -75,7 +75,12 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 		return fail(out, "verify", cob.ExitError, "%s", err)
 	}
 
-	prov, _ := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
+	prov, perr := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
+	if perr != nil {
+		// Don't silently downgrade to "unverified" — the user should know
+		// the provenance fallback is unavailable.
+		out.Warn("could not read %s: %s", cob.ProvenanceFile, perr)
+	}
 	cmps, err := compareManifestToPublished(ctx, sources, cob.NewRegistry(client), coords, deep, prov)
 	if err != nil {
 		return fail(out, "verify", cob.ExitNotFound, "%s", err)

@@ -62,6 +62,7 @@ func runValidate(manifestPath, versionFlag string) error {
 	}
 
 	var failures int
+	byAsset := make(map[string]string, len(m.Sources)) // stored name -> manifest key
 	for _, s := range m.Sources {
 		ar := cob.AssetResult{Name: s.Name, Source: s.URI, Method: "ok"}
 
@@ -75,13 +76,23 @@ func runValidate(manifestPath, versionFlag string) error {
 		}
 		ar.Source = resolved
 
-		if err := validateSourceURI(resolved, m.Dir); err != nil {
+		asset, err := validateSourceURI(resolved, m.Dir)
+		if err != nil {
 			ar.SetError(err)
 			out.AssetFail(s.Name, resolved, err)
 			failures++
 			result.Assets = append(result.Assets, ar)
 			continue
 		}
+		if prev, dup := byAsset[asset]; dup {
+			e := fmt.Errorf("collides with source %q: both publish as asset %q", prev, asset)
+			ar.SetError(e)
+			out.AssetFail(s.Name, resolved, e)
+			failures++
+			result.Assets = append(result.Assets, ar)
+			continue
+		}
+		byAsset[asset] = s.Name
 
 		out.AssetOK(&ar, resolved)
 		result.Assets = append(result.Assets, ar)
@@ -103,15 +114,22 @@ func runValidate(manifestPath, versionFlag string) error {
 }
 
 // validateSourceURI checks a (variable-resolved) source URI's syntax without
-// any network call. Local files are additionally checked for existence.
-func validateSourceURI(uri, manifestDir string) error {
+// any network call and returns the stored asset name (basename) it would
+// publish as. Local files are additionally checked for existence.
+func validateSourceURI(uri, manifestDir string) (string, error) {
 	switch {
 	case strings.HasPrefix(uri, "s3://"):
-		_, err := cob.NewS3Source(nil, uri)
-		return err
+		s, err := cob.NewS3Source(nil, uri)
+		if err != nil {
+			return "", err
+		}
+		return s.Filename(), nil
 	case strings.HasPrefix(uri, "ca://"):
-		_, err := cob.NewCASource(nil, uri)
-		return err
+		s, err := cob.NewCASource(nil, uri)
+		if err != nil {
+			return "", err
+		}
+		return s.Filename(), nil
 	default:
 		path := uri
 		if !filepath.IsAbs(path) {
@@ -119,12 +137,12 @@ func validateSourceURI(uri, manifestDir string) error {
 		}
 		info, err := os.Stat(path)
 		if err != nil {
-			return fmt.Errorf("local source not found: %s", path)
+			return "", fmt.Errorf("local source not found: %s", path)
 		}
 		if info.IsDir() {
-			return fmt.Errorf("local source is a directory: %s", path)
+			return "", fmt.Errorf("local source is a directory: %s", path)
 		}
-		return nil
+		return filepath.Base(path), nil
 	}
 }
 

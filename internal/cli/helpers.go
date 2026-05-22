@@ -38,10 +38,20 @@ type NamedSource struct {
 // Returns a slice that preserves the order from the manifest file.
 func buildSources(m *manifest.Manifest, client *cob.Client) ([]NamedSource, error) {
 	sources := make([]NamedSource, 0, len(m.Sources))
+	byAsset := make(map[string]string, len(m.Sources)) // stored name -> manifest key
 	for _, entry := range m.Sources {
 		src, err := buildSource(entry.URI, m.Dir, client)
 		if err != nil {
 			return nil, fmt.Errorf("asset %q: %w", entry.Name, err)
+		}
+		// The stored CodeArtifact asset name is the source's basename, not
+		// the manifest key — two sources with the same basename would
+		// collide (one silently clobbering the other).
+		if name := src.Filename(); name != "" {
+			if prev, dup := byAsset[name]; dup {
+				return nil, fmt.Errorf("sources %q and %q both publish as asset %q", prev, entry.Name, name)
+			}
+			byAsset[name] = entry.Name
 		}
 		sources = append(sources, NamedSource{Name: entry.Name, Source: src})
 	}

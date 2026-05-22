@@ -65,7 +65,10 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) e
 		return fail(out, "diff", cob.ExitError, "%s", err)
 	}
 
-	prov, _ := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
+	prov, perr := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
+	if perr != nil {
+		out.Warn("could not read %s: %s", cob.ProvenanceFile, perr)
+	}
 	cmps, err := compareManifestToPublished(ctx, sources, cob.NewRegistry(client), coords, deep, prov)
 	if err != nil {
 		return fail(out, "diff", cob.ExitNotFound, "%s", err)

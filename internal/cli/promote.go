@@ -192,7 +192,12 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 
 	// Carry the provenance forward with an appended promote link.
 	reg := cob.NewRegistry(client)
-	prov, _ := cob.FetchProvenance(ctx, client.CodeArtifact, srcCoords)
+	prov, perr := cob.FetchProvenance(ctx, client.CodeArtifact, srcCoords)
+	if perr != nil {
+		// A transient/corrupt fetch must not be mistaken for "no provenance"
+		// — synthesizing a fresh chain there would discard real history.
+		return fail(out, "promote", cob.ExitError, "reading source provenance: %s", perr)
+	}
 	if prov == nil {
 		// Source wasn't cob-published (or pre-provenance): synthesize from
 		// what CodeArtifact reports so the chain still starts somewhere.

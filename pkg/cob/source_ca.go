@@ -67,32 +67,38 @@ func (c *CASource) URI() string { return c.uri }
 func (c *CASource) Filename() string { return c.asset }
 
 func (c *CASource) Resolve(ctx context.Context) (*AssetMetadata, error) {
-	out, err := c.client.ListPackageVersionAssets(ctx, &codeartifact.ListPackageVersionAssetsInput{
-		Domain:         aws.String(c.domain),
-		Repository:     aws.String(c.repo),
-		Namespace:      aws.String(c.namespace),
-		Package:        aws.String(c.pkg),
-		PackageVersion: aws.String(c.version),
-		Format:         FormatGeneric,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("listing assets for %s: %w", c.uri, err)
-	}
-
-	for _, a := range out.Assets {
-		if aws.ToString(a.Name) == c.asset {
-			meta := &AssetMetadata{
-				Size: aws.ToInt64(a.Size),
-			}
-			// The SHA-256 is available from the hashes map.
-			for k, v := range a.Hashes {
-				if k == "SHA-256" {
-					meta.SHA256 = v
-					break
-				}
-			}
-			return meta, nil
+	var nextToken *string
+	for {
+		out, err := c.client.ListPackageVersionAssets(ctx, &codeartifact.ListPackageVersionAssetsInput{
+			Domain:         aws.String(c.domain),
+			Repository:     aws.String(c.repo),
+			Namespace:      aws.String(c.namespace),
+			Package:        aws.String(c.pkg),
+			PackageVersion: aws.String(c.version),
+			Format:         FormatGeneric,
+			NextToken:      nextToken,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("listing assets for %s: %w", c.uri, err)
 		}
+
+		for _, a := range out.Assets {
+			if aws.ToString(a.Name) == c.asset {
+				meta := &AssetMetadata{Size: aws.ToInt64(a.Size)}
+				for k, v := range a.Hashes {
+					if k == "SHA-256" {
+						meta.SHA256 = v
+						break
+					}
+				}
+				return meta, nil
+			}
+		}
+
+		if out.NextToken == nil {
+			break
+		}
+		nextToken = out.NextToken
 	}
 
 	return nil, fmt.Errorf("asset %q not found in %s/%s@%s", c.asset, c.namespace, c.pkg, c.version)

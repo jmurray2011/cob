@@ -26,6 +26,11 @@ type S3Source struct {
 
 	// regionFixed guards the one-time client rebuild in correctRegion.
 	regionFixed bool
+
+	// origin is captured from the GetObject in Open so the recorded
+	// etag/version_id correspond to exactly the bytes that were published
+	// (no TOCTOU window from a later, separate HeadObject).
+	origin *Origin
 }
 
 // NewS3Source creates an S3Source from a URI like s3://bucket/key.
@@ -35,12 +40,14 @@ func NewS3Source(client *s3.Client, uri string) (*S3Source, error) {
 	if slash < 0 {
 		return nil, fmt.Errorf("invalid S3 URI %q: missing key", uri)
 	}
-	return &S3Source{
-		client: client,
-		bucket: trimmed[:slash],
-		key:    trimmed[slash+1:],
-		uri:    uri,
-	}, nil
+	bucket, key := trimmed[:slash], trimmed[slash+1:]
+	if bucket == "" {
+		return nil, fmt.Errorf("invalid S3 URI %q: empty bucket", uri)
+	}
+	if key == "" {
+		return nil, fmt.Errorf("invalid S3 URI %q: empty key", uri)
+	}
+	return &S3Source{client: client, bucket: bucket, key: key, uri: uri}, nil
 }
 
 func (s *S3Source) URI() string { return s.uri }
@@ -119,10 +126,37 @@ func (s *S3Source) Open(ctx context.Context) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("GetObject %s: %w", s.uri, err)
 	}
+	// Capture origin from the same response that yields the bytes, so the
+	// recorded etag/version_id match exactly what gets published.
+	s.origin = s.makeOrigin(aws.ToString(out.ETag), aws.ToString(out.VersionId), out.LastModified)
 	return out.Body, nil
 }
 
+// makeOrigin builds an s3 Origin from object metadata.
+func (s *S3Source) makeOrigin(etag, versionID string, lastMod *time.Time) *Origin {
+	versioned := versionID != "" && versionID != "null"
+	o := &Origin{
+		Type:      "s3",
+		Bucket:    s.bucket,
+		Key:       s.key,
+		ETag:      strings.Trim(etag, `"`),
+		Region:    s.client.Options().Region,
+		Versioned: &versioned,
+	}
+	if versioned {
+		o.VersionID = versionID
+	}
+	if lastMod != nil {
+		o.LastModified = lastMod.UTC().Format(time.RFC3339)
+	}
+	return o
+}
+
 func (s *S3Source) Origin(ctx context.Context) (*Origin, error) {
+	// If Open already ran, reuse the origin captured from that GetObject.
+	if s.origin != nil {
+		return s.origin, nil
+	}
 	in := &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.key)}
 	head, err := s.client.HeadObject(ctx, in)
 	if err != nil && s.correctRegion(err) {
@@ -131,21 +165,5 @@ func (s *S3Source) Origin(ctx context.Context) (*Origin, error) {
 	if err != nil {
 		return nil, fmt.Errorf("HeadObject %s: %w", s.uri, err)
 	}
-	vid := aws.ToString(head.VersionId)
-	versioned := vid != "" && vid != "null"
-	o := &Origin{
-		Type:      "s3",
-		Bucket:    s.bucket,
-		Key:       s.key,
-		ETag:      strings.Trim(aws.ToString(head.ETag), `"`),
-		Region:    s.client.Options().Region,
-		Versioned: &versioned,
-	}
-	if versioned {
-		o.VersionID = vid
-	}
-	if head.LastModified != nil {
-		o.LastModified = head.LastModified.UTC().Format(time.RFC3339)
-	}
-	return o, nil
+	return s.makeOrigin(aws.ToString(head.ETag), aws.ToString(head.VersionId), head.LastModified), nil
 }
