@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/jmurray2011/cob/pkg/cob"
 )
 
@@ -76,14 +78,39 @@ func TestRenderManifestNoSources(t *testing.T) {
 	}
 }
 
-func TestRenderManifestRejectsControlChars(t *testing.T) {
-	// A key/URI from an upstream-controlled provenance must not be able to
-	// inject extra YAML lines.
+func TestRenderManifestQuotesUnsafeValues(t *testing.T) {
+	// Keys/URIs from an upstream-controlled provenance must round-trip — not
+	// corrupt the YAML, inject a line, or re-parse as a comment/anchor.
 	prov := &cob.Provenance{Assets: []cob.ProvenanceEntry{
-		{Key: "ok", Source: "s3://b/ok", Asset: "ok"},
+		{Key: "normal", Source: "s3://b/normal", Asset: "normal"},
+		{Key: "hash", Source: "s3://b/x#notacomment", Asset: "x"},
 		{Key: "evil\n  injected: x", Source: "s3://b/e", Asset: "e"},
+		{Key: "anchorish", Source: "*not-an-alias", Asset: "a"},
 	}}
-	if _, err := renderManifest(mcoords(), prov, nil); err == nil {
-		t.Fatal("a key with a newline must be rejected")
+	y, err := renderManifest(mcoords(), prov, nil)
+	if err != nil {
+		t.Fatalf("renderManifest: %v", err)
+	}
+
+	var doc struct {
+		Sources  map[string]string `yaml:"sources"`
+		Injected string            `yaml:"injected"`
+	}
+	if err := yaml.Unmarshal([]byte(y), &doc); err != nil {
+		t.Fatalf("rendered manifest does not re-parse: %v\n%s", err, y)
+	}
+	if doc.Injected != "" {
+		t.Errorf("a control character injected a top-level key:\n%s", y)
+	}
+	want := map[string]string{
+		"normal":              "s3://b/normal",
+		"hash":                "s3://b/x#notacomment", // '#' must not become a comment
+		"evil\n  injected: x": "s3://b/e",
+		"anchorish":           "*not-an-alias", // '*' must not become an alias
+	}
+	for k, v := range want {
+		if doc.Sources[k] != v {
+			t.Errorf("source %q = %q, want %q\n%s", k, doc.Sources[k], v, y)
+		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/pkg/cob"
@@ -104,17 +105,13 @@ func caRef(c *cob.PackageCoordinates, asset string) string {
 		c.Domain, c.Repository, c.Namespace, c.Package, c.Version, asset)
 }
 
-// hasControl reports whether s contains a control character — such a key or
-// URI, coming from an upstream-controlled cob-provenance.json, could inject
-// extra lines into the hand-built YAML.
-func hasControl(s string) bool {
-	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
-}
-
-// renderManifest builds the YAML. Provenance mode (prov has assets) is a
-// faithful pinned reconstruction; otherwise assets are inferred as ca://
-// self-references. Errors if there are no sources, or if a key/URI contains
-// a control character. Pure (no I/O) so it is unit-tested directly.
+// renderManifest builds the manifest YAML. Provenance mode (prov has assets)
+// is a faithful pinned reconstruction; otherwise assets are inferred as ca://
+// self-references. The document is assembled as a yaml.Node and encoded, so
+// every key and URI is correctly quoted — a value containing #, *, a leading
+// [, a newline, etc. round-trips instead of corrupting the output or
+// injecting a line. Errors if there are no sources. Pure (no I/O), so it is
+// unit-tested directly.
 func renderManifest(c *cob.PackageCoordinates, prov *cob.Provenance, assets []cob.AssetSummary) (string, error) {
 	type src struct{ key, uri string }
 	var sources []src
@@ -143,37 +140,66 @@ func renderManifest(c *cob.PackageCoordinates, prov *cob.Provenance, assets []co
 	if len(sources) == 0 {
 		return "", fmt.Errorf("no assets found for %s/%s@%s: %w", c.Namespace, c.Package, c.Version, cob.ErrNotFound)
 	}
+
+	sourcesNode := &yaml.Node{Kind: yaml.MappingNode}
 	for _, s := range sources {
-		if hasControl(s.key) || hasControl(s.uri) {
-			return "", fmt.Errorf("asset %q has an unsafe control character in its key or URI", s.key)
-		}
+		sourcesNode.Content = append(sourcesNode.Content, yamlString(s.key), yamlString(s.uri))
+	}
+	root := &yaml.Node{Kind: yaml.MappingNode, HeadComment: manifestHeader(c, prov, fromProv)}
+	for _, kv := range []struct {
+		k string
+		v *yaml.Node
+	}{
+		{"domain", yamlString(c.Domain)},
+		{"repository", yamlString(c.Repository)},
+		{"namespace", yamlString(c.Namespace)},
+		{"package", yamlString(c.Package)},
+		{"sources", sourcesNode},
+	} {
+		root.Content = append(root.Content, yamlString(kv.k), kv.v)
 	}
 
 	var b strings.Builder
+	enc := yaml.NewEncoder(&b)
+	enc.SetIndent(2)
+	if err := enc.Encode(root); err != nil {
+		return "", err
+	}
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+// yamlString builds a scalar node, letting the encoder pick a quoting style
+// that keeps the value safe regardless of which characters it contains.
+func yamlString(s string) *yaml.Node {
+	n := &yaml.Node{}
+	n.SetString(s)
+	return n
+}
+
+// manifestHeader is the comment block for a reconstructed/inferred manifest,
+// one line per entry (the encoder adds the "# " prefixes).
+func manifestHeader(c *cob.PackageCoordinates, prov *cob.Provenance, fromProv bool) string {
+	var lines []string
 	if fromProv {
-		fmt.Fprintf(&b, "# Reconstructed by cob from %s\n", cob.ProvenanceFile)
-		fmt.Fprintf(&b, "# %s/%s@%s in %s/%s\n", c.Namespace, c.Package, c.Version, c.Domain, c.Repository)
+		lines = append(lines,
+			fmt.Sprintf("Reconstructed by cob from %s", cob.ProvenanceFile),
+			fmt.Sprintf("%s/%s@%s in %s/%s", c.Namespace, c.Package, c.Version, c.Domain, c.Repository))
 		for _, e := range prov.Chain {
 			if e.Event == "publish" {
-				fmt.Fprintf(&b, "# originally published %s by %s\n", e.Time, actorStr(e.Actor))
+				lines = append(lines, fmt.Sprintf("originally published %s by %s", e.Time, actorStr(e.Actor)))
 				break
 			}
 		}
-		b.WriteString("# Pinned snapshot: source URIs are resolved (no ${VERSION}); promote.stages not recoverable.\n")
+		lines = append(lines, "Pinned snapshot: source URIs are resolved (no ${VERSION}); promote.stages not recoverable.")
 	} else {
-		fmt.Fprintf(&b, "# Inferred by cob — %s/%s@%s has no %s (non-cob or pre-provenance).\n",
-			c.Namespace, c.Package, c.Version, cob.ProvenanceFile)
-		b.WriteString("# True source origins are unknown; each asset is sourced from the package itself.\n")
-		b.WriteString("# Re-publishing this manifest reproduces the same bytes.\n")
+		lines = append(lines,
+			fmt.Sprintf("Inferred by cob — %s/%s@%s has no %s (non-cob or pre-provenance).",
+				c.Namespace, c.Package, c.Version, cob.ProvenanceFile),
+			"True source origins are unknown; each asset is sourced from the package itself.",
+			"Re-publishing this manifest reproduces the same bytes.")
 	}
-
-	fmt.Fprintf(&b, "domain: %s\n", c.Domain)
-	fmt.Fprintf(&b, "repository: %s\n", c.Repository)
-	fmt.Fprintf(&b, "namespace: %s\n", c.Namespace)
-	fmt.Fprintf(&b, "package: %s\n", c.Package)
-	b.WriteString("sources:\n")
-	for _, s := range sources {
-		fmt.Fprintf(&b, "  %s: %s\n", s.key, s.uri)
-	}
-	return b.String(), nil
+	return strings.Join(lines, "\n")
 }
