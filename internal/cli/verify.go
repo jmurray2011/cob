@@ -56,9 +56,6 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 		return fail(out, "verify", cob.ExitError, "%s", err)
 	}
 	warnManifestOverrides(m, out)
-	if err := m.ResolveVariables(version); err != nil {
-		return fail(out, "verify", cob.ExitError, "%s", err)
-	}
 
 	coords := &cob.PackageCoordinates{
 		Domain: m.Domain, Repository: m.Repository,
@@ -69,6 +66,19 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 	if err != nil {
 		return fail(out, "verify", cob.ExitError, "%s", err)
 	}
+
+	// Resolve @latest before expanding ${VERSION} — otherwise the manifest's
+	// source URIs and the lookup would target a version literally "latest".
+	registry := cob.NewRegistry(client)
+	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
+		return fail(out, "verify", codeFor(err), "%s", err)
+	}
+	version = coords.Version
+
+	if err := m.ResolveVariables(version); err != nil {
+		return fail(out, "verify", cob.ExitError, "%s", err)
+	}
+
 	sources, err := buildSources(m, client)
 	if err != nil {
 		return fail(out, "verify", cob.ExitError, "%s", err)
@@ -80,7 +90,7 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 		// the provenance fallback is unavailable.
 		out.Warn("could not read %s: %s", cob.ProvenanceFile, perr)
 	}
-	cmps, err := compareManifestToPublished(ctx, sources, cob.NewRegistry(client), coords, deep, prov)
+	cmps, err := compareManifestToPublished(ctx, sources, registry, coords, deep, prov)
 	if err != nil {
 		return fail(out, "verify", codeFor(err), "%s", err)
 	}

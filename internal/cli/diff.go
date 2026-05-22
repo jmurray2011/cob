@@ -46,9 +46,6 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) e
 		return fail(out, "diff", cob.ExitError, "%s", err)
 	}
 	warnManifestOverrides(m, out)
-	if err := m.ResolveVariables(version); err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
-	}
 
 	coords := &cob.PackageCoordinates{
 		Domain: m.Domain, Repository: m.Repository,
@@ -59,6 +56,19 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) e
 	if err != nil {
 		return fail(out, "diff", cob.ExitError, "%s", err)
 	}
+
+	// Resolve @latest before expanding ${VERSION} — otherwise the manifest's
+	// source URIs and the lookup would target a version literally "latest".
+	registry := cob.NewRegistry(client)
+	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
+		return fail(out, "diff", codeFor(err), "%s", err)
+	}
+	version = coords.Version
+
+	if err := m.ResolveVariables(version); err != nil {
+		return fail(out, "diff", cob.ExitError, "%s", err)
+	}
+
 	sources, err := buildSources(m, client)
 	if err != nil {
 		return fail(out, "diff", cob.ExitError, "%s", err)
@@ -68,7 +78,7 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) e
 	if perr != nil {
 		out.Warn("could not read %s: %s", cob.ProvenanceFile, perr)
 	}
-	cmps, err := compareManifestToPublished(ctx, sources, cob.NewRegistry(client), coords, deep, prov)
+	cmps, err := compareManifestToPublished(ctx, sources, registry, coords, deep, prov)
 	if err != nil {
 		return fail(out, "diff", codeFor(err), "%s", err)
 	}
