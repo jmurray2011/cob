@@ -250,8 +250,16 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 			SHA256: results[i].SHA256,
 			Size:   results[i].Size,
 		}
-		if o, oerr := ns.Source.Origin(ctx); oerr == nil {
-			entry.Origin = o
+		// Don't re-observe Origin for an asset that was skipped on
+		// --resume: ns.Source was never Opened, so a fresh HeadObject now
+		// would record S3 state at *resume* time, not upload time. The
+		// interrupted publish never wrote provenance, so there's no prior
+		// Origin to carry forward — leave it nil. The bytes are still
+		// SHA-validated; we just don't have the upload-time source state.
+		if results[i].Method != "skipped" {
+			if o, oerr := ns.Source.Origin(ctx); oerr == nil {
+				entry.Origin = o
+			}
 		}
 		prov.Assets = append(prov.Assets, entry)
 	}

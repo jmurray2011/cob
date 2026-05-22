@@ -123,8 +123,11 @@ func TestFileSourceOrigin(t *testing.T) {
 	if err != nil || o == nil {
 		t.Fatalf("Origin: o=%v err=%v", o, err)
 	}
-	if o.Type != "file" || o.Path != p {
-		t.Errorf("got %+v", o)
+	// Origin.Path is the manifest-relative URI, not the publisher's
+	// absolute filesystem path — provenance ships to a shared registry and
+	// must not leak local layout.
+	if o.Type != "file" || o.Path != "./x.txt" {
+		t.Errorf("got %+v, want Type=file Path=./x.txt", o)
 	}
 	if _, perr := time.Parse(time.RFC3339, o.Mtime); perr != nil {
 		t.Errorf("Mtime %q not RFC3339: %v", o.Mtime, perr)

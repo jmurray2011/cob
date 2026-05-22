@@ -155,13 +155,9 @@ func (p *Puller) PullAsset(ctx context.Context, coords *PackageCoordinates, info
 		result.SetError(err)
 		return result, err
 	}
-	// os.CreateTemp makes the file 0600; restore the conventional 0644 a
-	// direct download would have, so pulled assets stay readable.
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		os.Remove(tmpName)
-		result.SetError(err)
-		return result, err
-	}
+	// Keep the file 0600 (os.CreateTemp's default). Pulled assets are
+	// frequently secrets — GPG keys, certs, SSH keys — and shouldn't be
+	// group/world-readable on a shared host. The owner can still read them.
 	if err := os.Rename(tmpName, outputPath); err != nil {
 		os.Remove(tmpName)
 		result.SetError(err)

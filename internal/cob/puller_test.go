@@ -32,10 +32,11 @@ func TestPullAssetVerifiesAndWrites(t *testing.T) {
 	if string(got) != "abc" {
 		t.Errorf("file content = %q", got)
 	}
-	// A pulled asset must land at the conventional 0644, not the 0600
-	// os.CreateTemp gives the staging file.
-	if fi, _ := os.Stat(dst); fi.Mode().Perm() != 0o644 {
-		t.Errorf("pulled file mode = %o, want 644", fi.Mode().Perm())
+	// A pulled asset must land at 0600: sensitive material (GPG keys,
+	// certs) is the tool's whole use case, so group/world-readable would
+	// be the wrong default on a shared host. The owner can still read.
+	if fi, _ := os.Stat(dst); fi.Mode().Perm() != 0o600 {
+		t.Errorf("pulled file mode = %o, want 600", fi.Mode().Perm())
 	}
 }
 

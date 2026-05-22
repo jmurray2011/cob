@@ -51,7 +51,10 @@ func (f *FileSource) Open(_ context.Context) (io.ReadCloser, error) {
 }
 
 func (f *FileSource) Origin(_ context.Context) (*Origin, error) {
-	o := &Origin{Type: "file", Path: f.path}
+	// Record the manifest-relative URI rather than the absolute filesystem
+	// path: provenance ships to a shared registry, and absolute paths leak
+	// the publisher's username and directory layout.
+	o := &Origin{Type: "file", Path: f.uri}
 	if info, err := os.Stat(f.path); err == nil {
 		o.Mtime = info.ModTime().UTC().Format(time.RFC3339)
 	}
