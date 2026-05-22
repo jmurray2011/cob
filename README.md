@@ -317,6 +317,10 @@ asset name stored in CodeArtifact is the source's basename:
 the manifest key. Put `${VERSION}` in the source URI so the version travels
 with the filename (`app-${VERSION}.tar.gz`).
 
+Because the basename is the identity, two sources that resolve to the same
+basename are rejected -- one would silently overwrite the other in
+CodeArtifact. `validate` reports this offline.
+
 ### S3 checksums
 
 S3 objects uploaded with `--checksum-algorithm SHA256` store the hash in metadata; cob cross-checks it against the SHA-256 it computes while streaming and rejects the asset if they disagree. There is no size limit -- assets are streamed through a temp file, not held in memory (see Known limitations).
@@ -333,7 +337,13 @@ match the bucket's region for `s3://` sources.
 Source URIs support two variable namespaces:
 
 - `${VERSION}` -- from `--version` flag or `COB_VERSION` env var
-- `${env.WHATEVER}` -- reads from environment variables
+- `${env.NAME}` -- reads the environment variable `COB_VAR_NAME`
+
+`${env.NAME}` deliberately does **not** read an arbitrary variable named
+`NAME`. It reads `COB_VAR_` + `NAME`, so `${env.GIT_SHA}` resolves from
+`COB_VAR_GIT_SHA`. This namespacing keeps a manifest from pulling a secret
+like `AWS_SECRET_ACCESS_KEY` into a source URI -- a resolved URI is recorded
+in published provenance and sent to the URI's host.
 
 Unresolved variables are a hard error.
 
@@ -341,6 +351,10 @@ Unresolved variables are a hard error.
 sources:
   release: s3://my-bucket/builds/app-${VERSION}.tar.gz
   config:  s3://my-bucket/builds/${env.GIT_SHA}/config.yaml
+```
+
+```bash
+COB_VAR_GIT_SHA=abc123 cob publish my-package.yaml --version 2.1.0
 ```
 
 ## Global flags
@@ -373,6 +387,7 @@ COB_NAMESPACE    Override manifest namespace
 COB_PACKAGE      Override manifest package
 COB_PROFILE      AWS profile (--profile fallback)
 COB_REGION       AWS region (--region fallback)
+COB_VAR_*        Values for ${env.*} in source URIs (see Variable substitution)
 ```
 
 Standard AWS environment variables (`AWS_REGION`, `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) are also respected through the default credential chain.
