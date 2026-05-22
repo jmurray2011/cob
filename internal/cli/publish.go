@@ -189,26 +189,58 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 	// what was published and flips the version to Published. On --resume an
 	// asset already in the version is skipped — CodeArtifact validated its
 	// SHA-256 on the prior upload, so a present asset is complete.
-	concurrency = resolveConcurrency(concurrency, out)
-	results, ok := runConcurrent(len(sources), concurrency,
-		func(i int) (*cob.AssetResult, error) {
-			ns := sources[i]
-			if a, done := present[ns.Source.Filename()]; done {
-				out.AssetSkipped(ns.Name)
-				return &cob.AssetResult{
-					Name: ns.Name, Source: ns.Source.URI(),
-					SHA256: a.SHA256, Size: a.Size, Method: "skipped",
-				}, nil
+	// Pre-fill skipped results (no concurrency needed) and collect the
+	// indices that actually need an upload.
+	results := make([]*cob.AssetResult, len(sources))
+	var todos []int
+	for i, ns := range sources {
+		if a, done := present[ns.Source.Filename()]; done {
+			out.AssetSkipped(ns.Name)
+			results[i] = &cob.AssetResult{
+				Name: ns.Name, Source: ns.Source.URI(),
+				SHA256: a.SHA256, Size: a.Size, Method: "skipped",
 			}
-			out.AssetStart(ns.Name, ns.Source.URI(), 0)
-			ar, err := publisher.PublishAsset(ctx, coords, ns.Name, ns.Source, true)
-			if err != nil {
-				out.AssetFail(ns.Name, ns.Source.URI(), err)
-				return ar, err
-			}
-			out.AssetOK(ar, ns.Source.URI())
-			return ar, nil
+			continue
+		}
+		todos = append(todos, i)
+	}
+
+	uploadOne := func(i int) (*cob.AssetResult, error) {
+		ns := sources[i]
+		out.AssetStart(ns.Name, ns.Source.URI(), 0)
+		ar, err := publisher.PublishAsset(ctx, coords, ns.Name, ns.Source, true)
+		if err != nil {
+			out.AssetFail(ns.Name, ns.Source.URI(), err)
+			return ar, err
+		}
+		out.AssetOK(ar, ns.Source.URI())
+		return ar, nil
+	}
+
+	// Sync-publish the first to-upload asset so concurrent goroutines don't
+	// race CodeArtifact's implicit version creation. Once that returns the
+	// version exists; the rest fan out safely.
+	ok := true
+	if len(todos) > 0 {
+		first := todos[0]
+		ar, err := uploadOne(first)
+		results[first] = ar
+		if err != nil {
+			ok = false
+		}
+		todos = todos[1:]
+	}
+
+	if ok && len(todos) > 0 {
+		concurrency = resolveConcurrency(concurrency, out)
+		rest, restOk := runConcurrent(len(todos), concurrency, func(j int) (*cob.AssetResult, error) {
+			return uploadOne(todos[j])
 		})
+		for j, r := range rest {
+			results[todos[j]] = r
+		}
+		ok = restOk
+	}
 
 	// Record every asset that ran — uploaded, skipped, or failed — so a
 	// --json consumer sees the full picture. Only fresh uploads count
