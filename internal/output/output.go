@@ -16,11 +16,12 @@ import (
 // methods (AssetStart/OK/Fail/Skipped) and Plain take mu so they can be
 // called from concurrent transfer workers without interleaving a line.
 type Writer struct {
-	out    io.Writer
-	errOut io.Writer
-	json   bool
-	isTTY  bool
-	mu     sync.Mutex
+	out      io.Writer
+	errOut   io.Writer
+	json     bool
+	isTTY    bool
+	mu       sync.Mutex
+	warnings []string
 }
 
 // New creates a Writer. If jsonMode is true, output is JSON.
@@ -43,8 +44,13 @@ func NewWithWriters(out, errOut io.Writer, jsonMode bool) *Writer {
 	}
 }
 
-// CommandResult writes the final result of a command.
+// CommandResult writes the final result of a command. Any warnings emitted
+// during the command are folded in first, so a --json consumer (which never
+// sees the stderr warning lines) still gets them.
 func (w *Writer) CommandResult(result *cob.CommandResult) error {
+	if result.Warnings == nil {
+		result.Warnings = w.warnings
+	}
 	if w.json {
 		enc := json.NewEncoder(w.out)
 		enc.SetIndent("", "  ")
@@ -189,11 +195,17 @@ func (w *Writer) Summary(format string, args ...any) {
 	}
 }
 
-// Warn writes a warning to stderr (non-JSON mode only).
+// Warn records a warning and writes it to stderr. It fires in every mode,
+// including --json: stderr is separate from the stdout JSON stream, so it
+// cannot corrupt machine-readable output, and a warning silently dropped in
+// CI (e.g. a COB_DOMAIN override retargeting a publish) is a real footgun.
+// The warning is also retained for CommandResult to surface in JSON.
 func (w *Writer) Warn(format string, args ...any) {
-	if !w.json {
-		fmt.Fprintf(w.errOut, "Warning: "+format+"\n", args...)
-	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	msg := fmt.Sprintf(format, args...)
+	w.warnings = append(w.warnings, msg)
+	fmt.Fprintln(w.errOut, "Warning: "+msg)
 }
 
 // Error writes to stderr.

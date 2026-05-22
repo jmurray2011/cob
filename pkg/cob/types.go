@@ -41,6 +41,9 @@ type CommandResult struct {
 	DurationMs int64         `json:"duration_ms"`
 	Status     string        `json:"status"` // "ok", "error", or "drift" (diff)
 	Error      string        `json:"error,omitempty"`
+	// Warnings carries every warning emitted during the command so a --json
+	// consumer sees them too — warnings go to stderr, never the stdout JSON.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // PackageSummary is returned by list operations at the repo level.

@@ -1,6 +1,13 @@
 package output
 
-import "testing"
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/jmurray2011/cob/pkg/cob"
+)
 
 func TestFormatSize(t *testing.T) {
 	cases := map[int64]string{
@@ -33,5 +40,29 @@ func TestFormatDuration(t *testing.T) {
 		if got := FormatDuration(in); got != want {
 			t.Errorf("FormatDuration(%d) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestWarnSurfacesInJSONMode(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	w := NewWithWriters(&stdout, &stderr, true) // JSON mode
+
+	w.Warn("using COB_DOMAIN=acme-prod (overrides manifest domain)")
+
+	// stderr carries it even in JSON mode (stderr != the stdout JSON stream).
+	if !strings.Contains(stderr.String(), "COB_DOMAIN=acme-prod") {
+		t.Errorf("warning missing from stderr: %q", stderr.String())
+	}
+
+	// and it is folded into the JSON CommandResult so a consumer sees it.
+	if err := w.CommandResult(&cob.CommandResult{Command: "publish", Status: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	var got cob.CommandResult
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "COB_DOMAIN=acme-prod") {
+		t.Errorf("Warnings = %v, want the override notice", got.Warnings)
 	}
 }
