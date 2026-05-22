@@ -49,6 +49,9 @@ func buildSources(m *manifest.Manifest, client *cob.Client) ([]NamedSource, erro
 		// the manifest key — two sources with the same basename would
 		// collide (one silently clobbering the other).
 		if name := src.Filename(); name != "" {
+			if name == cob.ProvenanceFile {
+				return nil, fmt.Errorf("source %q uses the reserved asset name %q (cob writes that as the publish finalizer)", entry.Name, name)
+			}
 			if prev, dup := byAsset[name]; dup {
 				return nil, fmt.Errorf("sources %q and %q both publish as asset %q", prev, entry.Name, name)
 			}

@@ -161,8 +161,15 @@ func sourcesFromNode(node *yaml.Node) ([]SourceEntry, error) {
 		return nil, fmt.Errorf("sources must be a mapping")
 	}
 	entries := make([]SourceEntry, 0, len(node.Content)/2)
+	// A yaml MappingNode preserves duplicate keys; reject them so a typo'd
+	// or pasted-twice source doesn't silently shadow the previous entry.
+	seen := make(map[string]bool, len(node.Content)/2)
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		key, val := node.Content[i], node.Content[i+1]
+		if seen[key.Value] {
+			return nil, fmt.Errorf("duplicate source key %q", key.Value)
+		}
+		seen[key.Value] = true
 		if val.Kind != yaml.ScalarNode {
 			return nil, fmt.Errorf("source %q must be a string URI", key.Value)
 		}

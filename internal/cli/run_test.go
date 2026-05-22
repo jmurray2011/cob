@@ -289,6 +289,15 @@ func TestRunValidate(t *testing.T) {
 		}
 	})
 
+	t.Run("reserved asset name cob-provenance.json rejected", func(t *testing.T) {
+		useFake(t, &fakeCA{})
+		dir := t.TempDir()
+		writeFile(t, dir, "cob-provenance.json", "{}")
+		mf := writeFile(t, dir, "m.yaml",
+			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  shadow: ./cob-provenance.json\n")
+		wantExit(t, runValidate(mf, "1.0.0"), cob.ExitError)
+	})
+
 	t.Run("duplicate basename rejected", func(t *testing.T) {
 		useFake(t, &fakeCA{})
 		dir := t.TempDir()

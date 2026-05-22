@@ -209,6 +209,14 @@ sources:
   a:
     nested: oops
 `},
+		{"duplicate source key", `domain: d
+repository: r
+namespace: n
+package: p
+sources:
+  a: s3://b/k
+  a: s3://b/k2
+`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

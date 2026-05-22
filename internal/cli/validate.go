@@ -85,6 +85,14 @@ func runValidate(manifestPath, versionFlag string) error {
 			continue
 		}
 		ar.Size = size
+		if asset == cob.ProvenanceFile {
+			e := fmt.Errorf("uses the reserved asset name %q (cob writes that as the publish finalizer)", asset)
+			ar.SetError(e)
+			out.AssetFail(s.Name, resolved, e)
+			failures++
+			result.Assets = append(result.Assets, ar)
+			continue
+		}
 		if prev, dup := byAsset[asset]; dup {
 			e := fmt.Errorf("collides with source %q: both publish as asset %q", prev, asset)
 			ar.SetError(e)

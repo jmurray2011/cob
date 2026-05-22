@@ -125,11 +125,16 @@ func (p *Provenance) OriginByAsset() map[string]*Origin {
 }
 
 // Marshal renders the document as indented JSON with the current schema
-// stamped. It does not mutate the receiver.
+// stamped. It does not mutate the receiver. MarshalIndent of a fixed,
+// always-JSON-clean struct shape cannot fail in practice; if it ever did,
+// silently publishing empty provenance would be the worst outcome — panic.
 func (p *Provenance) Marshal() []byte {
 	doc := *p
 	doc.Schema = ProvenanceSchema
-	b, _ := json.MarshalIndent(&doc, "", "  ")
+	b, err := json.MarshalIndent(&doc, "", "  ")
+	if err != nil {
+		panic(fmt.Sprintf("cob: marshaling provenance failed: %v", err))
+	}
 	return append(b, '\n')
 }
 
