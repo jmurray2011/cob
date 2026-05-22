@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jmurray2011/cob/internal/manifest"
-	"github.com/jmurray2011/cob/internal/output"
 	"github.com/jmurray2011/cob/pkg/cob"
 )
 
@@ -46,7 +45,7 @@ func runVerify(ctx context.Context, target, versionFlag string, deep bool) error
 }
 
 func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, deep bool) error {
-	out := output.New(flagJSON)
+	out := newWriter(flagJSON)
 
 	version, err := resolveVersion(versionFlag)
 	if err != nil {
@@ -66,7 +65,7 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 		Namespace: m.Namespace, Package: m.Package, Version: version,
 	}
 
-	client, err := cob.NewClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
+	client, err := newClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
 	if err != nil {
 		return fail(out, "verify", cob.ExitError, "%s", err)
 	}
@@ -154,7 +153,7 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 // must still hash to what provenance recorded, and the chain of evidence is
 // printed.
 func runVerifyCoords(ctx context.Context, target, versionFlag string) error {
-	out := output.New(flagJSON)
+	out := newWriter(flagJSON)
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
@@ -171,7 +170,7 @@ func runVerifyCoords(ctx context.Context, target, versionFlag string) error {
 		coords.Version = v
 	}
 
-	client, err := cob.NewClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
+	client, err := newClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
 	if err != nil {
 		return fail(out, "verify", cob.ExitError, "%s", err)
 	}

@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jmurray2011/cob/internal/manifest"
-	"github.com/jmurray2011/cob/internal/output"
 	"github.com/jmurray2011/cob/pkg/cob"
 )
 
@@ -36,7 +35,7 @@ func newDiffCmd() *cobra.Command {
 }
 
 func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) error {
-	out := output.New(flagJSON)
+	out := newWriter(flagJSON)
 
 	version, err := resolveVersion(versionFlag)
 	if err != nil {
@@ -56,7 +55,7 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) e
 		Namespace: m.Namespace, Package: m.Package, Version: version,
 	}
 
-	client, err := cob.NewClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
+	client, err := newClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
 	if err != nil {
 		return fail(out, "diff", cob.ExitError, "%s", err)
 	}

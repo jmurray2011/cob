@@ -44,7 +44,7 @@ func newPublishCmd() *cobra.Command {
 }
 
 func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dryRun, yes bool, concurrency int) error {
-	out := output.New(flagJSON)
+	out := newWriter(flagJSON)
 
 	version, err := resolveVersion(versionFlag)
 	if err != nil {
@@ -72,7 +72,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		Version:    version,
 	}
 
-	client, err := cob.NewClient(ctx, cob.ClientOptions{
+	client, err := newClient(ctx, cob.ClientOptions{
 		Profile: flagProfile,
 		Region:  flagRegion,
 	})

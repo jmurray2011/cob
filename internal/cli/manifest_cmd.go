@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jmurray2011/cob/internal/manifest"
-	"github.com/jmurray2011/cob/internal/output"
 	"github.com/jmurray2011/cob/pkg/cob"
 )
 
@@ -37,7 +36,7 @@ func newManifestCmd() *cobra.Command {
 }
 
 func runManifest(ctx context.Context, target, versionFlag string) error {
-	out := output.New(flagJSON)
+	out := newWriter(flagJSON)
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
@@ -54,7 +53,7 @@ func runManifest(ctx context.Context, target, versionFlag string) error {
 		coords.Version = v
 	}
 
-	client, err := cob.NewClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
+	client, err := newClient(ctx, cob.ClientOptions{Profile: flagProfile, Region: flagRegion})
 	if err != nil {
 		return fail(out, "manifest", cob.ExitError, "%s", err)
 	}

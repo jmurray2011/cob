@@ -92,9 +92,9 @@ func classifyLs(coords *cob.PackageCoordinates, target string, allRepos bool) (l
 }
 
 func runLs(ctx context.Context, target string, allRepos bool) error {
-	out := output.New(flagJSON)
+	out := newWriter(flagJSON)
 
-	client, err := cob.NewClient(ctx, cob.ClientOptions{
+	client, err := newClient(ctx, cob.ClientOptions{
 		Profile: flagProfile,
 		Region:  flagRegion,
 	})

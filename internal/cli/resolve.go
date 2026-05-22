@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jmurray2011/cob/internal/manifest"
-	"github.com/jmurray2011/cob/internal/output"
 	"github.com/jmurray2011/cob/pkg/cob"
 )
 
@@ -27,7 +26,7 @@ func newResolveCmd() *cobra.Command {
 }
 
 func runResolve(ctx context.Context, target string) error {
-	out := output.New(flagJSON)
+	out := newWriter(flagJSON)
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
@@ -37,7 +36,7 @@ func runResolve(ctx context.Context, target string) error {
 		return fail(out, "resolve", cob.ExitError, "full coordinates required (domain/repo/namespace/package)")
 	}
 
-	client, err := cob.NewClient(ctx, cob.ClientOptions{
+	client, err := newClient(ctx, cob.ClientOptions{
 		Profile: flagProfile,
 		Region:  flagRegion,
 	})

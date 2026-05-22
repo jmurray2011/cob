@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jmurray2011/cob/internal/manifest"
-	"github.com/jmurray2011/cob/internal/output"
 	"github.com/jmurray2011/cob/pkg/cob"
 )
 
@@ -32,7 +31,7 @@ func newValidateCmd() *cobra.Command {
 }
 
 func runValidate(manifestPath, versionFlag string) error {
-	out := output.New(flagJSON)
+	out := newWriter(flagJSON)
 
 	m, err := manifest.Load(manifestPath)
 	if err != nil {

@@ -43,9 +43,9 @@ func newPromoteCmd() *cobra.Command {
 }
 
 func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, yes bool, concurrency int) error {
-	out := output.New(flagJSON)
+	out := newWriter(flagJSON)
 
-	client, err := cob.NewClient(ctx, cob.ClientOptions{
+	client, err := newClient(ctx, cob.ClientOptions{
 		Profile: flagProfile,
 		Region:  flagRegion,
 	})

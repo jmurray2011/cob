@@ -46,9 +46,9 @@ func newPullCmd() *cobra.Command {
 }
 
 func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
-	out := output.New(flagJSON)
+	out := newWriter(flagJSON)
 
-	client, err := cob.NewClient(ctx, cob.ClientOptions{
+	client, err := newClient(ctx, cob.ClientOptions{
 		Profile: flagProfile,
 		Region:  flagRegion,
 	})
