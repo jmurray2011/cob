@@ -218,7 +218,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	}
 
 	if err := finalizeProvenance(ctx, cob.NewPublisher(client), destCoords, prov, out, cmdResult, start,
-		"Assets promoted but provenance/finalize failed. Version is in partial state."); err != nil {
+		"Assets promoted but provenance/finalize failed. Version is in a partial state — re-run with --force to delete and retry."); err != nil {
 		return err
 	}
 

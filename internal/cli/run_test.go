@@ -149,7 +149,7 @@ func TestRunPublish(t *testing.T) {
 		// Default DescribePackageVersion reports the version as existing.
 		useFake(t, &fakeCA{})
 		mf := writeManifest(t)
-		err := runPublish(ctx, mf, "1.0.0", false, false, true, 4)
+		err := runPublish(ctx, mf, "1.0.0", false, false, true, false, 4)
 		wantExit(t, err, cob.ExitConflict)
 	})
 
@@ -158,7 +158,7 @@ func TestRunPublish(t *testing.T) {
 		// dry run must still preview rather than exit with a conflict.
 		useFake(t, &fakeCA{})
 		mf := writeManifest(t)
-		if err := runPublish(ctx, mf, "1.0.0", false, true, true, 4); err != nil {
+		if err := runPublish(ctx, mf, "1.0.0", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run with existing version must not error, got %v", err)
 		}
 	})
@@ -176,13 +176,51 @@ func TestRunPublish(t *testing.T) {
 		}
 		useFake(t, ca)
 		mf := writeManifest(t)
-		if err := runPublish(ctx, mf, "1.0.0", false, false, true, 4); err != nil {
+		if err := runPublish(ctx, mf, "1.0.0", false, false, true, false, 4); err != nil {
 			t.Fatalf("publish: %v", err)
 		}
 		// one real asset + the cob-provenance.json finalizer
 		if published != 2 {
 			t.Errorf("PublishPackageVersion called %d times, want 2 (asset + provenance)", published)
 		}
+	})
+
+	t.Run("resume uploads only the missing assets", func(t *testing.T) {
+		var published int
+		ca := &fakeCA{
+			describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+				return &codeartifact.DescribePackageVersionOutput{
+					PackageVersion: &catypes.PackageVersionDescription{Status: catypes.PackageVersionStatusUnfinished},
+				}, nil
+			},
+			listAssetsFn: oneAsset("payload.txt", 13), // the manifest's lone asset is already present
+			publishFn: func(*codeartifact.PublishPackageVersionInput) (*codeartifact.PublishPackageVersionOutput, error) {
+				published++
+				return &codeartifact.PublishPackageVersionOutput{}, nil
+			},
+		}
+		useFake(t, ca)
+		mf := writeManifest(t)
+		if err := runPublish(ctx, mf, "1.0.0", false, false, true, true, 4); err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		// payload.txt is already present -> skipped; only cob-provenance.json uploads.
+		if published != 1 {
+			t.Errorf("resume published %d times, want 1 (just the provenance finalizer)", published)
+		}
+	})
+
+	t.Run("resume with no unfinished version is an error", func(t *testing.T) {
+		ca := &fakeCA{describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+			return nil, &catypes.ResourceNotFoundException{}
+		}}
+		useFake(t, ca)
+		wantExit(t, runPublish(ctx, writeManifest(t), "1.0.0", false, false, true, true, 4), cob.ExitError)
+	})
+
+	t.Run("resume and force are mutually exclusive", func(t *testing.T) {
+		useFake(t, &fakeCA{})
+		wantExit(t, runPublish(ctx, writeManifest(t), "1.0.0", true, false, true, true, 4), cob.ExitError)
 	})
 }
 

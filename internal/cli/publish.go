@@ -19,6 +19,7 @@ func newPublishCmd() *cobra.Command {
 		flagForce       bool
 		flagDryRun      bool
 		flagYes         bool
+		flagResume      bool
 		flagConcurrency int
 	)
 
@@ -30,10 +31,13 @@ func newPublishCmd() *cobra.Command {
   cob publish ./my-package.yaml --version 2.1.0
 
   # CI: skip the confirmation prompt
-  cob publish ./my-package.yaml --version 2.1.0 --yes`,
+  cob publish ./my-package.yaml --version 2.1.0 --yes
+
+  # finish an interrupted publish without re-uploading what already landed
+  cob publish ./my-package.yaml --version 2.1.0 --resume`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPublish(cmd.Context(), args[0], flagVersion, flagForce, flagDryRun, flagYes, flagConcurrency)
+			return runPublish(cmd.Context(), args[0], flagVersion, flagForce, flagDryRun, flagYes, flagResume, flagConcurrency)
 		},
 	}
 
@@ -41,13 +45,18 @@ func newPublishCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&flagForce, "force", false, "Overwrite existing version")
 	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Verify sources exist, show plan, don't publish")
 	cmd.Flags().BoolVar(&flagYes, "yes", false, "Skip confirmation")
+	cmd.Flags().BoolVar(&flagResume, "resume", false, "Continue an unfinished publish: upload only the missing assets")
 	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential)")
 
 	return cmd
 }
 
-func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dryRun, yes bool, concurrency int) error {
+func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dryRun, yes, resume bool, concurrency int) error {
 	out := newWriter(flagJSON)
+
+	if resume && force {
+		return fail(out, "publish", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")
+	}
 
 	version, err := resolveVersion(versionFlag)
 	if err != nil {
@@ -89,11 +98,10 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 	publisher.Progress = meter.add
 	defer meter.finish()
 
-	// Check whether the version already exists. The conflict gate runs
+	// Read the version's current state. The conflict/resume gate runs
 	// *after* the dry-run dispatch below: a dry run mutates nothing, so it
-	// must work even when the version is present — which is exactly when you
-	// want a preview before deciding to --force.
-	exists, err := registry.CheckVersionExists(ctx, coords)
+	// must work whatever state the version is in.
+	status, exists, err := registry.VersionStatus(ctx, coords)
 	if err != nil {
 		return fail(out, "publish", cob.ExitError, "checking version: %s", err)
 	}
@@ -108,13 +116,50 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		return runDryRun(ctx, coords, sources, out)
 	}
 
-	if exists && !force {
-		return fail(out, "publish", cob.ExitConflict, "version %s already exists in %s/%s. Use --force to overwrite.", version, m.Domain, m.Repository)
+	// present holds the assets already in an unfinished version being
+	// resumed; for a normal publish it stays nil, so nothing is skipped.
+	var present map[string]cob.AssetSummary
+	switch {
+	case resume:
+		if !exists {
+			return fail(out, "publish", cob.ExitError,
+				"no version %s in %s/%s to resume — run publish without --resume", version, m.Domain, m.Repository)
+		}
+		if status != "Unfinished" { // CodeArtifact PackageVersionStatus
+			return fail(out, "publish", cob.ExitError,
+				"version %s is not resumable (status %q) — only an unfinished publish can be resumed; use --force to overwrite", version, status)
+		}
+		listed, lerr := registry.ListAssets(ctx, coords)
+		if lerr != nil {
+			return fail(out, "publish", cob.ExitError, "listing already-published assets: %s", lerr)
+		}
+		present = make(map[string]cob.AssetSummary, len(listed))
+		for _, a := range listed {
+			present[a.Name] = a
+		}
+	case exists && !force:
+		return fail(out, "publish", cob.ExitConflict,
+			"version %s already exists in %s/%s. Use --force to overwrite, or --resume to continue an unfinished publish.",
+			version, m.Domain, m.Repository)
 	}
 
-	out.Header("Publishing %s/%s@%s -> %s/%s", m.Namespace, m.Package, version, m.Domain, m.Repository)
+	// todo is how many sources still need uploading; the rest of `present`
+	// are already in the version (a no-op for a non-resume publish).
+	todo := 0
+	for _, ns := range sources {
+		if _, done := present[ns.Source.Filename()]; !done {
+			todo++
+		}
+	}
 
-	proceed, err := confirmAction(ctx, yes, fmt.Sprintf("Publish %d assets?", len(sources)))
+	verb, prompt := "Publishing", fmt.Sprintf("Publish %d assets?", len(sources))
+	if resume {
+		verb = "Resuming"
+		prompt = fmt.Sprintf("Resume publish — upload %d of %d assets?", todo, len(sources))
+	}
+	out.Header("%s %s/%s@%s -> %s/%s", verb, m.Namespace, m.Package, version, m.Domain, m.Repository)
+
+	proceed, err := confirmAction(ctx, yes, prompt)
 	if err != nil {
 		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
@@ -123,7 +168,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		return nil
 	}
 
-	// Force: delete existing version first.
+	// Force: delete the existing version first. (resume keeps it.)
 	if exists && force {
 		if err := publisher.DeleteVersion(ctx, coords); err != nil {
 			out.Error("deleting existing version: %s", err)
@@ -141,11 +186,20 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 
 	// Real sources publish concurrently as Unfinished; the provenance
 	// document is published last with unfinished=false, which both records
-	// what was published and flips the version to Published.
+	// what was published and flips the version to Published. On --resume an
+	// asset already in the version is skipped — CodeArtifact validated its
+	// SHA-256 on the prior upload, so a present asset is complete.
 	concurrency = resolveConcurrency(concurrency, out)
 	results, ok := runConcurrent(len(sources), concurrency,
 		func(i int) (*cob.AssetResult, error) {
 			ns := sources[i]
+			if a, done := present[ns.Source.Filename()]; done {
+				out.AssetSkipped(ns.Name)
+				return &cob.AssetResult{
+					Name: ns.Name, Source: ns.Source.URI(),
+					SHA256: a.SHA256, Size: a.Size, Method: "skipped",
+				}, nil
+			}
 			out.AssetStart(ns.Name, ns.Source.URI(), 0)
 			ar, err := publisher.PublishAsset(ctx, coords, ns.Name, ns.Source, true)
 			if err != nil {
@@ -156,18 +210,22 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 			return ar, nil
 		})
 
-	// Record every asset that ran — successes and failures — so a --json
-	// consumer can see which one failed (the per-asset error field marks
-	// it). Only successes count toward the transferred byte total.
-	succeeded := 0
+	// Record every asset that ran — uploaded, skipped, or failed — so a
+	// --json consumer sees the full picture. Only fresh uploads count
+	// toward the transferred byte total.
+	uploaded, skipped := 0, 0
 	for _, r := range results {
 		if r == nil {
 			continue // never scheduled: an earlier task failed first
 		}
 		result.Assets = append(result.Assets, *r)
-		if r.Error == nil {
+		switch {
+		case r.Error != nil:
+		case r.Method == "skipped":
+			skipped++
+		default:
 			result.TotalSize += r.Size
-			succeeded++
+			uploaded++
 		}
 	}
 
@@ -175,8 +233,8 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		result.DurationMs = time.Since(start).Milliseconds()
 		result.Status = "error"
 		result.Error = firstResultError(results)
-		out.Error("%s\n  Published %d of %d assets. Version is in unfinished state.\n  Re-run with --force to delete and retry.",
-			result.Error, succeeded, len(sources))
+		out.Error("%s\n  %d of %d assets in place. Version is unfinished — re-run with --resume to continue.",
+			result.Error, uploaded+skipped, len(sources))
 		out.CommandResult(result)
 		return &ExitError{Code: cob.ExitError}
 	}
@@ -208,12 +266,17 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		Actor:          client.CallerIdentity(ctx),
 	}}
 	if err := finalizeProvenance(ctx, publisher, coords, prov, out, result, start,
-		"Assets published but provenance/finalize failed. Version is in unfinished state."); err != nil {
+		"Assets published but provenance/finalize failed. Version is unfinished — re-run with --resume to finalize it."); err != nil {
 		return err
 	}
 
-	out.Summary("Published %d assets (%s) in %s",
-		len(result.Assets), output.FormatSize(result.TotalSize), output.FormatDuration(result.DurationMs))
+	if skipped > 0 {
+		out.Summary("Resumed: %d uploaded, %d already present (%s) in %s",
+			uploaded, skipped, output.FormatSize(result.TotalSize), output.FormatDuration(result.DurationMs))
+	} else {
+		out.Summary("Published %d assets (%s) in %s",
+			len(result.Assets), output.FormatSize(result.TotalSize), output.FormatDuration(result.DurationMs))
+	}
 	return out.CommandResult(result)
 }
 

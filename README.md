@@ -71,11 +71,14 @@ Reads a manifest, resolves variables, pulls from each source, publishes to CodeA
 cob publish my-package.yaml --version 2.1.0
 cob publish my-package.yaml --version 2.1.0 --dry-run   # verify sources, don't publish
 cob publish my-package.yaml --version 2.1.0 --force      # overwrite existing version
+cob publish my-package.yaml --version 2.1.0 --resume     # finish an interrupted publish
 cob publish my-package.yaml --version 2.1.0 --yes        # skip confirmation prompt
 COB_VERSION=2.1.0 cob publish my-package.yaml            # version from env
 ```
 
-Flags: `--version`, `--dry-run`, `--force`, `--yes`, `--concurrency`
+Flags: `--version`, `--dry-run`, `--force`, `--resume`, `--yes`, `--concurrency`
+
+If a publish is interrupted partway, the version is left **Unfinished** in CodeArtifact. `--resume` continues it from the same manifest: it uploads only the assets not already present and then writes the finalizer -- no re-uploading what already landed. A present asset is taken as complete (CodeArtifact validated its SHA-256 on the original upload); if a source changed since the interrupted run, use `--force` instead. `--resume` and `--force` are mutually exclusive.
 
 `publish` and `promote` prompt before mutating. With no TTY (CI, pipes) they
 do **not** silently proceed -- they refuse unless `--yes` is given, so a
@@ -546,7 +549,7 @@ Name packages for what they are, not for the fact that they're shared. `tools/sh
 ## Known limitations
 
 - **`--force` is not atomic.** Deletes the existing version then re-publishes. Brief window where the version doesn't exist.
-- **No resume on partial failure.** `--force` re-publishes all assets.
+- **`promote` has no resume.** A partially-failed promote must be re-run with `--force`, which re-copies every asset. (`publish` has `--resume`, which doesn't.)
 - **Transfers spill to a temp file, not memory.** CodeArtifact's API requires an `io.ReadSeeker` (Content-Length + retries), so true end-to-end streaming isn't possible; cob streams each asset through a temp file in `$TMPDIR` instead of buffering in RAM. Memory stays bounded and there is no asset size limit, but a publish/promote needs free temp disk for the largest single asset. Note that `$TMPDIR` is `tmpfs` (RAM-backed) on many Linux systems -- for large assets, point `--tmpdir`/`COB_TMPDIR` at real disk with room for `concurrency` × the largest asset.
 - **`@latest` resolves by timestamp, not semver.** The most recently published version wins, regardless of version string ordering.
 
