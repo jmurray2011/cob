@@ -59,9 +59,12 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 		cfgOpts = append(cfgOpts, config.WithRegion(opts.Region))
 	}
 	if opts.Debug {
-		// Headers and status lines to stderr — not bodies, which would dump
-		// whole asset transfers. The SDK's default logger targets stderr.
-		cfgOpts = append(cfgOpts, config.WithClientLogMode(aws.LogRequest|aws.LogResponse|aws.LogRetries))
+		// Response status lines and retry attempts to stderr — enough to
+		// diagnose region/credential/throttling failures. Request logging is
+		// deliberately excluded: a signed AWS request carries a live
+		// X-Amz-Security-Token header (SSO / instance / ECS-role
+		// credentials), and --debug output routinely lands in CI logs.
+		cfgOpts = append(cfgOpts, config.WithClientLogMode(aws.LogResponse|aws.LogRetries))
 	}
 
 	cfg, err := config.LoadDefaultConfig(ctx, cfgOpts...)

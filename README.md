@@ -382,12 +382,15 @@ COB_VAR_GIT_SHA=abc123 cob publish my-package.yaml --version 2.1.0
 --profile    AWS profile
 --region     AWS region
 --json       Machine-readable JSON output
---debug      Log AWS API requests/responses to stderr
+--debug      Log AWS API responses/retries to stderr
 ```
 
 `--debug` is the first thing to reach for when an AWS call fails for a
-non-obvious reason (region, credentials, throttling) -- it logs every
-request and response line to stderr without touching stdout.
+non-obvious reason (region, credentials, throttling) -- it logs every AWS
+response status line and retry attempt to stderr without touching stdout.
+Request logging is deliberately omitted: a signed AWS request header carries
+a live session credential (`X-Amz-Security-Token`), and `--debug` output
+often ends up in CI logs.
 
 ## Authentication
 
