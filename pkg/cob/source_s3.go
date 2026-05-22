@@ -19,7 +19,7 @@ import (
 
 // S3Source reads an asset from an S3 object.
 type S3Source struct {
-	client *s3.Client
+	client S3API
 	bucket string
 	key    string
 	uri    string
@@ -34,7 +34,7 @@ type S3Source struct {
 }
 
 // NewS3Source creates an S3Source from a URI like s3://bucket/key.
-func NewS3Source(client *s3.Client, uri string) (*S3Source, error) {
+func NewS3Source(client S3API, uri string) (*S3Source, error) {
 	trimmed := strings.TrimPrefix(uri, "s3://")
 	slash := strings.IndexByte(trimmed, '/')
 	if slash < 0 {

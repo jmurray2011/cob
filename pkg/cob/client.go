@@ -19,9 +19,22 @@ type STSAPI interface {
 
 var _ STSAPI = (*sts.Client)(nil)
 
+// S3API is the subset of *s3.Client the S3 asset source uses. Options is
+// included so the source can rebuild itself pinned to a bucket's real region
+// after a cross-region redirect (see S3Source.correctRegion); the rebuilt
+// *s3.Client satisfies this interface in turn. Depending on the interface
+// lets the S3 source be unit-tested with an in-memory fake.
+type S3API interface {
+	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	Options() s3.Options
+}
+
+var _ S3API = (*s3.Client)(nil)
+
 // Client wraps AWS SDK clients for S3, CodeArtifact, and STS.
 type Client struct {
-	S3           *s3.Client
+	S3           S3API
 	CodeArtifact CodeArtifactAPI
 	STS          STSAPI
 	Region       string
