@@ -29,11 +29,12 @@ func (t *tempAsset) Close() error {
 	return err
 }
 
-// spillToTemp streams r into a temp file, computing SHA-256 in the same pass,
-// and rewinds it ready for upload. Memory stays O(buffer) regardless of asset
-// size, so there is no size ceiling. The returned tempAsset must be Closed.
-func spillToTemp(r io.Reader) (*tempAsset, error) {
-	f, err := os.CreateTemp("", "cob-asset-*")
+// spillToTemp streams r into a temp file under dir (or the OS default temp
+// directory when dir is ""), computing SHA-256 in the same pass, and rewinds
+// it ready for upload. Memory stays O(buffer) regardless of asset size, so
+// there is no size ceiling. The returned tempAsset must be Closed.
+func spillToTemp(r io.Reader, dir string) (*tempAsset, error) {
+	f, err := os.CreateTemp(dir, "cob-asset-*")
 	if err != nil {
 		return nil, fmt.Errorf("creating temp file: %w", err)
 	}

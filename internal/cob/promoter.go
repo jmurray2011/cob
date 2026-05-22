@@ -80,7 +80,7 @@ func (p *Promoter) PromoteAsset(ctx context.Context, coords *PackageCoordinates,
 
 	// Stream to a temp file (bounded memory, no size cap), hashing in the
 	// same pass, to get the io.ReadSeeker PublishPackageVersion needs.
-	ta, err := spillToTemp(getOut.Asset)
+	ta, err := spillToTemp(getOut.Asset, p.client.TmpDir)
 	getOut.Asset.Close()
 	if err != nil {
 		result.SetError(err)

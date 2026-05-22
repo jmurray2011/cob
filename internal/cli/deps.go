@@ -24,5 +24,6 @@ func dialClient(ctx context.Context) (*cob.Client, error) {
 		Profile: flagProfile,
 		Region:  flagRegion,
 		Debug:   flagDebug,
+		TmpDir:  flagTmpDir,
 	})
 }

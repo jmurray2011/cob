@@ -3,6 +3,7 @@ package cob
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -38,6 +39,9 @@ type Client struct {
 	CodeArtifact CodeArtifactAPI
 	STS          STSAPI
 	Region       string
+	// TmpDir is where publish/promote spill assets while streaming ("" = the
+	// OS default temp dir). Point it at real disk if $TMPDIR is RAM-backed.
+	TmpDir string
 }
 
 // ClientOptions configures how the AWS client is created.
@@ -46,6 +50,8 @@ type ClientOptions struct {
 	Region  string
 	// Debug enables AWS SDK request/response logging to stderr.
 	Debug bool
+	// TmpDir overrides the asset spill directory (see Client.TmpDir).
+	TmpDir string
 }
 
 // NewClient creates a Client using the standard credential chain.
@@ -72,11 +78,18 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 		return nil, fmt.Errorf("loading AWS config: %w", err)
 	}
 
+	if opts.TmpDir != "" {
+		if err := os.MkdirAll(opts.TmpDir, 0o755); err != nil {
+			return nil, fmt.Errorf("creating temp directory %s: %w", opts.TmpDir, err)
+		}
+	}
+
 	return &Client{
 		S3:           s3.NewFromConfig(cfg),
 		CodeArtifact: codeartifact.NewFromConfig(cfg),
 		STS:          sts.NewFromConfig(cfg),
 		Region:       cfg.Region,
+		TmpDir:       opts.TmpDir,
 	}, nil
 }
 

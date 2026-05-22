@@ -66,7 +66,7 @@ func (p *Publisher) PublishAsset(ctx context.Context, coords *PackageCoordinates
 		result.SetError(err)
 		return result, err
 	}
-	ta, err := spillToTemp(reader)
+	ta, err := spillToTemp(reader, p.client.TmpDir)
 	reader.Close()
 	if err != nil {
 		result.SetError(err)

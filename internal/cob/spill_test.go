@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -15,11 +16,17 @@ func TestSpillToTemp(t *testing.T) {
 	want := sha256.Sum256([]byte(content))
 	wantHex := hex.EncodeToString(want[:])
 
-	ta, err := spillToTemp(strings.NewReader(content))
+	dir := t.TempDir()
+	ta, err := spillToTemp(strings.NewReader(content), dir)
 	if err != nil {
 		t.Fatalf("spillToTemp: %v", err)
 	}
 	name := ta.f.Name()
+
+	// The spill file must land in the directory we asked for.
+	if filepath.Dir(name) != dir {
+		t.Errorf("spill file %s not under requested dir %s", name, dir)
+	}
 
 	if ta.Size != int64(len(content)) {
 		t.Errorf("Size = %d, want %d", ta.Size, len(content))
@@ -53,7 +60,7 @@ type errReader struct{}
 func (errReader) Read([]byte) (int, error) { return 0, errors.New("boom") }
 
 func TestSpillToTempReadError(t *testing.T) {
-	if _, err := spillToTemp(errReader{}); err == nil {
+	if _, err := spillToTemp(errReader{}, ""); err == nil {
 		t.Fatal("expected an error when the source read fails")
 	}
 }

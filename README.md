@@ -387,6 +387,7 @@ COB_VAR_GIT_SHA=abc123 cob publish my-package.yaml --version 2.1.0
 --region     AWS region
 --json       Machine-readable JSON output
 --debug      Log AWS API responses/retries to stderr
+--tmpdir     Directory for streaming spill files (default: $TMPDIR)
 ```
 
 `--debug` is the first thing to reach for when an AWS call fails for a
@@ -418,6 +419,7 @@ COB_NAMESPACE    Override manifest namespace
 COB_PACKAGE      Override manifest package
 COB_PROFILE      AWS profile (--profile fallback)
 COB_REGION       AWS region (--region fallback)
+COB_TMPDIR       Spill directory (--tmpdir fallback)
 COB_VAR_*        Values for ${env.*} in source URIs (see Variable substitution)
 ```
 
@@ -540,7 +542,7 @@ Name packages for what they are, not for the fact that they're shared. `tools/sh
 
 - **`--force` is not atomic.** Deletes the existing version then re-publishes. Brief window where the version doesn't exist.
 - **No resume on partial failure.** `--force` re-publishes all assets.
-- **Transfers spill to a temp file, not memory.** CodeArtifact's API requires an `io.ReadSeeker` (Content-Length + retries), so true end-to-end streaming isn't possible; cob streams each asset through a temp file in `$TMPDIR` instead of buffering in RAM. Memory stays bounded and there is no asset size limit, but a publish/promote needs free temp disk for the largest single asset.
+- **Transfers spill to a temp file, not memory.** CodeArtifact's API requires an `io.ReadSeeker` (Content-Length + retries), so true end-to-end streaming isn't possible; cob streams each asset through a temp file in `$TMPDIR` instead of buffering in RAM. Memory stays bounded and there is no asset size limit, but a publish/promote needs free temp disk for the largest single asset. Note that `$TMPDIR` is `tmpfs` (RAM-backed) on many Linux systems -- for large assets, point `--tmpdir`/`COB_TMPDIR` at real disk with room for `concurrency` × the largest asset.
 - **`@latest` resolves by timestamp, not semver.** The most recently published version wins, regardless of version string ordering.
 
 ## License
