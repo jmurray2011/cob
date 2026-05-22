@@ -114,9 +114,12 @@ cob promote my-package.yaml --version 2.1.0 --to prod      # staging -> prod
 
 # Promote whatever is latest in the source repo
 cob promote my-domain/dev/my-namespace/my-package@latest --to staging
+
+# Preview the move without copying anything
+cob promote my-domain/dev/my-namespace/my-package@2.1.0 --to staging --dry-run
 ```
 
-Flags: `--to` (required), `--version`, `--force`, `--yes`, `--concurrency`
+Flags: `--to` (required), `--version`, `--force`, `--yes`, `--dry-run`, `--concurrency`
 
 ### ls
 

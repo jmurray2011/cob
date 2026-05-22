@@ -148,14 +148,38 @@ func TestRunPromote(t *testing.T) {
 	t.Run("conflict when destination version exists", func(t *testing.T) {
 		// Default DescribePackageVersion reports the dest version as existing.
 		useFake(t, &fakeCA{})
-		err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, 4)
+		err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, 4)
 		wantExit(t, err, cob.ExitConflict)
 	})
 
 	t.Run("@latest with no source versions -> not found", func(t *testing.T) {
 		useFake(t, &fakeCA{}) // ListPackageVersions default: empty
-		err := runPromote(ctx, "dom/dev/ns/pkg@latest", "", "prod", false, true, 4)
+		err := runPromote(ctx, "dom/dev/ns/pkg@latest", "", "prod", false, true, false, 4)
 		wantExit(t, err, cob.ExitNotFound)
+	})
+
+	t.Run("dry-run lists assets and promotes nothing", func(t *testing.T) {
+		var published int
+		ca := &fakeCA{
+			describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+				return nil, &catypes.ResourceNotFoundException{} // dest version absent
+			},
+			listAssetsFn: oneAsset("app.bin", 9),
+			publishFn: func(*codeartifact.PublishPackageVersionInput) (*codeartifact.PublishPackageVersionOutput, error) {
+				published++
+				return &codeartifact.PublishPackageVersionOutput{}, nil
+			},
+		}
+		stdout, _ := useFake(t, ca)
+		if err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, 4); err != nil {
+			t.Fatalf("dry-run: %v", err)
+		}
+		if published != 0 {
+			t.Errorf("dry-run published %d assets, want 0", published)
+		}
+		if !strings.Contains(stdout.String(), "app.bin") {
+			t.Errorf("dry-run output should list the asset: %q", stdout.String())
+		}
 	})
 }
 

@@ -19,6 +19,7 @@ func newPromoteCmd() *cobra.Command {
 		flagTo          string
 		flagForce       bool
 		flagYes         bool
+		flagDryRun      bool
 		flagConcurrency int
 	)
 
@@ -33,7 +34,7 @@ func newPromoteCmd() *cobra.Command {
   cob promote acme/dev/tools/my-app@2.1.0 --to staging --dry-run`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPromote(cmd.Context(), args[0], flagVersion, flagTo, flagForce, flagYes, flagConcurrency)
+			return runPromote(cmd.Context(), args[0], flagVersion, flagTo, flagForce, flagYes, flagDryRun, flagConcurrency)
 		},
 	}
 
@@ -41,13 +42,14 @@ func newPromoteCmd() *cobra.Command {
 	cmd.Flags().StringVar(&flagTo, "to", "", "Destination repository (required)")
 	cmd.Flags().BoolVar(&flagForce, "force", false, "Overwrite if version exists in destination")
 	cmd.Flags().BoolVar(&flagYes, "yes", false, "Skip confirmation")
+	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Show what would be promoted, copy nothing")
 	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential)")
 	cmd.MarkFlagRequired("to")
 
 	return cmd
 }
 
-func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, yes bool, concurrency int) error {
+func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, yes, dryRun bool, concurrency int) error {
 	out := newWriter(flagJSON)
 
 	client, err := dialClient(ctx)
@@ -115,6 +117,10 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	}
 	if exists && !force {
 		return fail(out, "promote", cob.ExitConflict, "version %s already exists in %s. Use --force to overwrite.", coords.Version, toRepo)
+	}
+
+	if dryRun {
+		return runPromoteDryRun(ctx, cob.NewPromoter(client), coords, srcRepo, toRepo, exists, out)
 	}
 
 	out.Header("Promoting %s/%s@%s: %s -> %s",
@@ -203,6 +209,40 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 
 	out.Summary("Promoted %d assets in %s", len(cmdResult.Assets), output.FormatDuration(cmdResult.DurationMs))
 	return out.CommandResult(cmdResult)
+}
+
+// runPromoteDryRun lists what a promote would copy and exits without
+// mutating anything. The destination conflict is already checked, so
+// destExists here means the real run would proceed under --force.
+func runPromoteDryRun(ctx context.Context, promoter *cob.Promoter, coords *cob.PackageCoordinates,
+	srcRepo, toRepo string, destExists bool, out *output.Writer) error {
+
+	out.Header("Promote (dry run) %s/%s@%s: %s -> %s",
+		coords.Namespace, coords.Package, coords.Version, srcRepo, toRepo)
+
+	assetNames, err := promoter.ListAssetsToPromote(ctx, coords, srcRepo)
+	if err != nil {
+		return fail(out, "promote", codeFor(err), "%s", err)
+	}
+
+	result := &cob.CommandResult{
+		Command:    "promote",
+		Package:    fmt.Sprintf("%s/%s@%s", coords.Namespace, coords.Package, coords.Version),
+		Repository: fmt.Sprintf("%s -> %s", srcRepo, toRepo),
+		Status:     "ok",
+	}
+	for _, name := range assetNames {
+		if name == cob.ProvenanceFile {
+			continue // regenerated at promote time, not copied verbatim
+		}
+		out.Plain("  would promote %s", name)
+		result.Assets = append(result.Assets, cob.AssetResult{Name: name, Method: "dry-run"})
+	}
+	if destExists {
+		out.Warn("version already exists in %s; the real run overwrites it (--force)", toRepo)
+	}
+	out.Summary("Dry run: %d assets would be promoted to %s", len(result.Assets), toRepo)
+	return out.CommandResult(result)
 }
 
 // carryForwardProvenance reads the source version's provenance, rebuilds its
