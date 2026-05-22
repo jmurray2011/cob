@@ -109,7 +109,7 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 		Status:     "ok",
 	}
 
-	var failures, unverified, extra int
+	var failures, opErrors, unverified, extra int
 	for _, c := range cmps {
 		ar := cob.AssetResult{Name: c.Name, Source: c.Source, SHA256: c.SrcSHA}
 		switch {
@@ -118,7 +118,9 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 			ar.Method = "extra"
 			out.AssetSkipped(c.Name + " (published, not in manifest)")
 		case c.Err != nil:
-			failures++
+			// An operational error (couldn't hash a source, network) — the
+			// check did not complete; distinct from a real mismatch.
+			opErrors++
 			ar.SetError(c.Err)
 			out.AssetFail(c.Name, c.Source, c.Err)
 		case !c.InPublished:
@@ -152,12 +154,22 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 		out.Warn("%d source(s) unverified (no checksum or provenance; pass --deep to hash)", unverified)
 	}
 
-	if failures > 0 {
+	// An operational error means the check did not complete — exit "error".
+	// A clean run that found mismatches/drift exits "mismatch" (code 4), so a
+	// CI gate can tell "the bytes changed" from "the check failed to run".
+	if opErrors > 0 {
 		result.Status = "error"
-		result.Error = fmt.Sprintf("%d asset(s) failed verification", failures)
-		out.Summary("FAILED: %d mismatched/missing.", failures)
+		result.Error = fmt.Sprintf("%d asset(s) could not be checked", opErrors)
+		out.Summary("FAILED: %d asset(s) could not be checked.", opErrors)
 		out.CommandResult(result)
 		return &ExitError{Code: cob.ExitError}
+	}
+	if failures > 0 {
+		result.Status = "mismatch"
+		result.Error = fmt.Sprintf("%d asset(s) do not match the manifest", failures)
+		out.Summary("FAILED: %d mismatched/missing.", failures)
+		out.CommandResult(result)
+		return &ExitError{Code: cob.ExitMismatch}
 	}
 	out.Summary("OK: published version matches the manifest.")
 	return out.CommandResult(result)
@@ -261,11 +273,11 @@ func runVerifyCoords(ctx context.Context, target, versionFlag string) error {
 	}
 
 	if failures > 0 {
-		result.Status = "error"
-		result.Error = fmt.Sprintf("%d asset(s) failed self-verification", failures)
+		result.Status = "mismatch"
+		result.Error = fmt.Sprintf("%d asset(s) altered or missing since publish", failures)
 		out.Summary("FAILED: %d asset(s) altered or missing since publish.", failures)
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitError}
+		return &ExitError{Code: cob.ExitMismatch}
 	}
 	out.Summary("OK: every recorded asset still matches; chain intact.")
 	return out.CommandResult(result)

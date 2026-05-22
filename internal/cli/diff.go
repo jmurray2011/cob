@@ -143,7 +143,9 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) e
 		result.Status = "drift"
 		result.Error = fmt.Sprintf("%d added, %d removed, %d changed", added, removed, changed)
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitError}
+		// Drift is a completed check that found a difference — distinct from
+		// the errs path above, which is a check that could not run.
+		return &ExitError{Code: cob.ExitMismatch}
 	}
 	return out.CommandResult(result)
 }

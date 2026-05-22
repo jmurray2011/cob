@@ -457,9 +457,15 @@ One exception: `manifest` always prints a YAML manifest (that *is* its output --
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Error (auth, config, network) |
+| 1 | Error -- the command could not be completed (auth, config, network) |
 | 2 | Not found (package/version/asset doesn't exist) |
 | 3 | Conflict (version exists, use `--force`) |
+| 4 | Verification failed -- the check ran and found a difference (`verify` SHA mismatch, `diff` drift) |
+
+Code 4 is the one that matters for `verify`/`diff` as CI gates: it means the
+published bytes genuinely differ from what was expected, as opposed to code 1
+which means the check itself could not run. Both are non-zero, so either still
+blocks a pipeline.
 
 ## Package composition patterns
 

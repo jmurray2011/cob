@@ -39,7 +39,7 @@ type CommandResult struct {
 	Assets     []AssetResult `json:"assets"`
 	TotalSize  int64         `json:"total_size"`
 	DurationMs int64         `json:"duration_ms"`
-	Status     string        `json:"status"` // "ok", "error", or "drift" (diff)
+	Status     string        `json:"status"` // "ok", "error", "mismatch" (verify), "drift" (diff)
 	Error      string        `json:"error,omitempty"`
 	// Warnings carries every warning emitted during the command so a --json
 	// consumer sees them too — warnings go to stderr, never the stdout JSON.
@@ -81,7 +81,8 @@ const FormatGeneric = "generic"
 // Exit codes.
 const (
 	ExitOK       = 0
-	ExitError    = 1
-	ExitNotFound = 2
-	ExitConflict = 3
+	ExitError    = 1 // the command could not be completed
+	ExitNotFound = 2 // package/version/asset does not exist
+	ExitConflict = 3 // version already exists (use --force)
+	ExitMismatch = 4 // the check ran and found a difference: verify SHA mismatch, diff drift
 )
