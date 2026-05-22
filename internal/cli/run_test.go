@@ -224,6 +224,53 @@ func TestRunPublish(t *testing.T) {
 	})
 }
 
+func TestGatePublish(t *testing.T) {
+	ctx := context.Background()
+	coords := &cob.PackageCoordinates{Domain: "d", Repository: "r", Namespace: "n", Package: "p", Version: "1.0.0"}
+	reg := func(ca *fakeCA) *cob.Registry { return cob.NewRegistry(&cob.Client{CodeArtifact: ca}) }
+
+	t.Run("fresh version: no gate fires", func(t *testing.T) {
+		present, code, err := gatePublish(ctx, reg(&fakeCA{}), coords, "", false, false, false)
+		if err != nil || code != cob.ExitOK || present != nil {
+			t.Fatalf("got present=%v code=%d err=%v, want nil/0/nil", present, code, err)
+		}
+	})
+	t.Run("existing version without --force is a conflict", func(t *testing.T) {
+		_, code, err := gatePublish(ctx, reg(&fakeCA{}), coords, "Published", true, false, false)
+		if code != cob.ExitConflict || err == nil {
+			t.Fatalf("got code=%d err=%v, want ExitConflict + error", code, err)
+		}
+	})
+	t.Run("existing version with --force is allowed (caller deletes)", func(t *testing.T) {
+		_, code, err := gatePublish(ctx, reg(&fakeCA{}), coords, "Published", true, false, true)
+		if err != nil || code != cob.ExitOK {
+			t.Fatalf("got code=%d err=%v, want ok", code, err)
+		}
+	})
+	t.Run("--resume on missing version errors", func(t *testing.T) {
+		_, code, err := gatePublish(ctx, reg(&fakeCA{}), coords, "", false, true, false)
+		if code != cob.ExitError || err == nil {
+			t.Fatalf("got code=%d err=%v", code, err)
+		}
+	})
+	t.Run("--resume on Published (not Unfinished) errors", func(t *testing.T) {
+		_, code, err := gatePublish(ctx, reg(&fakeCA{}), coords, "Published", true, true, false)
+		if code != cob.ExitError || err == nil {
+			t.Fatalf("got code=%d err=%v", code, err)
+		}
+	})
+	t.Run("--resume on Unfinished returns the present map", func(t *testing.T) {
+		present, code, err := gatePublish(ctx, reg(&fakeCA{listAssetsFn: oneAsset("a.bin", 5)}),
+			coords, "Unfinished", true, true, false)
+		if err != nil || code != cob.ExitOK {
+			t.Fatalf("got code=%d err=%v", code, err)
+		}
+		if _, ok := present["a.bin"]; !ok {
+			t.Errorf("present = %v, want a.bin", present)
+		}
+	})
+}
+
 func TestRunPromote(t *testing.T) {
 	ctx := context.Background()
 

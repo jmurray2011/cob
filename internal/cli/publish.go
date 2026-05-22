@@ -115,31 +115,9 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		return runDryRun(ctx, coords, sources, out)
 	}
 
-	// present holds the assets already in an unfinished version being
-	// resumed; for a normal publish it stays nil, so nothing is skipped.
-	var present map[string]cob.AssetSummary
-	switch {
-	case resume:
-		if !exists {
-			return fail(out, "publish", cob.ExitError,
-				"no version %s in %s/%s to resume — run publish without --resume", version, m.Domain, m.Repository)
-		}
-		if status != "Unfinished" { // CodeArtifact PackageVersionStatus
-			return fail(out, "publish", cob.ExitError,
-				"version %s is not resumable (status %q) — only an unfinished publish can be resumed; use --force to overwrite", version, status)
-		}
-		listed, lerr := registry.ListAssets(ctx, coords)
-		if lerr != nil {
-			return fail(out, "publish", cob.ExitError, "listing already-published assets: %s", lerr)
-		}
-		present = make(map[string]cob.AssetSummary, len(listed))
-		for _, a := range listed {
-			present[a.Name] = a
-		}
-	case exists && !force:
-		return fail(out, "publish", cob.ExitConflict,
-			"version %s already exists in %s/%s. Use --force to overwrite, or --resume to continue an unfinished publish.",
-			version, m.Domain, m.Repository)
+	present, code, gerr := gatePublish(ctx, registry, coords, status, exists, resume, force)
+	if gerr != nil {
+		return fail(out, "publish", code, "%s", gerr)
 	}
 
 	// todo is how many sources still need uploading; the rest of `present`
@@ -270,40 +248,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		return &ExitError{Code: cob.ExitError}
 	}
 
-	// Build + publish provenance (the finalizer): one publish chain event
-	// plus, per asset, where it physically came from.
-	prov := &cob.Provenance{Package: fmt.Sprintf("%s/%s", m.Namespace, m.Package)}
-	for i, ns := range sources {
-		entry := cob.ProvenanceEntry{
-			Key:    ns.Name,
-			Source: ns.Source.URI(),
-			Asset:  ns.Source.Filename(),
-			SHA256: results[i].SHA256,
-			Size:   results[i].Size,
-		}
-		// Don't re-observe Origin for an asset that was skipped on
-		// --resume: ns.Source was never Opened, so a fresh HeadObject now
-		// would record S3 state at *resume* time, not upload time. The
-		// interrupted publish never wrote provenance, so there's no prior
-		// Origin to carry forward — leave it nil. The bytes are still
-		// SHA-validated; we just don't have the upload-time source state.
-		if results[i].Method != "skipped" {
-			if o, oerr := ns.Source.Origin(ctx); oerr == nil {
-				entry.Origin = o
-			}
-		}
-		prov.Assets = append(prov.Assets, entry)
-	}
-	prov.Chain = []cob.ProvenanceEvent{{
-		Event:          "publish",
-		Repository:     fmt.Sprintf("%s/%s", m.Domain, m.Repository),
-		Version:        version,
-		Time:           cob.NowStamp(),
-		CobVersion:     buildVersion,
-		Region:         client.Region,
-		ManifestSHA256: m.SHA256(),
-		Actor:          client.CallerIdentity(ctx),
-	}}
+	prov := buildPublishProvenance(ctx, m, version, sources, results, client)
 	if err := finalizeProvenance(ctx, publisher, coords, prov, out, result, start,
 		"Assets published but provenance/finalize failed. Version is unfinished — re-run with --resume to finalize it."); err != nil {
 		return err
@@ -371,4 +316,77 @@ func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []Na
 	}
 	out.Summary("Dry run complete. All %d sources verified.", len(sources))
 	return out.CommandResult(result)
+}
+
+// gatePublish enforces publish's precondition: a fresh version (default), an
+// existing version with --force, or an Unfinished version with --resume. For
+// --resume it also returns the assets already in the version (the caller
+// will skip uploading those). exitCode is the code the caller should exit
+// with if err is non-nil. Extracted from runPublish so it can be unit-tested
+// without the full publish path.
+func gatePublish(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates,
+	status string, exists, resume, force bool) (present map[string]cob.AssetSummary, exitCode int, err error) {
+
+	switch {
+	case resume:
+		if !exists {
+			return nil, cob.ExitError, fmt.Errorf(
+				"no version %s in %s/%s to resume — run publish without --resume",
+				coords.Version, coords.Domain, coords.Repository)
+		}
+		if status != "Unfinished" {
+			return nil, cob.ExitError, fmt.Errorf(
+				"version %s is not resumable (status %q) — only an unfinished publish can be resumed; use --force to overwrite",
+				coords.Version, status)
+		}
+		listed, lerr := registry.ListAssets(ctx, coords)
+		if lerr != nil {
+			return nil, cob.ExitError, fmt.Errorf("listing already-published assets: %w", lerr)
+		}
+		present = make(map[string]cob.AssetSummary, len(listed))
+		for _, a := range listed {
+			present[a.Name] = a
+		}
+	case exists && !force:
+		return nil, cob.ExitConflict, fmt.Errorf(
+			"version %s already exists in %s/%s. Use --force to overwrite, or --resume to continue an unfinished publish.",
+			coords.Version, coords.Domain, coords.Repository)
+	}
+	return present, cob.ExitOK, nil
+}
+
+// buildPublishProvenance assembles the cob-provenance.json document for a
+// publish: one publish chain event plus, per asset, where it physically came
+// from. Origin is omitted for an asset that was skipped on --resume — its
+// upload-time source state is not knowable at resume time.
+func buildPublishProvenance(ctx context.Context, m *manifest.Manifest, version string,
+	sources []NamedSource, results []*cob.AssetResult, client *cob.Client) *cob.Provenance {
+
+	prov := &cob.Provenance{Package: fmt.Sprintf("%s/%s", m.Namespace, m.Package)}
+	for i, ns := range sources {
+		entry := cob.ProvenanceEntry{
+			Key:    ns.Name,
+			Source: ns.Source.URI(),
+			Asset:  ns.Source.Filename(),
+			SHA256: results[i].SHA256,
+			Size:   results[i].Size,
+		}
+		if results[i].Method != "skipped" {
+			if o, oerr := ns.Source.Origin(ctx); oerr == nil {
+				entry.Origin = o
+			}
+		}
+		prov.Assets = append(prov.Assets, entry)
+	}
+	prov.Chain = []cob.ProvenanceEvent{{
+		Event:          "publish",
+		Repository:     fmt.Sprintf("%s/%s", m.Domain, m.Repository),
+		Version:        version,
+		Time:           cob.NowStamp(),
+		CobVersion:     buildVersion,
+		Region:         client.Region,
+		ManifestSHA256: m.SHA256(),
+		Actor:          client.CallerIdentity(ctx),
+	}}
+	return prov
 }
