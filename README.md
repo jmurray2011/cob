@@ -411,9 +411,9 @@ A few things to know about scope:
 
 ## JSON output
 
-All commands support `--json` for machine-readable output. JSON goes to stdout, errors always go to stderr. A JSON object is emitted even on early failures (auth, config) so CI pipelines can reliably parse the output.
+Most commands support `--json` for machine-readable output. JSON goes to stdout, errors always go to stderr. A JSON object is emitted even on early failures (auth, config) so CI pipelines can reliably parse the output.
 
-`publish`, `pull`, `promote` emit a `CommandResult` object with `command`, `package`, `repository`, `assets`, `status`, etc.
+`publish`, `pull`, `promote` emit a `CommandResult` object with `command`, `package`, `repository`, `assets`, `status`, etc. Any warnings raised during the command are collected into its `warnings` array -- warnings also print to stderr, but `--json` consumers should read this field.
 
 `ls` emits an array of the relevant type: packages, versions, assets, or promotion statuses.
 
@@ -422,6 +422,8 @@ All commands support `--json` for machine-readable output. JSON goes to stdout, 
 ```json
 {"package": "ns/pkg", "repository": "domain/repo", "version": "2.1.0"}
 ```
+
+One exception: `manifest` always prints a YAML manifest (that *is* its output -- `--json` does not apply). Every other command honours `--json`.
 
 ## Exit codes
 
