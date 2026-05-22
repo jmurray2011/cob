@@ -17,7 +17,7 @@ type AssetResult struct {
 	Source     string `json:"source,omitempty"`
 	Size       int64  `json:"size"`
 	SHA256     string `json:"sha256"`
-	Method     string `json:"method"` // "buffered" or "skipped"
+	Method     string `json:"method"` // transfer/verify outcome, e.g. buffered, skipped, match(...), mismatch, missing
 	DurationMs int64  `json:"duration_ms"`
 	Error      error  `json:"-"`
 	ErrorMsg   string `json:"error,omitempty"`
@@ -39,7 +39,7 @@ type CommandResult struct {
 	Assets     []AssetResult `json:"assets"`
 	TotalSize  int64         `json:"total_size"`
 	DurationMs int64         `json:"duration_ms"`
-	Status     string        `json:"status"` // "ok" or "error"
+	Status     string        `json:"status"` // "ok", "error", or "drift" (diff)
 	Error      string        `json:"error,omitempty"`
 }
 

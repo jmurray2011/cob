@@ -131,7 +131,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 	// Real sources publish concurrently as Unfinished; the provenance
 	// document is published last with unfinished=false, which both records
 	// what was published and flips the version to Published.
-	results, _, ok := runConcurrent(len(sources), concurrency,
+	results, ok := runConcurrent(len(sources), concurrency,
 		func(i int) (*cob.AssetResult, error) {
 			ns := sources[i]
 			out.AssetStart(ns.Name, ns.Source.URI(), 0)

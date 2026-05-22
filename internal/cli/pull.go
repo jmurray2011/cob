@@ -131,7 +131,7 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		// Warn about names in the filter that didn't match any asset.
 		for name := range wanted {
 			if !matched[name] {
-				fmt.Fprintf(os.Stderr, "Warning: asset %q not found in %s/%s@%s, skipping\n",
+				out.Warn("asset %q not found in %s/%s@%s, skipping",
 					name, coords.Namespace, coords.Package, coords.Version)
 			}
 		}
@@ -172,7 +172,7 @@ func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter,
 		Status:     "ok",
 	}
 
-	results, _, ok := runConcurrent(len(assets), concurrency, func(i int) (*cob.AssetResult, error) {
+	results, ok := runConcurrent(len(assets), concurrency, func(i int) (*cob.AssetResult, error) {
 		info := assets[i]
 		dest := outputPath
 		if dirTarget {

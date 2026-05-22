@@ -124,10 +124,12 @@ func (p *Provenance) OriginByAsset() map[string]*Origin {
 	return m
 }
 
-// Marshal renders the document as indented JSON, stamping the schema.
+// Marshal renders the document as indented JSON with the current schema
+// stamped. It does not mutate the receiver.
 func (p *Provenance) Marshal() []byte {
-	p.Schema = ProvenanceSchema
-	b, _ := json.MarshalIndent(p, "", "  ")
+	doc := *p
+	doc.Schema = ProvenanceSchema
+	b, _ := json.MarshalIndent(&doc, "", "  ")
 	return append(b, '\n')
 }
 

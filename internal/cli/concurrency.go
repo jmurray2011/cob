@@ -6,34 +6,39 @@ import (
 	"github.com/jmurray2011/cob/pkg/cob"
 )
 
-const defaultConcurrency = 4
+const (
+	defaultConcurrency = 4
+	maxConcurrency     = 32 // ceiling: more just invites API throttling
+)
 
 func clampConcurrency(n int) int {
 	if n < 1 {
 		return 1
+	}
+	if n > maxConcurrency {
+		return maxConcurrency
 	}
 	return n
 }
 
 // runConcurrent runs task for indices [0,n) with at most `limit` in flight,
 // returning results in index order. On the first error it stops scheduling
-// new tasks (already-running ones finish); ok is false and firstErrIdx is
-// the lowest index that failed. limit<=1 runs strictly sequentially, which
-// is the exact pre-concurrency behaviour.
-func runConcurrent(n, limit int, task func(i int) (*cob.AssetResult, error)) (results []*cob.AssetResult, firstErrIdx int, ok bool) {
+// new tasks (already-running ones finish) and reports ok=false. limit<=1
+// runs strictly sequentially, the exact pre-concurrency behaviour.
+func runConcurrent(n, limit int, task func(i int) (*cob.AssetResult, error)) (results []*cob.AssetResult, ok bool) {
 	results = make([]*cob.AssetResult, n)
 	if n == 0 {
-		return results, -1, true
+		return results, true
 	}
 	if clampConcurrency(limit) == 1 {
 		for i := 0; i < n; i++ {
 			r, err := task(i)
 			results[i] = r
 			if err != nil {
-				return results, i, false
+				return results, false
 			}
 		}
-		return results, -1, true
+		return results, true
 	}
 
 	var (
@@ -65,8 +70,5 @@ func runConcurrent(n, limit int, task func(i int) (*cob.AssetResult, error)) (re
 	}
 	wg.Wait()
 
-	if errI != -1 {
-		return results, errI, false
-	}
-	return results, -1, true
+	return results, errI == -1
 }

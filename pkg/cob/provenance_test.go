@@ -33,8 +33,8 @@ func sampleProv() *Provenance {
 func TestProvenanceV2RoundTrip(t *testing.T) {
 	p := sampleProv()
 	raw := p.Marshal()
-	if p.Schema != ProvenanceSchema {
-		t.Fatalf("Marshal must stamp schema, got %d", p.Schema)
+	if p.Schema != 0 {
+		t.Errorf("Marshal must not mutate the receiver, Schema became %d", p.Schema)
 	}
 
 	var got Provenance

@@ -160,7 +160,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	}
 
 	start := time.Now()
-	results, _, ok := runConcurrent(len(realNames), concurrency,
+	results, ok := runConcurrent(len(realNames), concurrency,
 		func(i int) (*cob.AssetResult, error) {
 			name := realNames[i]
 			out.AssetStart(name, "", 0)
@@ -191,7 +191,6 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 	}
 
 	// Carry the provenance forward with an appended promote link.
-	reg := cob.NewRegistry(client)
 	prov, perr := cob.FetchProvenance(ctx, client.CodeArtifact, srcCoords)
 	if perr != nil {
 		// A transient/corrupt fetch must not be mistaken for "no provenance"
@@ -202,7 +201,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		// Source wasn't cob-published (or pre-provenance): synthesize from
 		// what CodeArtifact reports so the chain still starts somewhere.
 		prov = &cob.Provenance{Package: fmt.Sprintf("%s/%s", coords.Namespace, coords.Package)}
-		if listed, lerr := reg.ListAssets(ctx, srcCoords); lerr == nil {
+		if listed, lerr := registry.ListAssets(ctx, srcCoords); lerr == nil {
 			for _, a := range listed {
 				if a.Name == cob.ProvenanceFile {
 					continue

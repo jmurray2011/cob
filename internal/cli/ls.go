@@ -15,7 +15,7 @@ func newLsCmd() *cobra.Command {
 	var flagAllRepos bool
 
 	cmd := &cobra.Command{
-		Use:   "ls <coordinates>",
+		Use:   "ls [coordinates]",
 		Short: "List packages, versions, or assets",
 		Long:  "Drill into CodeArtifact: domain/repo (packages), .../ns/pkg (versions), ...@ver (assets).",
 		Args:  cobra.MaximumNArgs(1),
