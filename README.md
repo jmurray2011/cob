@@ -16,6 +16,22 @@ Or build from source:
 go build -o cob ./cmd/cob
 ```
 
+`go install` needs a Go toolchain at the version in [go.mod](go.mod) or newer.
+
+### Verifying release binaries
+
+Release archives ship a `checksums.txt` signed with [cosign](https://github.com/sigstore/cosign) keyless signing (no key to trust -- the signature is tied to the GitHub Actions release workflow's identity and logged in the public Rekor transparency log). To verify a download:
+
+```bash
+cosign verify-blob checksums.txt \
+  --signature checksums.txt.sig \
+  --certificate checksums.txt.pem \
+  --certificate-identity-regexp '^https://github.com/jmurray2011/cob/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+sha256sum --check checksums.txt   # then check the binary against the verified list
+```
+
 ## Quick start
 
 Write a manifest that describes your package:
