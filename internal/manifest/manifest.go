@@ -40,12 +40,46 @@ type PromoteConfig struct {
 	Stages []string `yaml:"stages"`
 }
 
+// allowedManifestKeys is the set of recognised top-level manifest fields.
+var allowedManifestKeys = map[string]bool{
+	"domain": true, "repository": true, "namespace": true,
+	"package": true, "promote": true, "sources": true,
+}
+
+// checkManifestKeys rejects any unrecognised top-level field — almost always
+// a typo that would otherwise be silently ignored.
+func checkManifestKeys(data []byte) error {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return err
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return nil
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if key := root.Content[i].Value; !allowedManifestKeys[key] {
+			return fmt.Errorf("unknown field %q", key)
+		}
+	}
+	return nil
+}
+
 // Load reads and parses a manifest file from disk.
 // Source key order from the YAML is preserved in Sources.
 func Load(path string) (*Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading manifest: %w", err)
+	}
+
+	// Reject unknown top-level fields up front so a typo (repositroy:,
+	// promtoe:) fails loudly instead of being silently dropped.
+	if err := checkManifestKeys(data); err != nil {
+		return nil, fmt.Errorf("invalid manifest %s: %w", path, err)
 	}
 
 	// First pass: decode the scalar fields normally.
@@ -202,7 +236,16 @@ func expandVars(s, version string) (string, error) {
 			}
 			return version
 		case strings.HasPrefix(varName, "env."):
-			envKey := varName[4:]
+			// ${env.X} reads COB_VAR_X — not arbitrary environment. This
+			// namespacing keeps a manifest from pulling a secret like
+			// AWS_SECRET_ACCESS_KEY into a source URI (which would be
+			// recorded in published provenance / sent to the URI's host).
+			name := varName[4:]
+			if name == "" {
+				expandErr = fmt.Errorf("${env.} has an empty variable name")
+				return match
+			}
+			envKey := "COB_VAR_" + name
 			val, ok := os.LookupEnv(envKey)
 			if !ok {
 				expandErr = fmt.Errorf("${%s} references unset environment variable %s", varName, envKey)

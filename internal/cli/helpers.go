@@ -71,8 +71,13 @@ func buildSource(uri, manifestDir string, client *cob.Client) (cob.AssetSource, 
 		}
 		return cob.NewFileSource(path, uri), nil
 	default:
-		// Treat as a relative path from the manifest directory.
-		// Covers bare filenames like "README.md" or "subdir/file.bin".
+		// A "scheme://" we don't recognise is a mistake, not a local file —
+		// reject it rather than silently turning gs://b/x into a path.
+		if i := strings.Index(uri, "://"); i > 0 {
+			return nil, fmt.Errorf("unsupported source scheme in %q (use s3://, ca://, or a file path)", uri)
+		}
+		// Otherwise a relative path from the manifest directory — covers
+		// bare filenames like "README.md" or "subdir/file.bin".
 		path := filepath.Join(manifestDir, uri)
 		return cob.NewFileSource(path, uri), nil
 	}

@@ -93,12 +93,7 @@ func manifestYAMLFor(ctx context.Context, client *cob.Client, coords *cob.Packag
 		assets = a
 	}
 
-	yaml, ok := renderManifest(coords, prov, assets)
-	if !ok {
-		return "", fmt.Errorf("no assets found for %s/%s@%s",
-			coords.Namespace, coords.Package, coords.Version)
-	}
-	return yaml, nil
+	return renderManifest(coords, prov, assets)
 }
 
 // caRef is a ca:// URI for an asset of the version itself — the only sound
@@ -108,11 +103,18 @@ func caRef(c *cob.PackageCoordinates, asset string) string {
 		c.Domain, c.Repository, c.Namespace, c.Package, c.Version, asset)
 }
 
+// hasControl reports whether s contains a control character — such a key or
+// URI, coming from an upstream-controlled cob-provenance.json, could inject
+// extra lines into the hand-built YAML.
+func hasControl(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
+}
+
 // renderManifest builds the YAML. Provenance mode (prov has assets) is a
 // faithful pinned reconstruction; otherwise assets are inferred as ca://
-// self-references. Returns ok=false if there are no sources to emit. Pure
-// (no I/O) so it is unit-tested directly.
-func renderManifest(c *cob.PackageCoordinates, prov *cob.Provenance, assets []cob.AssetSummary) (string, bool) {
+// self-references. Errors if there are no sources, or if a key/URI contains
+// a control character. Pure (no I/O) so it is unit-tested directly.
+func renderManifest(c *cob.PackageCoordinates, prov *cob.Provenance, assets []cob.AssetSummary) (string, error) {
 	type src struct{ key, uri string }
 	var sources []src
 
@@ -138,7 +140,12 @@ func renderManifest(c *cob.PackageCoordinates, prov *cob.Provenance, assets []co
 		}
 	}
 	if len(sources) == 0 {
-		return "", false
+		return "", fmt.Errorf("no assets found for %s/%s@%s", c.Namespace, c.Package, c.Version)
+	}
+	for _, s := range sources {
+		if hasControl(s.key) || hasControl(s.uri) {
+			return "", fmt.Errorf("asset %q has an unsafe control character in its key or URI", s.key)
+		}
 	}
 
 	var b strings.Builder
@@ -167,5 +174,5 @@ func renderManifest(c *cob.PackageCoordinates, prov *cob.Provenance, assets []co
 	for _, s := range sources {
 		fmt.Fprintf(&b, "  %s: %s\n", s.key, s.uri)
 	}
-	return b.String(), true
+	return b.String(), nil
 }

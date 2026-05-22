@@ -7,7 +7,7 @@ import (
 )
 
 func TestExpandVars(t *testing.T) {
-	t.Setenv("GIT_SHA", "abc123")
+	t.Setenv("COB_VAR_GIT_SHA", "abc123") // ${env.GIT_SHA} reads COB_VAR_GIT_SHA
 
 	tests := []struct {
 		name    string
@@ -21,6 +21,7 @@ func TestExpandVars(t *testing.T) {
 		{name: "both", in: "${env.GIT_SHA}-${VERSION}", version: "9", want: "abc123-9"},
 		{name: "no version provided", in: "a-${VERSION}", version: "", wantErr: true},
 		{name: "unset env", in: "${env.NOPE_NOT_SET}", version: "1", wantErr: true},
+		{name: "empty env name", in: "${env.}", version: "1", wantErr: true},
 		{name: "unknown var", in: "${WHATEVER}", version: "1", wantErr: true},
 		{name: "no vars", in: "s3://b/plain", version: "1", want: "s3://b/plain"},
 	}

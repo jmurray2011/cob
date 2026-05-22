@@ -28,6 +28,11 @@ func ParseCoordinates(s string) (*cob.PackageCoordinates, error) {
 	}
 
 	parts := strings.Split(s, "/")
+	for _, p := range parts {
+		if p == "" {
+			return nil, fmt.Errorf("invalid coordinates %q: empty segment", s)
+		}
+	}
 	switch len(parts) {
 	case 1:
 		return &cob.PackageCoordinates{

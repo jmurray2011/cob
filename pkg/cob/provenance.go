@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"time"
 
@@ -20,6 +21,11 @@ const ProvenanceFile = "cob-provenance.json"
 
 // ProvenanceSchema is the current cob_provenance schema version.
 const ProvenanceSchema = 2
+
+// maxProvenanceBytes caps the provenance document cob will read. It grows
+// with the dependency closure and is upstream-controlled, so the read is
+// bounded rather than unbounded.
+const maxProvenanceBytes = 64 << 20 // 64 MiB
 
 // Upstream status values for a ca:// origin.
 const (
@@ -177,9 +183,12 @@ func FetchProvenance(ctx context.Context, ca CodeArtifactAPI, coords *PackageCoo
 	}
 	defer out.Asset.Close()
 
-	data, err := io.ReadAll(out.Asset)
+	data, err := io.ReadAll(io.LimitReader(out.Asset, maxProvenanceBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(data)) > maxProvenanceBytes {
+		return nil, fmt.Errorf("%s exceeds the %d-byte limit", ProvenanceFile, maxProvenanceBytes)
 	}
 	var p Provenance
 	if err := json.Unmarshal(data, &p); err != nil {
