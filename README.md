@@ -301,6 +301,27 @@ cob verify my-package.yaml --version 2.1.0 --deep   # download+hash unchecksumme
 
 Flags: `--version` (required, or `COB_VERSION`), `--deep` (manifest mode only)
 
+### log
+
+Read-only print of a version's chain of evidence — who published it, who
+promoted it, when, and where — plus per-asset origins (where each file
+physically came from, recursing through `ca://` upstreams). No integrity
+check; that's what [`verify`](#verify) is for. Useful when you want the
+history without paying for the asset listing and hash comparison.
+
+```bash
+cob log my-domain/dev/my-namespace/my-package@2.1.0
+cob log my-domain/dev/my-namespace/my-package@latest
+
+# Machine-readable: emits the full Provenance struct as JSON
+cob log my-domain/dev/my-namespace/my-package@2.1.0 --json
+```
+
+Exits with an error if the version has no `cob-provenance.json` (a non-cob
+publisher or pre-provenance version). For those, `cob verify <coords>`
+still works against CodeArtifact's recorded asset hashes, but there's no
+chain to print.
+
 ### diff
 
 Shows how the manifest differs from a published version: added (`+`),

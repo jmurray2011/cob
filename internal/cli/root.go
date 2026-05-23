@@ -40,6 +40,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newManifestCmd(cfg),
 		newTreeCmd(cfg),
 		newRmCmd(cfg),
+		newLogCmd(cfg),
 	)
 
 	root.Version = version
