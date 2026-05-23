@@ -34,18 +34,6 @@ type Writer struct {
 	closeOnce sync.Once
 }
 
-// SetQuiet retroactively forces quiet mode on an already-constructed
-// Writer. Kept for backwards-compatible test wiring; production code
-// should pass Mode{Quiet: true} to New instead.
-func (w *Writer) SetQuiet(q bool) {
-	w.mode.Quiet = q
-	if q {
-		// In quiet mode we expect no asset-stream events; swap to the
-		// silent renderer so any straggling calls are dropped cleanly.
-		w.renderer = silentRenderer{}
-	}
-}
-
 // New creates a Writer for the given mode and auto-selects a renderer
 // based on terminal detection. JSON or Quiet → silent; interactive TTY
 // (and NoTUI not set, COB_TUI not "0") → live; otherwise → stream.

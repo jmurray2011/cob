@@ -159,6 +159,14 @@ type liveModel struct {
 	// immediately and any in-flight AWS calls start aborting while
 	// bubbletea is still tearing down the terminal.
 	onInterrupt func()
+
+	// tickActive tracks whether a 150ms tickMsg loop is currently
+	// chained. The tick exists to refresh per-row ETA/rate when no
+	// byte deltas are flowing — once every row is terminal (done,
+	// skipped, failed) there's nothing more to refresh, so the chain
+	// stops and we don't wake on the heartbeat while the finalize
+	// step runs synchronously. New activity (an assetStartMsg) re-arms.
+	tickActive bool
 }
 
 func newLiveModel(interrupted *atomic.Bool, onInterrupt func()) liveModel {
@@ -169,12 +177,17 @@ func newLiveModel(interrupted *atomic.Bool, onInterrupt func()) liveModel {
 		style:       newLiveStyle(),
 		interrupted: interrupted,
 		onInterrupt: onInterrupt,
+		// Init returns the first tick, so the chain starts alive.
+		tickActive: true,
 	}
 }
 
 // Init schedules the periodic tick that drives smooth rate / ETA updates
 // independent of byte-delta arrivals (so a stalled transfer still ticks
-// down its ETA rather than freezing the display).
+// down its ETA rather than freezing the display). The tickMsg handler
+// suspends the chain once every row is terminal; assetStartMsg re-arms.
+// tickActive is initialized to true in newLiveModel to match this first
+// tick.
 func (m liveModel) Init() tea.Cmd {
 	return tickEvery(150 * time.Millisecond)
 }
@@ -225,7 +238,14 @@ func (m liveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		// Idle wake-up to keep ETA/rate refreshed even when no bytes
-		// flow (e.g. waiting on a queued upload).
+		// flow (e.g. waiting on a queued upload). Once every row is
+		// terminal, pause the chain — there's nothing left to refresh
+		// and otherwise we'd burn a wakeup every 150ms while the
+		// finalize step runs synchronously. assetStartMsg re-arms.
+		if len(m.rows) > 0 && !hasNonTerminalRows(m.rows) {
+			m.tickActive = false
+			return m, nil
+		}
 		return m, tickEvery(150 * time.Millisecond)
 
 	case assetsExpectedMsg:
@@ -245,6 +265,13 @@ func (m liveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ar.state = stateActive
 		if ar.size <= 0 {
 			ar.size = msg.size
+		}
+		// Re-arm the tick chain if it had paused (every prior row had
+		// settled). One Start that walks "all terminal → some active"
+		// is the only transition that needs this.
+		if !m.tickActive {
+			m.tickActive = true
+			return m, tickEvery(150 * time.Millisecond)
 		}
 		return m, nil
 
@@ -451,7 +478,7 @@ func (s liveStyle) renderRow(r *assetRow, nameWidth, termWidth int) string {
 	switch r.state {
 	case stateDone:
 		dur := FormatDuration((r.finished.Sub(r.started)).Milliseconds())
-		size := FormatSize(maxInt64(r.size, r.bytes))
+		size := FormatSize(max(r.size, r.bytes))
 		method := r.method
 		if method != "" {
 			method = " " + method
@@ -600,9 +627,14 @@ func padRight(s string, width int) string {
 
 func rightPad(s string, width int) string { return padRight(s, width) }
 
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
+// hasNonTerminalRows reports whether any row is still queued or active —
+// i.e. whether the ETA-refresh tick has anything to refresh. Done /
+// Skipped / Failed are terminal; everything else keeps the tick alive.
+func hasNonTerminalRows(rows []*assetRow) bool {
+	for _, r := range rows {
+		if r.state != stateDone && r.state != stateSkipped && r.state != stateFailed {
+			return true
+		}
 	}
-	return b
+	return false
 }

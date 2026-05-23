@@ -69,8 +69,7 @@ func TestWarnSurfacesInJSONMode(t *testing.T) {
 
 func TestQuietSuppressesChatter(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	w := NewWithWriters(&stdout, &stderr, Mode{})
-	w.SetQuiet(true)
+	w := NewWithWriters(&stdout, &stderr, Mode{Quiet: true})
 
 	w.Header("Publishing X")
 	w.Summary("done")

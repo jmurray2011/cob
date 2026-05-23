@@ -56,14 +56,14 @@ func runConcurrent(n, limit int, task func(i int) (*cob.AssetResult, error)) (re
 	}
 
 	var (
-		wg   sync.WaitGroup
-		mu   sync.Mutex
-		sem  = make(chan struct{}, limit)
-		errI = -1
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		sem    = make(chan struct{}, limit)
+		failed bool
 	)
 	for i := 0; i < n; i++ {
 		mu.Lock()
-		stop := errI != -1
+		stop := failed
 		mu.Unlock()
 		if stop {
 			break
@@ -76,13 +76,13 @@ func runConcurrent(n, limit int, task func(i int) (*cob.AssetResult, error)) (re
 			r, err := task(i)
 			mu.Lock()
 			results[i] = r
-			if err != nil && (errI == -1 || i < errI) {
-				errI = i
+			if err != nil {
+				failed = true
 			}
 			mu.Unlock()
 		}(i)
 	}
 	wg.Wait()
 
-	return results, errI == -1
+	return results, !failed
 }
