@@ -52,6 +52,7 @@ func newPublishCmd(cfg *Config) *cobra.Command {
 
 func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag string, force, dryRun, yes, resume bool, concurrency int) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	if resume && force {
 		return fail(out, "publish", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")
@@ -91,11 +92,9 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 	publisher := cob.NewPublisher(client)
 	registry := cob.NewRegistry(client)
 
-	// Asset sizes aren't known until each source is resolved, so the meter
-	// shows bytes/rate without a percentage.
-	meter := newProgressMeter(out, 0)
-	publisher.Progress = meter.add
-	defer meter.finish()
+	// Asset sizes aren't known until each source resolves, so the live
+	// renderer's "total" row stays open-ended (bytes/rate, no percent).
+	publisher.Progress = out.AssetProgress
 
 	// Read the version's current state. The conflict/resume gate runs
 	// *after* the dry-run dispatch below: a dry run mutates nothing, so it
@@ -109,6 +108,10 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 	if err != nil {
 		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
+	// Tell the live renderer how many rows to expect; bytes are 0
+	// because sources resolve lazily and we don't know sizes until they
+	// stream.
+	out.AssetsExpected(len(sources), 0)
 
 	if dryRun {
 		out.Header("Publishing %s/%s@%s -> %s/%s (dry run)", m.Namespace, m.Package, version, m.Domain, m.Repository)

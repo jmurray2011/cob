@@ -45,7 +45,7 @@ func TestFormatDuration(t *testing.T) {
 
 func TestWarnSurfacesInJSONMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	w := NewWithWriters(&stdout, &stderr, true) // JSON mode
+	w := NewWithWriters(&stdout, &stderr, Mode{JSON: true})
 
 	w.Warn("using COB_DOMAIN=acme-prod (overrides manifest domain)")
 
@@ -69,7 +69,7 @@ func TestWarnSurfacesInJSONMode(t *testing.T) {
 
 func TestQuietSuppressesChatter(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	w := NewWithWriters(&stdout, &stderr, false)
+	w := NewWithWriters(&stdout, &stderr, Mode{})
 	w.SetQuiet(true)
 
 	w.Header("Publishing X")

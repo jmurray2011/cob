@@ -19,6 +19,11 @@ import (
 type Config struct {
 	Profile, Region, TmpDir string
 	JSON, Quiet, Debug      bool
+	// NoTUI forces the line-stream renderer even on an interactive TTY —
+	// for screen-recording, exotic emulators, or pipelines that want
+	// scriptable output without the JSON envelope. Set by --no-tui or
+	// COB_TUI=0.
+	NoTUI bool
 	// Version is the cob build version, recorded into provenance documents.
 	Version string
 }
@@ -57,6 +62,14 @@ func applyEnvFallbacks(cmd *cobra.Command, cfg *Config) {
 	if !cmd.Flags().Changed("debug") {
 		if set, b := envBool("COB_DEBUG"); set {
 			cfg.Debug = b
+		}
+	}
+	// COB_TUI maps inversely: COB_TUI=0 means "disable the TUI" (set
+	// NoTUI=true). COB_TUI=1 or unset keeps the default. Done after the
+	// other env flags so an explicit --no-tui on the CLI still wins.
+	if !cmd.Flags().Changed("no-tui") {
+		if set, b := envBool("COB_TUI"); set {
+			cfg.NoTUI = !b
 		}
 	}
 }

@@ -33,6 +33,7 @@ func newValidateCmd(cfg *Config) *cobra.Command {
 
 func runValidate(cfg *Config, manifestPath, versionFlag string) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	m, err := manifest.Load(manifestPath)
 	if err != nil {

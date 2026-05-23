@@ -96,7 +96,7 @@ func TestRenderSubtreeBoxDrawing(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	w := output.NewWithWriters(&buf, &buf, false)
+	w := output.NewWithWriters(&buf, &buf, output.Mode{})
 	renderTreeText(w, root)
 
 	got := buf.String()

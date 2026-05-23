@@ -58,6 +58,7 @@ func newTreeCmd(cfg *Config) *cobra.Command {
 // node), walks the hierarchy, and renders the result.
 func runTree(ctx context.Context, cfg *Config, cmd *cobra.Command, target, depthFlag string) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	depth, err := parseTreeDepth(depthFlag)
 	if err != nil {

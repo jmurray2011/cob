@@ -40,6 +40,7 @@ func newManifestCmd(cfg *Config) *cobra.Command {
 
 func runManifest(ctx context.Context, cfg *Config, target, versionFlag string) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {

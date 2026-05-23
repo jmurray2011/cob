@@ -113,9 +113,15 @@ func useFake(t *testing.T, ca cob.CodeArtifactAPI) (cfg *Config, stdout, stderr 
 		return &cob.Client{CodeArtifact: ca, Region: "us-east-2"}, nil
 	}
 	newWriter = func(c *Config) *output.Writer {
-		w := output.NewWithWriters(stdout, stderr, c.JSON)
-		w.SetQuiet(c.Quiet)
-		return w
+		// Tests always use the stream-mode renderer (NewWithWriters
+		// forces isTTY=false), so the live bubbletea path is never
+		// engaged from a unit test — deterministic output, no TUI
+		// teardown to wait on.
+		return output.NewWithWriters(stdout, stderr, output.Mode{
+			JSON:  c.JSON,
+			Quiet: c.Quiet,
+			NoTUI: c.NoTUI,
+		})
 	}
 
 	t.Cleanup(func() {

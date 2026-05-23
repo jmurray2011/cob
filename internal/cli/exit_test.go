@@ -13,7 +13,7 @@ import (
 
 func TestFailJSONMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	w := output.NewWithWriters(&stdout, &stderr, true)
+	w := output.NewWithWriters(&stdout, &stderr, output.Mode{JSON: true})
 
 	err := fail(w, "publish", cob.ExitConflict, "version %s already exists", "1.0.0")
 
@@ -40,7 +40,7 @@ func TestFailJSONMode(t *testing.T) {
 
 func TestFailHumanMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	w := output.NewWithWriters(&stdout, &stderr, false)
+	w := output.NewWithWriters(&stdout, &stderr, output.Mode{})
 
 	_ = fail(w, "pull", cob.ExitNotFound, "nope")
 

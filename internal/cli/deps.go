@@ -14,12 +14,17 @@ import (
 // AWS client" or "build an output writer" we get.
 var (
 	newClient = cob.NewClient
-	// newWriter builds the output writer from cfg, applying --quiet (which
-	// output.New itself doesn't know about).
+	// newWriter builds the output writer from cfg. The mode (JSON / quiet
+	// / no-TUI) is forwarded to the output package, which picks a
+	// renderer accordingly. Each runXxx defers out.Close() so the live
+	// renderer's bubbletea program finishes painting before the shell
+	// prompt returns.
 	newWriter = func(cfg *Config) *output.Writer {
-		w := output.New(cfg.JSON)
-		w.SetQuiet(cfg.Quiet)
-		return w
+		return output.New(output.Mode{
+			JSON:  cfg.JSON,
+			Quiet: cfg.Quiet,
+			NoTUI: cfg.NoTUI,
+		})
 	}
 )
 

@@ -47,6 +47,7 @@ func newInitCmd(cfg *Config) *cobra.Command {
 
 func runInit(cfg *Config, target string, minimal bool) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	// Placeholders chosen so the generated manifest passes `cob validate`
 	// out of the box — operators can iterate without first having to

@@ -61,6 +61,7 @@ func newDiffCmd(cfg *Config) *cobra.Command {
 // "did promotion preserve the bytes?".
 func runDiffVersions(ctx context.Context, cfg *Config, leftTarget, rightTarget string) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	left, err := manifest.ParseCoordinates(leftTarget)
 	if err != nil {
@@ -221,6 +222,7 @@ func assetMapExcludingProvenance(assets []cob.AssetSummary) map[string]cob.Asset
 
 func runDiff(ctx context.Context, cfg *Config, manifestPath, versionFlag string, deep bool) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	version, err := resolveVersion(versionFlag)
 	if err != nil {

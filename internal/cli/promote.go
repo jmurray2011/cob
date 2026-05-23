@@ -55,6 +55,7 @@ func newPromoteCmd(cfg *Config) *cobra.Command {
 
 func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo string, force, yes, dryRun, resume bool, concurrency int) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	if resume && force {
 		return fail(out, "promote", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")
@@ -166,10 +167,10 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 		return fail(out, "promote", cob.ExitError, "%s", err)
 	}
 
-	// Promote doesn't know asset sizes up front, so the meter shows bytes/rate.
-	meter := newProgressMeter(out, 0)
-	promoter.Progress = meter.add
-	defer meter.finish()
+	// Promote doesn't know asset sizes up front; each row sizes itself
+	// as bytes flow. AssetsExpected scopes the live view's row count.
+	out.AssetsExpected(len(assetNames), 0)
+	promoter.Progress = out.AssetProgress
 
 	cmdResult := &cob.CommandResult{
 		Command:    "promote",

@@ -12,45 +12,78 @@ import (
 	"github.com/jmurray2011/cob/internal/cob"
 )
 
-// Writer handles formatted output for cob commands. The per-asset line
-// methods (AssetStart/OK/Fail/Skipped) and Plain take mu so they can be
-// called from concurrent transfer workers without interleaving a line.
+// Writer is the per-command output sink. Its public surface stays
+// stable across modes — callers emit semantic events (Header,
+// AssetStart, AssetProgress, …); the renderer chosen at construction
+// (silent / stream / live) decides how to draw them. JSON-mode output
+// goes through CommandResult / JSON only; non-JSON output goes through
+// the renderer for the asset stream and through the printf-style
+// methods for headers, summaries, and warnings.
 type Writer struct {
 	out      io.Writer
 	errOut   io.Writer
-	json     bool
-	isTTY    bool
-	quiet    bool
+	mode     Mode
+	renderer renderer
+
 	mu       sync.Mutex
 	warnings []string
-	progress bool // an in-place progress line is currently on screen
+
+	closeOnce sync.Once
 }
 
-// progressWidth bounds the in-place progress line so it can't wrap.
-const progressWidth = 80
+// SetQuiet retroactively forces quiet mode on an already-constructed
+// Writer. Kept for backwards-compatible test wiring; production code
+// should pass Mode{Quiet: true} to New instead.
+func (w *Writer) SetQuiet(q bool) {
+	w.mode.Quiet = q
+	if q {
+		// In quiet mode we expect no asset-stream events; swap to the
+		// silent renderer so any straggling calls are dropped cleanly.
+		w.renderer = silentRenderer{}
+	}
+}
 
-// SetQuiet suppresses headers, summaries, and per-asset/progress lines.
-// Errors and warnings still print. For scripts that want just the exit code.
-func (w *Writer) SetQuiet(q bool) { w.quiet = q }
-
-// New creates a Writer. If jsonMode is true, output is JSON.
-// Otherwise it auto-detects TTY for human-friendly output.
-func New(jsonMode bool) *Writer {
-	w := NewWithWriters(os.Stdout, os.Stderr, jsonMode)
-	w.isTTY = IsTerminal(os.Stdout)
+// New creates a Writer for the given mode and auto-selects a renderer
+// based on terminal detection. JSON or Quiet → silent; interactive TTY
+// (and NoTUI not set, COB_TUI not "0") → live; otherwise → stream.
+func New(mode Mode) *Writer {
+	w := &Writer{out: os.Stdout, errOut: os.Stderr, mode: mode}
+	w.renderer = pickRenderer(mode, os.Stdout, IsTerminal(os.Stdout))
 	return w
 }
 
-// NewWithWriters builds a Writer with explicit destinations. Used by tests
-// to capture stdout/stderr; isTTY is forced false so formatting is
-// deterministic regardless of the test environment.
-func NewWithWriters(out, errOut io.Writer, jsonMode bool) *Writer {
-	return &Writer{
-		out:    out,
-		errOut: errOut,
-		json:   jsonMode,
-		isTTY:  false,
+// NewWithWriters is the explicit-destination constructor used by tests.
+// isTTY is forced false so the renderer is deterministic regardless of
+// the host test environment.
+func NewWithWriters(out, errOut io.Writer, mode Mode) *Writer {
+	w := &Writer{out: out, errOut: errOut, mode: mode}
+	w.renderer = pickRenderer(mode, out, false)
+	return w
+}
+
+// pickRenderer applies the decision tree described on Mode. Note that
+// COB_TUI=0 is honored by the CLI layer (it maps onto Mode.NoTUI in
+// applyEnvFallbacks); the output package only sees the resolved Mode
+// so it can stay free of env-var knowledge.
+func pickRenderer(mode Mode, out io.Writer, isTTY bool) renderer {
+	if mode.JSON || mode.Quiet {
+		return silentRenderer{}
 	}
+	if isTTY && !mode.NoTUI {
+		return newLiveRenderer(out)
+	}
+	return &streamRenderer{out: out}
+}
+
+// Close tears down the renderer (waits for any live TUI program to
+// finish painting). Safe to call multiple times; safe to call before
+// any asset-stream method was invoked.
+func (w *Writer) Close() {
+	w.closeOnce.Do(func() {
+		if w.renderer != nil {
+			w.renderer.Close()
+		}
+	})
 }
 
 // Stdout returns the writer's stdout sink, for command output that is
@@ -63,44 +96,11 @@ func (w *Writer) Stdout() io.Writer { return w.out }
 // human message; --json gets a parseable CommandResult so a CI consumer
 // can tell "the user declined" from a silent exit-0 success.
 func (w *Writer) Aborted(command string) {
-	if w.json {
+	if w.mode.JSON {
 		w.CommandResult(&cob.CommandResult{Command: command, Status: "aborted"})
 		return
 	}
 	fmt.Fprintln(w.errOut, "Aborted.")
-}
-
-// Progress renders a single status line in place (carriage return, no
-// newline) on stderr. TTY-only and silenced by --json/--quiet, so it never
-// pollutes piped or machine-readable output. Call ClearProgress when done.
-func (w *Writer) Progress(line string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.json || w.quiet || !w.isTTY {
-		return
-	}
-	if len(line) > progressWidth {
-		line = line[:progressWidth]
-	}
-	fmt.Fprintf(w.errOut, "\r%-*s", progressWidth, line)
-	w.progress = true
-}
-
-// ClearProgress erases the in-place progress line, if one is showing.
-func (w *Writer) ClearProgress() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.clearProgressLocked()
-}
-
-// clearProgressLocked erases the progress line; the caller must hold mu. The
-// per-asset line methods call it first so their output and the progress line
-// never overwrite each other.
-func (w *Writer) clearProgressLocked() {
-	if w.progress {
-		fmt.Fprintf(w.errOut, "\r%-*s\r", progressWidth, "")
-		w.progress = false
-	}
 }
 
 // CommandResult writes the final result of a command. Any warnings emitted
@@ -110,7 +110,7 @@ func (w *Writer) CommandResult(result *cob.CommandResult) error {
 	if result.Warnings == nil {
 		result.Warnings = w.warnings
 	}
-	if w.json {
+	if w.mode.JSON {
 		enc := json.NewEncoder(w.out)
 		enc.SetIndent("", "  ")
 		return enc.Encode(result)
@@ -123,7 +123,7 @@ func (w *Writer) CommandResult(result *cob.CommandResult) error {
 // are processed, so CI pipelines always get parseable JSON on stdout.
 func (w *Writer) ErrorResult(command, errMsg string) {
 	w.Error("%s", errMsg)
-	if w.json {
+	if w.mode.JSON {
 		w.CommandResult(&cob.CommandResult{
 			Command: command,
 			Status:  "error",
@@ -134,107 +134,60 @@ func (w *Writer) ErrorResult(command, errMsg string) {
 
 // Header prints the initial command header (non-JSON, non-quiet mode).
 func (w *Writer) Header(format string, args ...any) {
-	if !w.json && !w.quiet {
+	if !w.mode.JSON && !w.mode.Quiet {
 		fmt.Fprintf(w.out, format+"\n", args...)
 		fmt.Fprintln(w.out)
 	}
 }
 
-// AssetStart prints a "starting" status line before a transfer begins.
-// Only emitted in interactive (TTY) non-JSON mode so logs and pipes stay clean.
-// sourceURI is shown when known (publish); pass "" for pull where there is no
-// source URI to display. size is the known content size (or 0 if unknown).
+// AssetsExpected announces the size of the upcoming asset stream so the
+// live renderer can scope its total/percentage display. Stream and
+// silent renderers ignore it. Pass totalBytes=0 if sizes aren't known up
+// front (publish/promote resolve sources lazily).
+func (w *Writer) AssetsExpected(count int, totalBytes int64) {
+	w.renderer.AssetsExpected(count, totalBytes)
+}
+
+// AssetStart announces an asset transfer is beginning.
 func (w *Writer) AssetStart(name, sourceURI string, size int64) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.json || w.quiet || !w.isTTY {
-		return
-	}
-	w.clearProgressLocked()
-	line := "  .. " + name
-	if sourceURI != "" {
-		line += "  <-  " + sourceURI
-	}
-	if size > 0 {
-		line += "  (" + FormatSize(size) + ")"
-	}
-	fmt.Fprintln(w.out, line)
+	w.renderer.AssetStart(name, sourceURI, size)
 }
 
-// AssetOK prints a successful asset transfer line.
+// AssetProgress reports a byte-count delta for the named asset. Safe to
+// call from concurrent goroutines — renderers serialize internally.
+// Designed to be plugged in as the Progress field on cob.Puller /
+// Publisher / Promoter.
+func (w *Writer) AssetProgress(name string, delta int64) {
+	w.renderer.AssetProgress(name, delta)
+}
+
+// AssetOK marks a successful asset transfer.
 func (w *Writer) AssetOK(r *cob.AssetResult, sourceURI string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.json || w.quiet {
-		return
-	}
-	w.clearProgressLocked()
-	sizeStr := FormatSize(r.Size)
-	durStr := FormatDuration(r.DurationMs)
-	if w.isTTY {
-		line := "  OK " + r.Name
-		if sourceURI != "" {
-			line += "  <-  " + sourceURI
-		}
-		line += "  (" + sizeStr + ") " + durStr + " " + r.Method
-		fmt.Fprintln(w.out, line)
-	} else {
-		// Include Method so non-TTY/CI logs show the basis
-		// (match(origin), match(provenance), skipped, ...).
-		fmt.Fprintf(w.out, "OK %s (%s) %s %s\n", r.Name, sizeStr, durStr, r.Method)
-	}
+	w.renderer.AssetOK(r, sourceURI)
 }
 
-// AssetFail prints a failed asset line.
+// AssetFail marks a failed asset transfer.
 func (w *Writer) AssetFail(name, sourceURI string, err error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.json {
-		return
-	}
-	w.clearProgressLocked()
-	if w.isTTY {
-		line := "  FAIL " + name
-		if sourceURI != "" {
-			line += "  <-  " + sourceURI
-		}
-		line += "  " + err.Error()
-		fmt.Fprintln(w.out, line)
-	} else {
-		fmt.Fprintf(w.out, "FAIL %s %s\n", name, err)
-	}
+	w.renderer.AssetFail(name, sourceURI, err)
 }
 
-// AssetSkipped prints a skipped asset line.
+// AssetSkipped marks a skipped asset.
 func (w *Writer) AssetSkipped(name string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.json || w.quiet {
-		return
-	}
-	w.clearProgressLocked()
-	if w.isTTY {
-		fmt.Fprintf(w.out, "  -- %s  (skipped)\n", name)
-	} else {
-		fmt.Fprintf(w.out, "SKIP %s\n", name)
-	}
+	w.renderer.AssetSkipped(name)
 }
 
 // Plain prints a formatted line to stdout (non-JSON mode only). For ad-hoc
 // human output that is neither an asset transfer line nor a summary.
 func (w *Writer) Plain(format string, args ...any) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.json || w.quiet {
+	if w.mode.JSON || w.mode.Quiet {
 		return
 	}
-	w.clearProgressLocked()
 	fmt.Fprintf(w.out, format+"\n", args...)
 }
 
 // Summary prints the final summary line.
 func (w *Writer) Summary(format string, args ...any) {
-	if !w.json && !w.quiet {
+	if !w.mode.JSON && !w.mode.Quiet {
 		fmt.Fprintln(w.out)
 		fmt.Fprintf(w.out, format+"\n", args...)
 	}
@@ -262,7 +215,7 @@ func (w *Writer) Error(format string, args ...any) {
 // Returns true if JSON mode is active (and the value was written),
 // false if the caller should fall through to human output.
 func (w *Writer) JSON(v any) bool {
-	if !w.json {
+	if !w.mode.JSON {
 		return false
 	}
 	enc := json.NewEncoder(w.out)
@@ -273,7 +226,7 @@ func (w *Writer) JSON(v any) bool {
 
 // Table prints tabulated output for ls commands.
 func (w *Writer) Table(headers []string, rows [][]string) {
-	if w.json {
+	if w.mode.JSON {
 		return
 	}
 	tw := tabwriter.NewWriter(w.out, 0, 0, 2, ' ', 0)

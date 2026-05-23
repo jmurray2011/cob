@@ -52,6 +52,7 @@ func newPullCmd(cfg *Config) *cobra.Command {
 
 func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	client, err := dialClient(ctx, cfg)
 	if err != nil {
@@ -143,9 +144,8 @@ func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, 
 	}
 	fillClientMeta(ctx, client, result)
 
-	meter := newProgressMeter(out, totalAssetSize(assets))
-	puller.Progress = meter.add
-	defer meter.finish()
+	out.AssetsExpected(len(assets), totalAssetSize(assets))
+	puller.Progress = out.AssetProgress
 
 	concurrency = resolveConcurrency(concurrency, out)
 	results, ok := runConcurrent(len(assets), concurrency, func(i int) (*cob.AssetResult, error) {

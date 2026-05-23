@@ -28,6 +28,7 @@ func newResolveCmd(cfg *Config) *cobra.Command {
 
 func runResolve(ctx context.Context, cfg *Config, target string) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {

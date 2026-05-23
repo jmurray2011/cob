@@ -559,11 +559,18 @@ COB_VAR_GIT_SHA=abc123 cob publish my-package.yaml --version 2.1.0
 --quiet, -q    Suppress headers, summaries, and progress (errors still print)
 --debug        Log AWS API responses/retries to stderr
 --tmpdir       Directory for streaming spill files (default: $TMPDIR)
+--no-tui       Force line-stream output even on a TTY (also: COB_TUI=0)
 ```
 
-On an interactive terminal, `publish`/`pull`/`promote` show a live
-byte-count progress line while transferring; it is automatically silenced
-when output is piped, `--json`, or `--quiet`.
+On an interactive terminal, `publish` / `pull` / `promote` render a live
+multi-row progress view -- one row per asset, in-place updates, progress
+bar / rate / ETA per row, totals at the bottom. The view scrolls into
+shell history when the command exits (no alt-screen takeover). Output
+piped to a file, JSON mode, and `--quiet` automatically fall back to the
+stream renderer (one `OK <name>` line per completed asset, no in-place
+updates). `--no-tui` (or `COB_TUI=0`) forces stream output even on a
+TTY -- useful for screen recording, exotic terminal emulators, or
+copy-paste-friendly logs.
 
 `--debug` is the first thing to reach for when an AWS call fails for a
 non-obvious reason (region, credentials, throttling) -- it logs every AWS
@@ -598,6 +605,7 @@ COB_TMPDIR       Spill directory (--tmpdir fallback)
 COB_JSON         Set 1/true to default to --json output
 COB_QUIET        Set 1/true to default to --quiet output
 COB_DEBUG        Set 1/true to default to --debug logging
+COB_TUI          Set 0 to disable the live progress view (same as --no-tui)
 COB_VAR_*        Values for ${env.*} in source URIs (see Variable substitution)
 ```
 

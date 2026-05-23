@@ -13,8 +13,10 @@ import (
 // Publisher handles publishing assets to CodeArtifact.
 type Publisher struct {
 	client *Client
-	// Progress, when set, receives byte-count deltas during each upload.
-	Progress func(int64)
+	// Progress, when set, receives (name, delta) byte updates as each
+	// asset spills to the temp file — name lets one shared callback drive
+	// a multi-row live display without races.
+	Progress func(name string, delta int64)
 }
 
 // NewPublisher creates a Publisher.
@@ -68,7 +70,7 @@ func (p *Publisher) PublishAsset(ctx context.Context, coords *PackageCoordinates
 		result.SetError(err)
 		return result, err
 	}
-	ta, err := spillToTemp(reader, p.client.TmpDir, p.Progress)
+	ta, err := spillToTemp(reader, p.client.TmpDir, assetName, p.Progress)
 	reader.Close()
 	if err != nil {
 		result.SetError(err)

@@ -27,6 +27,7 @@ func NewRootCmd(version string) *cobra.Command {
 	root.PersistentFlags().BoolVarP(&cfg.Quiet, "quiet", "q", false, "Suppress headers, summaries, and progress (errors still print)")
 	root.PersistentFlags().BoolVar(&cfg.Debug, "debug", false, "Log AWS API responses/retries to stderr")
 	root.PersistentFlags().StringVar(&cfg.TmpDir, "tmpdir", "", "Directory for streaming spill files (default: $TMPDIR)")
+	root.PersistentFlags().BoolVar(&cfg.NoTUI, "no-tui", false, "Force line-stream output even on a TTY (also: COB_TUI=0)")
 
 	root.AddCommand(
 		newPublishCmd(cfg),

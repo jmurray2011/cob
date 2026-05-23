@@ -51,6 +51,7 @@ func newLogCmd(cfg *Config) *cobra.Command {
 
 func runLog(ctx context.Context, cfg *Config, target string, checkRefs bool) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {

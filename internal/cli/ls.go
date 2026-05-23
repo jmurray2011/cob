@@ -62,6 +62,7 @@ func newLsCmd(cfg *Config) *cobra.Command {
 // one path per line, suitable for piping.
 func runLsRecursive(ctx context.Context, cfg *Config, cmd *cobra.Command, target, depthFlag string) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	depth, err := parseTreeDepth(depthFlag)
 	if err != nil {
@@ -172,6 +173,7 @@ func classifyLs(coords *cob.PackageCoordinates, target string) (lsKind, string) 
 
 func runLs(ctx context.Context, cfg *Config, target string) error {
 	out := newWriter(cfg)
+	defer out.Close()
 
 	client, err := dialClient(ctx, cfg)
 	if err != nil {
