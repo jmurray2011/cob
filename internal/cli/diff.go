@@ -30,9 +30,10 @@ import (
 //	cob diff <coords-A> <coords-B>       → version vs version
 func newDiffCmd(cfg *Config) *cobra.Command {
 	var (
-		flagVersion string
-		flagDeep    bool
-		flagVerbose bool
+		flagVersion   string
+		flagDeep      bool
+		flagVerbose   bool
+		flagCheckRefs bool
 	)
 
 	cmd := &cobra.Command{
@@ -79,12 +80,13 @@ func newDiffCmd(cfg *Config) *cobra.Command {
   cob diff acme/dev/tools/my-app@2.0.0 acme/dev/tools/my-app@2.1.0`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDiff(cmd.Context(), cfg, args, flagVersion, flagDeep, flagVerbose)
+			return runDiff(cmd.Context(), cfg, args, flagVersion, flagDeep, flagVerbose, flagCheckRefs)
 		},
 	}
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Package version (manifest mode with --version → online; without → offline lint)")
 	cmd.Flags().BoolVar(&flagDeep, "deep", false, "Manifest mode: download and hash sources lacking a checksum (no S3 writes)")
 	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "Show source URI and full SHA-256 on every row (default: only on mismatches)")
+	cmd.Flags().BoolVar(&flagCheckRefs, "check-references", false, "Manifest/self-check modes: probe each chain reference's repository (one VersionStatus per unique repo); surface deleted/unreachable refs as warnings (mirrors `cob log --check-references`)")
 	return cmd
 }
 
@@ -92,7 +94,7 @@ func newDiffCmd(cfg *Config) *cobra.Command {
 // filesystem state. Each branch's discriminator is explicit so a typo
 // surfaces as an error pointing at the right invocation, not as a
 // silent fallback into the wrong mode.
-func runDiff(ctx context.Context, cfg *Config, args []string, versionFlag string, deep, verbose bool) error {
+func runDiff(ctx context.Context, cfg *Config, args []string, versionFlag string, deep, verbose, checkRefs bool) error {
 	out := newWriter(cfg)
 	defer out.Close()
 
@@ -110,7 +112,7 @@ func runDiff(ctx context.Context, cfg *Config, args []string, versionFlag string
 				// command; this mode is the user-facing report of it.
 				return runDiffLint(out, target)
 			}
-			return runDiffManifest(ctx, cfg, out, target, version, deep, verbose)
+			return runDiffManifest(ctx, cfg, out, target, version, deep, verbose, checkRefs)
 		}
 		// Directory as a single arg is ambiguous (which package?) — point
 		// at the right shape instead of guessing.
@@ -120,7 +122,7 @@ func runDiff(ctx context.Context, cfg *Config, args []string, versionFlag string
 				target, target)
 		}
 		// Otherwise: coordinates → self-integrity check.
-		return runDiffSelfCheck(ctx, cfg, out, target, verbose)
+		return runDiffSelfCheck(ctx, cfg, out, target, verbose, checkRefs)
 	case 2:
 		// Two args: dir + coords, OR coords + coords.
 		info, err := os.Stat(args[0])
@@ -257,7 +259,7 @@ func runDiffLint(out *output.Writer, manifestPath string) error {
 // runDiffManifest compares a manifest's sources to a published
 // version's assets. Implicit validateManifest runs at the top — so a
 // broken manifest can't reach the comparison loop.
-func runDiffManifest(ctx context.Context, cfg *Config, out *output.Writer, manifestPath, version string, deep, verbose bool) error {
+func runDiffManifest(ctx context.Context, cfg *Config, out *output.Writer, manifestPath, version string, deep, verbose, checkRefs bool) error {
 	ctx, cancel := interruptable(ctx, cfg, out)
 	defer cancel()
 
@@ -301,6 +303,13 @@ func runDiffManifest(ctx context.Context, cfg *Config, out *output.Writer, manif
 	prov, perr := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
 	if perr != nil {
 		out.Warn("could not read %s: %s", cob.ProvenanceFile, perr)
+	}
+	// --check-references mirrors `cob log --check-references`: probe each
+	// unique repository in the chain (publish.Repository, promote.From,
+	// promote.To). One VersionStatus per repo, in parallel; deleted/
+	// unreachable references surface as a warning before the diff proceeds.
+	if checkRefs && prov != nil {
+		warnMissingChainRefs(ctx, registry, coords, prov, out)
 	}
 	cmps, err := compareManifestToPublished(ctx, sources, registry, coords, deep, prov)
 	if err != nil {
@@ -405,10 +414,36 @@ func runDiffManifest(ctx context.Context, cfg *Config, out *output.Writer, manif
 	return out.CommandResult(result)
 }
 
+// warnMissingChainRefs probes each unique repository in prov.Chain (the
+// same probe `cob log --check-references` does) and emits a single warning
+// if any reference is deleted or unreachable. Centralized so the manifest
+// and self-check diff modes both get the same behavior — and so the day
+// we want to surface this more richly (per-line annotations on the
+// rendered chain), there's one helper to upgrade.
+func warnMissingChainRefs(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, prov *cob.Provenance, out *output.Writer) {
+	statuses := probeChainReferences(ctx, registry, coords, prov)
+	if len(statuses) == 0 {
+		return
+	}
+	missing, unknown := 0, 0
+	for _, s := range statuses {
+		switch s {
+		case chainRefMissing:
+			missing++
+		case chainRefUnknown:
+			unknown++
+		}
+	}
+	if missing > 0 || unknown > 0 {
+		out.Warn("chain references: %d deleted, %d could not be probed (run `cob log %s/%s/%s/%s@%s --check-references` for details)",
+			missing, unknown, coords.Domain, coords.Repository, coords.Namespace, coords.Package, coords.Version)
+	}
+}
+
 // runDiffSelfCheck compares a published version's recorded provenance
 // to what CodeArtifact currently stores. Was `cob verify <coords>`.
 // Chain of evidence is printed first; the comparison follows.
-func runDiffSelfCheck(ctx context.Context, cfg *Config, out *output.Writer, target string, verbose bool) error {
+func runDiffSelfCheck(ctx context.Context, cfg *Config, out *output.Writer, target string, verbose, checkRefs bool) error {
 	ctx, cancel := interruptable(ctx, cfg, out)
 	defer cancel()
 
@@ -442,6 +477,9 @@ func runDiffSelfCheck(ctx context.Context, cfg *Config, out *output.Writer, targ
 		return fail(out, "diff", cob.ExitError,
 			"no %s for %s/%s@%s — cannot self-check (was it published with cob?)",
 			cob.ProvenanceFile, coords.Namespace, coords.Package, coords.Version)
+	}
+	if checkRefs {
+		warnMissingChainRefs(ctx, registry, coords, prov, out)
 	}
 
 	assets, err := registry.ListAssets(ctx, coords)
@@ -674,21 +712,34 @@ func runDiffDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath, c
 
 	out.Plain("")
 
+	// Exit-code precedence: real drift (mismatch/missing) wins over
+	// op-errors. CI gates that branch on exit 4 (ExitMismatch) get the
+	// user-visible truth — "stuff differs" — even when one row also
+	// failed to stat. The opposite ordering meant a single transient
+	// op-error masked the actual diff and turned a deterministic-fail
+	// gate into "retry, maybe it's flaky." Op errors still surface
+	// (warning in the summary line + per-asset Err on the JSON result),
+	// they just don't *override* a mismatch verdict.
 	switch {
+	case mismatch > 0 || missing > 0:
+		result.Status = "mismatch"
+		if opErrors > 0 {
+			result.Error = fmt.Sprintf("%d mismatch, %d missing locally (%d also failed to check)", mismatch, missing, opErrors)
+			out.Summary("FAILED: %d mismatch, %d missing locally, %d could not be checked (%d matched).",
+				mismatch, missing, opErrors, matched)
+		} else {
+			result.Error = fmt.Sprintf("%d mismatch, %d missing locally", mismatch, missing)
+			out.Summary("FAILED: %d mismatch, %d missing locally (%d matched).",
+				mismatch, missing, matched)
+		}
+		out.CommandResult(result)
+		return &ExitError{Code: cob.ExitMismatch}
 	case opErrors > 0:
 		result.Status = "error"
 		result.Error = fmt.Sprintf("%d asset(s) could not be checked", opErrors)
-		out.Summary("FAILED: %d could not be checked, %d mismatch, %d missing locally (%d matched).",
-			opErrors, mismatch, missing, matched)
+		out.Summary("FAILED: %d could not be checked (%d matched).", opErrors, matched)
 		out.CommandResult(result)
 		return &ExitError{Code: cob.ExitError}
-	case mismatch > 0 || missing > 0:
-		result.Status = "mismatch"
-		result.Error = fmt.Sprintf("%d mismatch, %d missing locally", mismatch, missing)
-		out.Summary("FAILED: %d mismatch, %d missing locally (%d matched).",
-			mismatch, missing, matched)
-		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitMismatch}
 	}
 	out.Summary("OK: %d files match the published version byte-for-byte.", matched)
 	return out.CommandResult(result)
