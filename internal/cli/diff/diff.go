@@ -497,9 +497,6 @@ func runSelfCheck(ctx context.Context, cfg *cliutil.Config, out *output.Writer, 
 
 	out.Header("Self-check %s/%s@%s in %s/%s against recorded provenance",
 		coords.Namespace, coords.Package, coords.Version, coords.Domain, coords.Repository)
-	cliutil.RenderChain(out, prov, nil)
-	cliutil.RenderOrigins(out, prov, "")
-	out.Plain("")
 
 	result := &cob.CommandResult{
 		Command:    "diff",
@@ -567,11 +564,30 @@ func runSelfCheck(ctx context.Context, cfg *cliutil.Config, out *output.Writer, 
 		result.Status = "mismatch"
 		result.Error = fmt.Sprintf("%d asset(s) altered or missing since publish", failures)
 		out.Summary("FAILED: %d asset(s) altered or missing since publish.", failures)
+		// Chain + origins render *after* the verdict so the operator
+		// sees "did it pass or fail?" before scrolling past supporting
+		// evidence. Pre-A2-review the chain rendered above the
+		// comparison and pushed the verdict many lines down — diff is
+		// for the verdict; the chain is context.
+		renderProvenanceContext(out, prov)
 		out.CommandResult(result)
 		return &cliutil.ExitError{Code: cob.ExitMismatch}
 	}
 	out.Summary("OK: every recorded asset still matches; chain intact.")
+	renderProvenanceContext(out, prov)
 	return out.CommandResult(result)
+}
+
+// renderProvenanceContext prints the chain of evidence and per-asset
+// origins as supporting context after the diff verdict. The user-facing
+// answer (match / mismatch / altered / missing) appears first in the
+// output; this trailer gives the operator the who/where/when if they
+// want it. `cob log <coords>` remains the right tool when you only
+// want the chain without re-listing assets to compare.
+func renderProvenanceContext(out *output.Writer, prov *cob.Provenance) {
+	out.Plain("")
+	cliutil.RenderChain(out, prov, nil)
+	cliutil.RenderOrigins(out, prov, "")
 }
 
 // runDir hashes every file in <dir> whose name matches a published

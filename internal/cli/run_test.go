@@ -488,6 +488,41 @@ func TestRunDiff(t *testing.T) {
 		clitest.WantExit(t, diff.Run(ctx, cfg, []string{"dom/repo/ns/pkg@latest"}, "", false, false, false), cob.ExitNotFound)
 	})
 
+	t.Run("self-check: verdict prints before the chain (supporting context is a trailer)", func(t *testing.T) {
+		// `cob log` is for chain history; `cob diff <coords>` is for the
+		// verdict. When the chain rendered above the per-asset comparison
+		// the verdict was buried — operators had to scroll past
+		// supporting evidence to see whether the check passed. Pin the
+		// reordered output so a refactor that puts the chain back on top
+		// fails here.
+		ca := clitest.NewStatefulCA()
+		dir := t.TempDir()
+		clitest.WriteFile(t, dir, "thing.bin", "payload")
+		mf := clitest.WriteFile(t, dir, "m.yaml",
+			"domain: a\nrepository: r\nnamespace: n\npackage: p\nsources:\n  thing: ./thing.bin\n")
+		cfg, stdout, _ := clitest.UseFake(t, ca)
+		if err := publish.Run(ctx, cfg, mf, "1.0.0", false, false, true, false, 4); err != nil {
+			t.Fatalf("publish setup: %v", err)
+		}
+		// Reset stdout so we only inspect the self-check output.
+		stdout.Reset()
+		if err := diff.Run(ctx, cfg, []string{"a/r/n/p@1.0.0"}, "", false, false, false); err != nil {
+			t.Fatalf("self-check: %v", err)
+		}
+		out := stdout.String()
+		verdictIdx := strings.Index(out, "OK: every recorded asset still matches")
+		chainIdx := strings.Index(out, "chain of evidence:")
+		if verdictIdx == -1 {
+			t.Fatalf("missing verdict line in:\n%s", out)
+		}
+		if chainIdx == -1 {
+			t.Fatalf("missing chain trailer in:\n%s", out)
+		}
+		if verdictIdx >= chainIdx {
+			t.Errorf("verdict (idx %d) should appear BEFORE chain (idx %d) — chain is supporting context, not the headline:\n%s", verdictIdx, chainIdx, out)
+		}
+	})
+
 	// --- Dir mode (two args, first is a directory) ----------------------------
 
 	t.Run("dir: terse default — match row carries size, no SHA in scan path", func(t *testing.T) {
