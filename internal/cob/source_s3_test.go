@@ -253,3 +253,61 @@ func TestMakeOrigin(t *testing.T) {
 		}
 	})
 }
+
+// TestS3SourceConcurrentOpenOriginRaceFree drives Open and Origin from
+// parallel goroutines on the same S3Source. Pre-mutex, the comment on
+// the struct warned "not safe for concurrent use" and Open's write to
+// s.origin would race with Origin's read under -race. The added mutex
+// guards mutable state; this test fails the build (data race detected)
+// if a future refactor drops the lock.
+func TestS3SourceConcurrentOpenOriginRaceFree(t *testing.T) {
+	fs := &fakeS3{
+		region: "us-east-2",
+		headFn: func(*s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
+			return &s3.HeadObjectOutput{ETag: aws.String("\"head-etag\"")}, nil
+		},
+		getFn: func(*s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+			return &s3.GetObjectOutput{
+				ETag: aws.String("\"get-etag\""),
+				Body: io.NopCloser(strings.NewReader("payload")),
+			}, nil
+		},
+	}
+	src, err := NewS3Source(fs, "s3://b/k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const goroutines = 16
+	done := make(chan struct{}, goroutines)
+	for i := 0; i < goroutines; i++ {
+		// Alternate Open and Origin to maximize the chance of the race
+		// detector catching an unguarded read/write.
+		if i%2 == 0 {
+			go func() {
+				rc, err := src.Open(context.Background())
+				if err == nil {
+					_, _ = io.Copy(io.Discard, rc)
+					_ = rc.Close()
+				}
+				done <- struct{}{}
+			}()
+		} else {
+			go func() {
+				_, _ = src.Origin(context.Background())
+				done <- struct{}{}
+			}()
+		}
+	}
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
+	// Sanity: after the storm, origin is set (Open ran at least once)
+	// and the etag is one of the two responses (whichever raced first).
+	o, err := src.Origin(context.Background())
+	if err != nil {
+		t.Fatalf("Origin after storm: %v", err)
+	}
+	if o == nil || (o.ETag != "get-etag" && o.ETag != "head-etag") {
+		t.Errorf("Origin = %+v; expected non-nil with one of the two response etags", o)
+	}
+}
