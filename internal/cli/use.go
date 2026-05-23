@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jmurray2011/cob/internal/cob"
+	"github.com/jmurray2011/cob/internal/manifest"
 
 	"github.com/jmurray2011/cob/internal/cliutil"
 )
@@ -91,6 +92,30 @@ func newUseCmd(cfg *cliutil.Config) *cobra.Command {
 				return nil
 
 			default:
+				// Validate the coordinate shape before persisting, so a
+				// structural typo (wrong segment count, empty segment,
+				// trailing @) surfaces here — at the point of intent —
+				// instead of N commands later when an AWS call gives a
+				// less-specific error against the misformed string.
+				// Doesn't catch typo'd *names* (a 4-segment string with
+				// a misspelled package is structurally valid); for
+				// those the error has to wait until the package
+				// actually doesn't exist.
+				parsed, err := manifest.ParseCoordinates(args[0])
+				if err != nil {
+					return cliutil.Fail(out, "use", cob.ExitError, "invalid coordinates %q: %s", args[0], err)
+				}
+				// ParseCoordinates accepts 1- and 2-segment forms
+				// ("dom", "dom/repo") for `cob ls`. As a stored current
+				// package they're useless: every read-only consumer
+				// (log/diff/pull/manifest/resolve) demands full
+				// namespace+package. Reject early so an operator who
+				// typed `cob use dom/repo` doesn't get a confusing
+				// downstream error on the first inheriting command.
+				if parsed.Namespace == "" || parsed.Package == "" {
+					return cliutil.Fail(out, "use", cob.ExitError,
+						"current package needs full coordinates (domain/repo/namespace/package[@version]); got %q", args[0])
+				}
 				path, err := cliutil.SetCurrentPackage(args[0], flagGlobal)
 				if err != nil {
 					return cliutil.Fail(out, "use", cob.ExitError, "%s", err)

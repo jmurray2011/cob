@@ -297,6 +297,98 @@ func TestResolveTargetNoCurrentNoArgErrors(t *testing.T) {
 	})
 }
 
+func TestResolveTargetVersionOnlyOverrideMergesWithCurrent(t *testing.T) {
+	// `cob log @latest` against a current package without a version
+	// must merge: keep the current's coords, attach @latest.
+	dir := t.TempDir()
+	withCwd(t, dir, func() {
+		withHomeRedirect(t)
+		_, _ = SetCurrentPackage("vt-dev/installer-artifacts/vtwriter/vtwriter-installer", false)
+
+		var stdout, stderr bytes.Buffer
+		w := output.NewWithWriters(&stdout, &stderr, output.Mode{})
+		got, err := ResolveTarget(&Config{}, w, []string{"@latest"}, "log")
+		if err != nil {
+			t.Fatalf("ResolveTarget(@latest): %v", err)
+		}
+		want := "vt-dev/installer-artifacts/vtwriter/vtwriter-installer@latest"
+		if got != want {
+			t.Errorf("merged coords = %q, want %q", got, want)
+		}
+		// And the Notice header should make the merge visible.
+		if !bytes.Contains(stderr.Bytes(), []byte(want)) {
+			t.Errorf("Notice should announce the merged coords %q, got %q", want, stderr.String())
+		}
+		if !bytes.Contains(stderr.Bytes(), []byte("@latest override")) {
+			t.Errorf("Notice should call out '@latest override', got %q", stderr.String())
+		}
+	})
+}
+
+func TestResolveTargetVersionOnlyOverrideReplacesCurrentVersion(t *testing.T) {
+	// Current package already has @1, positional is @2 → result is the
+	// current's coords with version 2 (the LAST @ wins, mirroring how
+	// manifest.ParseCoordinates treats the version separator).
+	dir := t.TempDir()
+	withCwd(t, dir, func() {
+		withHomeRedirect(t)
+		_, _ = SetCurrentPackage("vt-dev/installer-artifacts/vtwriter/vtwriter-installer@5.2.1.5", false)
+
+		var stdout, stderr bytes.Buffer
+		w := output.NewWithWriters(&stdout, &stderr, output.Mode{})
+		got, _ := ResolveTarget(&Config{}, w, []string{"@5.2.1.4"}, "log")
+		want := "vt-dev/installer-artifacts/vtwriter/vtwriter-installer@5.2.1.4"
+		if got != want {
+			t.Errorf("override should replace the current's version; got %q, want %q", got, want)
+		}
+	})
+}
+
+func TestResolveTargetVersionOnlyOverrideWithoutCurrentErrors(t *testing.T) {
+	withCwd(t, t.TempDir(), func() {
+		withHomeRedirect(t)
+		var stdout, stderr bytes.Buffer
+		w := output.NewWithWriters(&stdout, &stderr, output.Mode{})
+		_, err := ResolveTarget(&Config{}, w, []string{"@latest"}, "log")
+		if err == nil {
+			t.Fatal("@latest with no current package should error helpfully")
+		}
+		// Error must distinguish "version-only override has nothing to
+		// attach to" from "no positional and no current" — same fix
+		// (cob use), but different framing.
+		if !bytes.Contains([]byte(err.Error()), []byte("version-only override")) {
+			t.Errorf("error should mention version-only override; got %v", err)
+		}
+		if !bytes.Contains([]byte(err.Error()), []byte("cob use")) {
+			t.Errorf("error should point at `cob use`; got %v", err)
+		}
+	})
+}
+
+func TestResolveTargetFullPositionalWinsOverCurrent(t *testing.T) {
+	// A positional containing '/' is treated as a full coordinate
+	// override, regardless of what the current package is. The
+	// version-only-override rule only fires when the positional starts
+	// with @ AND has no '/' (so a real path like ./manifest.yaml
+	// doesn't get rerouted through the merge).
+	dir := t.TempDir()
+	withCwd(t, dir, func() {
+		withHomeRedirect(t)
+		_, _ = SetCurrentPackage("a/b/c/d@1", false)
+
+		var stdout, stderr bytes.Buffer
+		w := output.NewWithWriters(&stdout, &stderr, output.Mode{})
+		got, _ := ResolveTarget(&Config{}, w, []string{"x/y/z/w@2"}, "log")
+		if got != "x/y/z/w@2" {
+			t.Errorf("full positional should win verbatim, got %q", got)
+		}
+		// And no Notice — explicit positional, no implicit fallback fired.
+		if stderr.Len() != 0 {
+			t.Errorf("no Notice expected on explicit full positional, got %q", stderr.String())
+		}
+	})
+}
+
 func TestReadCoordsFileRejectsMultiline(t *testing.T) {
 	// A corrupt file with embedded newlines is treated as absent (false),
 	// not silently used. Protects against an operator's editor that added

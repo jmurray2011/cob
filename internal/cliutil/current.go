@@ -286,6 +286,35 @@ func PackageOverrideMissingErr(cmd string) error {
 // wrong project shouldn't have rm silently target last week's `cob use`
 // setting.
 func ResolveTarget(cfg *Config, out *output.Writer, args []string, command string) (string, error) {
+	// Special positional shape: "@<version>" alone is a version-only
+	// override on the current package — `cob log @latest` means "log
+	// the current package at @latest." kubectl-style: positional wins
+	// for what it specifies, defaults fill the rest. Without this, an
+	// operator who set `cob use vt-dev/installer-artifacts/foo/bar`
+	// (no version) couldn't run any version-requiring read-only
+	// command without retyping the full coords.
+	if len(args) > 0 && strings.HasPrefix(args[0], "@") && !strings.Contains(args[0], "/") {
+		coords, src, err := CurrentPackage(cfg)
+		if err != nil {
+			return "", err
+		}
+		if coords == "" {
+			return "", fmt.Errorf(
+				"%q is a version-only override but no current package is set — pass full coordinates or run `cob use <coordinates>` first",
+				args[0],
+			)
+		}
+		// Strip any existing @version from the current coords; append
+		// the positional's @version. Last-@ wins because that's the
+		// version separator (package paths can contain segments but
+		// never @ — manifest.ParseCoordinates enforces it on the way in).
+		if at := strings.LastIndex(coords, "@"); at >= 0 {
+			coords = coords[:at]
+		}
+		merged := coords + args[0]
+		out.Notice("Using %s (from %s + %s override)", merged, src, args[0])
+		return merged, nil
+	}
 	if len(args) > 0 {
 		return args[0], nil
 	}
