@@ -246,6 +246,30 @@ cob resolve my-domain/dev/my-namespace/my-package --json
 
 Resolution is by publication timestamp, not semver.
 
+### init
+
+Prints a starter manifest to stdout — placeholders that pass `cob validate`
+out of the box, plus inline examples for each source type. The optional
+coordinates argument fills in any subset of domain/repository/namespace/
+package; the rest stay as placeholders so you can fill them in as you
+iterate. No AWS calls.
+
+```bash
+# generic template
+cob init > my-package.yaml
+
+# fill in identifiers up front
+cob init acme/dev/tools/my-app > my-package.yaml
+
+# partial: only the domain
+cob init acme > my-package.yaml
+
+# bare schema — no comments, no promote stages
+cob init acme/dev/tools/my-app --minimal > my-package.yaml
+```
+
+Flags: `--minimal`
+
 ### validate
 
 Checks a manifest **offline** -- no AWS calls. Schema, variable
