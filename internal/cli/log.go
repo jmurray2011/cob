@@ -2,12 +2,10 @@ package cli
 
 import (
 	"context"
-	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jmurray2011/cob/internal/cob"
-	"github.com/jmurray2011/cob/internal/concurrency"
 	"github.com/jmurray2011/cob/internal/manifest"
 
 	"github.com/jmurray2011/cob/internal/cliutil"
@@ -96,9 +94,9 @@ func runLog(ctx context.Context, cfg *cliutil.Config, target string, checkRefs b
 	// annotation, and JSON consumers can run their own VersionStatus loop
 	// over prov.Chain without the wrapper drift a structured "references"
 	// field would introduce.
-	var refStatuses map[string]chainRefStatus
+	var refStatuses map[string]cliutil.ChainRefStatus
 	if checkRefs && !cfg.JSON {
-		refStatuses = probeChainReferences(ctx, registry, coords, prov)
+		refStatuses = cliutil.ProbeChainReferences(ctx, registry, coords, prov)
 	}
 
 	if out.JSON(prov) {
@@ -107,17 +105,17 @@ func runLog(ctx context.Context, cfg *cliutil.Config, target string, checkRefs b
 
 	out.Header("Chain of evidence for %s/%s@%s in %s/%s",
 		coords.Namespace, coords.Package, coords.Version, coords.Domain, coords.Repository)
-	renderChain(out, prov, refStatuses)
-	renderOrigins(out, prov, "")
+	cliutil.RenderChain(out, prov, refStatuses)
+	cliutil.RenderOrigins(out, prov, "")
 
 	// Count statuses for the trailing line — silent on a clean chain so
 	// the common case stays a single-line summary.
 	missing, unknown := 0, 0
 	for _, s := range refStatuses {
 		switch s {
-		case chainRefMissing:
+		case cliutil.ChainRefMissing:
 			missing++
-		case chainRefUnknown:
+		case cliutil.ChainRefUnknown:
 			unknown++
 		}
 	}
@@ -126,56 +124,4 @@ func runLog(ctx context.Context, cfg *cliutil.Config, target string, checkRefs b
 	}
 	out.Summary("%d chain event(s), %d asset(s).", len(prov.Chain), len(prov.Assets))
 	return nil
-}
-
-// probeChainReferences fires a VersionStatus per unique repository in the
-// chain (publish.Repository, promote.From, promote.To), in parallel, and
-// returns each reference's status. Empty references and malformed
-// "domain/repo" pairs are recorded as chainRefUnknown rather than
-// silently dropped, so the renderer can surface them. The package and
-// version are taken from coords — chains travel with one version of one
-// package, so the same triple is correct for every probe.
-func probeChainReferences(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, prov *cob.Provenance) map[string]chainRefStatus {
-	refs := make(map[string]struct{})
-	for _, e := range prov.Chain {
-		for _, r := range []string{e.Repository, e.From, e.To} {
-			if r != "" {
-				refs[r] = struct{}{}
-			}
-		}
-	}
-	if len(refs) == 0 {
-		return nil
-	}
-
-	// Convert the set to an ordered slice so ForEach can index-align;
-	// rebuild the keyed map afterward. Cheaper than the mutex-around-map
-	// pattern, and removes the lock altogether.
-	refKeys := make([]string, 0, len(refs))
-	for r := range refs {
-		refKeys = append(refKeys, r)
-	}
-	probed := concurrency.ForEach(ctx, refKeys, promotionStatusConcurrency, func(ctx context.Context, _ int, ref string) chainRefStatus {
-		domain, repo, ok := strings.Cut(ref, "/")
-		if !ok || domain == "" || repo == "" {
-			return chainRefUnknown
-		}
-		probe := *coords
-		probe.Domain = domain
-		probe.Repository = repo
-		_, exists, err := registry.VersionStatus(ctx, &probe)
-		switch {
-		case err != nil:
-			return chainRefUnknown
-		case !exists:
-			return chainRefMissing
-		default:
-			return chainRefOK
-		}
-	})
-	statuses := make(map[string]chainRefStatus, len(refKeys))
-	for i, ref := range refKeys {
-		statuses[ref] = probed[i]
-	}
-	return statuses
 }

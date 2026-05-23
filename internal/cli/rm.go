@@ -187,7 +187,7 @@ func findDownstreamCopies(ctx context.Context, registry *cob.Registry, coords *c
 			others = append(others, repo)
 		}
 	}
-	found := concurrency.ForEach(ctx, others, promotionStatusConcurrency, func(ctx context.Context, _ int, repo string) string {
+	found := concurrency.ForEach(ctx, others, cliutil.PromotionStatusConcurrency, func(ctx context.Context, _ int, repo string) string {
 		probe := *coords
 		probe.Repository = repo
 		// A transient error per repo is intentionally ignored — a probe

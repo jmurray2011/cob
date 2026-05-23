@@ -11,7 +11,7 @@ import (
 )
 
 // treeWalkConcurrency bounds in-flight CodeArtifact list calls during a
-// hierarchy walk. Matches promotionStatusConcurrency — both are batches of
+// hierarchy walk. Matches cliutil.PromotionStatusConcurrency — both are batches of
 // independent reads against the same service.
 const treeWalkConcurrency = 8
 

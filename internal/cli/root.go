@@ -3,6 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
+	"github.com/jmurray2011/cob/internal/cli/diff"
 	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
@@ -41,7 +42,7 @@ func NewRootCmd(build cliutil.BuildInfo) *cobra.Command {
 		newPromoteCmd(cfg),
 		newLsCmd(cfg),
 		newResolveCmd(cfg),
-		newDiffCmd(cfg),
+		diff.NewCmd(cfg),
 		newManifestCmd(cfg),
 		newTreeCmd(cfg),
 		newRmCmd(cfg),

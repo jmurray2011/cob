@@ -14,10 +14,6 @@ import (
 	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-// promotionStatusConcurrency bounds the parallel per-repo VersionStatus calls
-// in `ls dom/*/ns/pkg@v` (mirrors registry.versionMetaConcurrency).
-const promotionStatusConcurrency = 8
-
 func newLsCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagRecursive bool
@@ -400,7 +396,7 @@ func runLsPromotionStatus(ctx context.Context, registry *cob.Registry, coords *c
 	// transient failure (throttle, network, access-denied) is distinct
 	// from "absent" — surface it as "?" so an operator never reads a
 	// check that never completed as "not promoted to this repo".
-	statuses := concurrency.ForEach(ctx, repos, promotionStatusConcurrency, func(ctx context.Context, _ int, repo string) cob.PromotionStatus {
+	statuses := concurrency.ForEach(ctx, repos, cliutil.PromotionStatusConcurrency, func(ctx context.Context, _ int, repo string) cob.PromotionStatus {
 		checkCoords := &cob.PackageCoordinates{
 			Domain:     coords.Domain,
 			Repository: repo,

@@ -1,4 +1,4 @@
-package cli
+package diff
 
 import (
 	"crypto/sha256"

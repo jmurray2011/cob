@@ -14,6 +14,7 @@ import (
 
 	"github.com/jmurray2011/cob/internal/cob"
 
+	"github.com/jmurray2011/cob/internal/cliutil"
 	"github.com/jmurray2011/cob/internal/cliutil/clitest"
 )
 
@@ -292,7 +293,7 @@ func TestProbeChainReferencesDedupes(t *testing.T) {
 		{Event: "promote", From: "acme/dev", To: "acme/staging"},
 		{Event: "promote", From: "acme/staging", To: "acme/prod"},
 	}}
-	probeChainReferences(context.Background(), registry, coords, prov)
+	cliutil.ProbeChainReferences(context.Background(), registry, coords, prov)
 	for repo, want := range map[string]int{"dev": 1, "staging": 1, "prod": 1} {
 		if got := calls[repo]; got != want {
 			t.Errorf("repo %q probed %d times, want %d (probe set should dedupe)", repo, got, want)

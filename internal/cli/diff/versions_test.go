@@ -1,4 +1,4 @@
-package cli
+package diff
 
 import (
 	"context"
@@ -44,7 +44,7 @@ func TestRunDiffVersionsIdentical(t *testing.T) {
 		"2.1.0": {hashedAsset("app.bin", 10, "aa")},
 	})}
 	cfg, stdout, _ := clitest.UseFake(t, ca)
-	if err := runDiff(ctx, cfg, []string{"d/r/n/p@2.0.0", "d/r/n/p@2.1.0"}, "", false, false, false); err != nil {
+	if err := Run(ctx, cfg, []string{"d/r/n/p@2.0.0", "d/r/n/p@2.1.0"}, "", false, false, false); err != nil {
 		t.Fatalf("diff identical: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "0 changed") {
@@ -70,7 +70,7 @@ func TestRunDiffVersionsAddedRemovedChanged(t *testing.T) {
 		},
 	})}
 	cfg, stdout, _ := clitest.UseFake(t, ca)
-	err := runDiff(ctx, cfg, []string{"d/r/n/p@2.0.0", "d/r/n/p@2.1.0"}, "", false, false, false)
+	err := Run(ctx, cfg, []string{"d/r/n/p@2.0.0", "d/r/n/p@2.1.0"}, "", false, false, false)
 	clitest.WantExit(t, err, cob.ExitMismatch) // drift = added+removed+changed > 0
 
 	out := stdout.String()
@@ -103,7 +103,7 @@ func TestRunDiffVersionsIgnoresProvenanceAsset(t *testing.T) {
 		},
 	})}
 	cfg, _, _ := clitest.UseFake(t, ca)
-	if err := runDiff(ctx, cfg, []string{"d/r/n/p@2.0.0", "d/r/n/p@2.1.0"}, "", false, false, false); err != nil {
+	if err := Run(ctx, cfg, []string{"d/r/n/p@2.0.0", "d/r/n/p@2.1.0"}, "", false, false, false); err != nil {
 		t.Fatalf("diff ignoring provenance: %v", err)
 	}
 }
@@ -111,14 +111,14 @@ func TestRunDiffVersionsIgnoresProvenanceAsset(t *testing.T) {
 func TestRunDiffVersionsRejectsCrossPackage(t *testing.T) {
 	ctx := context.Background()
 	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
-	err := runDiff(ctx, cfg, []string{"d/r/ns1/a@1.0.0", "d/r/ns2/b@1.0.0"}, "", false, false, false)
+	err := Run(ctx, cfg, []string{"d/r/ns1/a@1.0.0", "d/r/ns2/b@1.0.0"}, "", false, false, false)
 	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunDiffVersionsRequiresVersions(t *testing.T) {
 	ctx := context.Background()
 	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
-	err := runDiff(ctx, cfg, []string{"d/r/n/p", "d/r/n/p@1.0.0"}, "", false, false, false)
+	err := Run(ctx, cfg, []string{"d/r/n/p", "d/r/n/p@1.0.0"}, "", false, false, false)
 	clitest.WantExit(t, err, cob.ExitError)
 }
 
@@ -130,7 +130,7 @@ func TestRunDiffVersionsCrossRepoSamePackage(t *testing.T) {
 		"2.1.0": {hashedAsset("app.bin", 10, "aa")},
 	})}
 	cfg, _, _ := clitest.UseFake(t, ca)
-	if err := runDiff(ctx, cfg, []string{"d/dev/n/p@2.1.0", "d/prod/n/p@2.1.0"}, "", false, false, false); err != nil {
+	if err := Run(ctx, cfg, []string{"d/dev/n/p@2.1.0", "d/prod/n/p@2.1.0"}, "", false, false, false); err != nil {
 		t.Fatalf("cross-repo diff: %v", err)
 	}
 }

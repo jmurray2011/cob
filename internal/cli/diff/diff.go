@@ -1,4 +1,4 @@
-package cli
+package diff
 
 import (
 	"context"
@@ -30,7 +30,7 @@ import (
 //	cob diff <coords>                    → self-integrity: provenance vs live
 //	cob diff <dir> <coords>              → local files vs published
 //	cob diff <coords-A> <coords-B>       → version vs version
-func newDiffCmd(cfg *cliutil.Config) *cobra.Command {
+func NewCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagVersion   string
 		flagDeep      bool
@@ -82,7 +82,7 @@ func newDiffCmd(cfg *cliutil.Config) *cobra.Command {
   cob diff acme/dev/tools/my-app@2.0.0 acme/dev/tools/my-app@2.1.0`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDiff(cmd.Context(), cfg, args, flagVersion, flagDeep, flagVerbose, flagCheckRefs)
+			return Run(cmd.Context(), cfg, args, flagVersion, flagDeep, flagVerbose, flagCheckRefs)
 		},
 	}
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Package version (manifest mode with --version → online; without → offline lint)")
@@ -92,11 +92,11 @@ func newDiffCmd(cfg *cliutil.Config) *cobra.Command {
 	return cmd
 }
 
-// runDiff routes to the right mode by inspecting positional shape and
+// Run routes to the right mode by inspecting positional shape and
 // filesystem state. Each branch's discriminator is explicit so a typo
 // surfaces as an error pointing at the right invocation, not as a
 // silent fallback into the wrong mode.
-func runDiff(ctx context.Context, cfg *cliutil.Config, args []string, versionFlag string, deep, verbose, checkRefs bool) error {
+func Run(ctx context.Context, cfg *cliutil.Config, args []string, versionFlag string, deep, verbose, checkRefs bool) error {
 	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 
@@ -112,9 +112,9 @@ func runDiff(ctx context.Context, cfg *cliutil.Config, args []string, versionFla
 				// No --version → offline lint. The implicit validation
 				// also runs at the top of every other manifest-based
 				// command; this mode is the user-facing report of it.
-				return runDiffLint(out, target)
+				return runLint(out, target)
 			}
-			return runDiffManifest(ctx, cfg, out, target, version, deep, verbose, checkRefs)
+			return runManifest(ctx, cfg, out, target, version, deep, verbose, checkRefs)
 		}
 		// Directory as a single arg is ambiguous (which package?) — point
 		// at the right shape instead of guessing.
@@ -124,12 +124,12 @@ func runDiff(ctx context.Context, cfg *cliutil.Config, args []string, versionFla
 				target, target)
 		}
 		// Otherwise: coordinates → self-integrity check.
-		return runDiffSelfCheck(ctx, cfg, out, target, verbose, checkRefs)
+		return runSelfCheck(ctx, cfg, out, target, verbose, checkRefs)
 	case 2:
 		// Two args: dir + coords, OR coords + coords.
 		info, err := os.Stat(args[0])
 		if err == nil && info.IsDir() {
-			return runDiffDir(ctx, cfg, out, args[0], args[1], verbose)
+			return runDir(ctx, cfg, out, args[0], args[1], verbose)
 		}
 		// Reject "file + coords" — the only valid first-arg-is-file case
 		// is manifest mode, which takes ONE positional. A two-arg invocation
@@ -138,18 +138,18 @@ func runDiff(ctx context.Context, cfg *cliutil.Config, args []string, versionFla
 			return cliutil.Fail(out, "diff", cob.ExitError,
 				"first argument must be a directory or coordinates when two args are given; got file %s", args[0])
 		}
-		return runDiffVersions(ctx, cfg, out, args[0], args[1], verbose)
+		return runVersions(ctx, cfg, out, args[0], args[1], verbose)
 	}
 	return cliutil.Fail(out, "diff", cob.ExitError, "diff takes one or two positional arguments")
 }
 
-// runDiffLint runs the offline checks the old `cob validate` exposed.
+// runLint runs the offline checks the old `cob validate` exposed.
 // Same per-source rendering — labels each line with what was actually
 // checked (local existence vs remote syntax-only). The underlying
 // cliutil.ValidateManifest helper is the same one publish/promote/pull invoke
 // implicitly, so "lint says it's OK" and "implicit pre-flight said
 // nothing" can never disagree.
-func runDiffLint(out *output.Writer, manifestPath string) error {
+func runLint(out *output.Writer, manifestPath string) error {
 	m, err := manifest.Load(manifestPath)
 	if err != nil {
 		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
@@ -258,10 +258,10 @@ func runDiffLint(out *output.Writer, manifestPath string) error {
 	return out.CommandResult(result)
 }
 
-// runDiffManifest compares a manifest's sources to a published
+// runManifest compares a manifest's sources to a published
 // version's assets. Implicit cliutil.ValidateManifest runs at the top — so a
 // broken manifest can't reach the comparison loop.
-func runDiffManifest(ctx context.Context, cfg *cliutil.Config, out *output.Writer, manifestPath, version string, deep, verbose, checkRefs bool) error {
+func runManifest(ctx context.Context, cfg *cliutil.Config, out *output.Writer, manifestPath, version string, deep, verbose, checkRefs bool) error {
 	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
 
@@ -423,16 +423,16 @@ func runDiffManifest(ctx context.Context, cfg *cliutil.Config, out *output.Write
 // we want to surface this more richly (per-line annotations on the
 // rendered chain), there's one helper to upgrade.
 func warnMissingChainRefs(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, prov *cob.Provenance, out *output.Writer) {
-	statuses := probeChainReferences(ctx, registry, coords, prov)
+	statuses := cliutil.ProbeChainReferences(ctx, registry, coords, prov)
 	if len(statuses) == 0 {
 		return
 	}
 	missing, unknown := 0, 0
 	for _, s := range statuses {
 		switch s {
-		case chainRefMissing:
+		case cliutil.ChainRefMissing:
 			missing++
-		case chainRefUnknown:
+		case cliutil.ChainRefUnknown:
 			unknown++
 		}
 	}
@@ -442,10 +442,10 @@ func warnMissingChainRefs(ctx context.Context, registry *cob.Registry, coords *c
 	}
 }
 
-// runDiffSelfCheck compares a published version's recorded provenance
+// runSelfCheck compares a published version's recorded provenance
 // to what CodeArtifact currently stores. Was `cob verify <coords>`.
 // Chain of evidence is printed first; the comparison follows.
-func runDiffSelfCheck(ctx context.Context, cfg *cliutil.Config, out *output.Writer, target string, verbose, checkRefs bool) error {
+func runSelfCheck(ctx context.Context, cfg *cliutil.Config, out *output.Writer, target string, verbose, checkRefs bool) error {
 	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
 
@@ -497,8 +497,8 @@ func runDiffSelfCheck(ctx context.Context, cfg *cliutil.Config, out *output.Writ
 
 	out.Header("Self-check %s/%s@%s in %s/%s against recorded provenance",
 		coords.Namespace, coords.Package, coords.Version, coords.Domain, coords.Repository)
-	renderChain(out, prov, nil)
-	renderOrigins(out, prov, "")
+	cliutil.RenderChain(out, prov, nil)
+	cliutil.RenderOrigins(out, prov, "")
 	out.Plain("")
 
 	result := &cob.CommandResult{
@@ -574,14 +574,14 @@ func runDiffSelfCheck(ctx context.Context, cfg *cliutil.Config, out *output.Writ
 	return out.CommandResult(result)
 }
 
-// runDiffDir hashes every file in <dir> whose name matches a published
+// runDir hashes every file in <dir> whose name matches a published
 // asset of <coords> and compares to the published SHA-256. Was
 // `cob verify <dir> <coords>`. Local files without a matching
 // published asset are silently left alone (could be a README, source
 // files, etc.). Published assets without a local file are reported as
 // "missing locally". The cob-provenance.json asset is excluded — it's
 // audit metadata, not a package file.
-func runDiffDir(ctx context.Context, cfg *cliutil.Config, out *output.Writer, dirPath, coordsArg string, verbose bool) error {
+func runDir(ctx context.Context, cfg *cliutil.Config, out *output.Writer, dirPath, coordsArg string, verbose bool) error {
 	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
 
@@ -747,12 +747,12 @@ func runDiffDir(ctx context.Context, cfg *cliutil.Config, out *output.Writer, di
 	return out.CommandResult(result)
 }
 
-// runDiffVersions compares two published versions of the same package
+// runVersions compares two published versions of the same package
 // by the SHA-256 each side has recorded in CodeArtifact. The
 // provenance asset is excluded (its bytes trivially differ even when
 // the package didn't change). Cross-repo same-package is allowed —
 // the natural "did promotion preserve the bytes?" check.
-func runDiffVersions(ctx context.Context, cfg *cliutil.Config, out *output.Writer, leftTarget, rightTarget string, verbose bool) error {
+func runVersions(ctx context.Context, cfg *cliutil.Config, out *output.Writer, leftTarget, rightTarget string, verbose bool) error {
 	left, err := manifest.ParseCoordinates(leftTarget)
 	if err != nil {
 		return cliutil.Fail(out, "diff", cob.ExitError, "left: %s", err)

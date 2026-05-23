@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 
+	"github.com/jmurray2011/cob/internal/cli/diff"
 	"github.com/jmurray2011/cob/internal/cob"
 
 	"github.com/jmurray2011/cob/internal/cliutil/clitest"
@@ -425,7 +426,7 @@ func TestRunDiffLint(t *testing.T) {
 		dir := t.TempDir()
 		clitest.WriteFile(t, dir, "x.txt", "data") // 4 bytes
 		mf := clitest.WriteFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x.txt\n")
-		if err := runDiff(ctx, cfg, []string{mf}, "", false, false, false); err != nil {
+		if err := diff.Run(ctx, cfg, []string{mf}, "", false, false, false); err != nil {
 			t.Fatalf("diff lint: %v", err)
 		}
 		out := stdout.String()
@@ -442,7 +443,7 @@ func TestRunDiffLint(t *testing.T) {
 		dir := t.TempDir()
 		mf := clitest.WriteFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  app: s3://bucket/app.bin\n")
-		if err := runDiff(ctx, cfg, []string{mf}, "", false, false, false); err != nil {
+		if err := diff.Run(ctx, cfg, []string{mf}, "", false, false, false); err != nil {
 			t.Fatalf("diff lint remote: %v", err)
 		}
 		out := stdout.String()
@@ -465,7 +466,7 @@ func TestRunDiffLint(t *testing.T) {
 		dir := t.TempDir()
 		mf := clitest.WriteFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./missing.txt\n")
-		err := runDiff(ctx, cfg, []string{mf}, "", false, false, false)
+		err := diff.Run(ctx, cfg, []string{mf}, "", false, false, false)
 		clitest.WantExit(t, err, cob.ExitError)
 	})
 
@@ -475,7 +476,7 @@ func TestRunDiffLint(t *testing.T) {
 		clitest.WriteFile(t, dir, "cob-provenance.json", "{}")
 		mf := clitest.WriteFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  shadow: ./cob-provenance.json\n")
-		clitest.WantExit(t, runDiff(ctx, cfg, []string{mf}, "", false, false, false), cob.ExitError)
+		clitest.WantExit(t, diff.Run(ctx, cfg, []string{mf}, "", false, false, false), cob.ExitError)
 	})
 
 	t.Run("duplicate basename rejected", func(t *testing.T) {
@@ -483,7 +484,7 @@ func TestRunDiffLint(t *testing.T) {
 		dir := t.TempDir()
 		clitest.WriteFile(t, dir, "x.txt", "data")
 		mf := clitest.WriteFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x.txt\n  b: x.txt\n")
-		clitest.WantExit(t, runDiff(ctx, cfg, []string{mf}, "", false, false, false), cob.ExitError)
+		clitest.WantExit(t, diff.Run(ctx, cfg, []string{mf}, "", false, false, false), cob.ExitError)
 	})
 
 	t.Run("publish refuses a manifest the lint would reject", func(t *testing.T) {
@@ -611,7 +612,7 @@ func TestRunDiff(t *testing.T) {
 
 	t.Run("manifest: clean match -> exit 0", func(t *testing.T) {
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
-		if err := runDiff(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true, false, false); err != nil {
+		if err := diff.Run(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true, false, false); err != nil {
 			t.Fatalf("diff manifest clean: %v", err)
 		}
 	})
@@ -621,7 +622,7 @@ func TestRunDiff(t *testing.T) {
 		// upper vs lower. A case-sensitive compare here would be a
 		// spurious mismatch on bytes that are actually identical.
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5, strings.ToUpper(helloSHA))})
-		if err := runDiff(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true, false, false); err != nil {
+		if err := diff.Run(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true, false, false); err != nil {
 			t.Fatalf("uppercase-hex must still match the lowercase source hash: %v", err)
 		}
 	})
@@ -629,7 +630,7 @@ func TestRunDiff(t *testing.T) {
 	t.Run("manifest: SHA mismatch -> exit 4 (ExitMismatch)", func(t *testing.T) {
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5,
 			"deadbeef0000000000000000000000000000000000000000000000000000beef")})
-		clitest.WantExit(t, runDiff(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true, false, false), cob.ExitMismatch)
+		clitest.WantExit(t, diff.Run(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true, false, false), cob.ExitMismatch)
 	})
 
 	t.Run("manifest: missing local source bails at implicit validation, not at compare", func(t *testing.T) {
@@ -640,14 +641,14 @@ func TestRunDiff(t *testing.T) {
 		dir := t.TempDir()
 		mf := clitest.WriteFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  payload: ./missing.txt\n")
-		clitest.WantExit(t, runDiff(ctx, cfg, []string{mf}, "1.0.0", true, false, false), cob.ExitError)
+		clitest.WantExit(t, diff.Run(ctx, cfg, []string{mf}, "1.0.0", true, false, false), cob.ExitError)
 	})
 
 	// --- Self-check mode (one arg, coords with version) -----------------------
 
 	t.Run("self-check: @latest with no published versions -> exit 2", func(t *testing.T) {
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{}) // ListPackageVersions default: empty
-		clitest.WantExit(t, runDiff(ctx, cfg, []string{"dom/repo/ns/pkg@latest"}, "", false, false, false), cob.ExitNotFound)
+		clitest.WantExit(t, diff.Run(ctx, cfg, []string{"dom/repo/ns/pkg@latest"}, "", false, false, false), cob.ExitNotFound)
 	})
 
 	// --- Dir mode (two args, first is a directory) ----------------------------
@@ -656,7 +657,7 @@ func TestRunDiff(t *testing.T) {
 		dir := t.TempDir()
 		clitest.WriteFile(t, dir, "payload.txt", "hello")
 		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
-		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
+		err := diff.Run(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
 		if err != nil {
 			t.Fatalf("diff dir (clean): %v", err)
 		}
@@ -676,7 +677,7 @@ func TestRunDiff(t *testing.T) {
 		dir := t.TempDir()
 		clitest.WriteFile(t, dir, "payload.txt", "hello")
 		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
-		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, true, false)
+		err := diff.Run(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, true, false)
 		if err != nil {
 			t.Fatalf("diff dir --verbose: %v", err)
 		}
@@ -694,7 +695,7 @@ func TestRunDiff(t *testing.T) {
 		clitest.WriteFile(t, dir, "payload.txt", "hello")
 		other := "deadbeef0000000000000000000000000000000000000000000000000000beef"
 		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5, other)})
-		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
+		err := diff.Run(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
 		clitest.WantExit(t, err, cob.ExitMismatch)
 		out := stdout.String()
 		for _, want := range []string{"mismatch", "local", "published", helloSHA, other} {
@@ -707,7 +708,7 @@ func TestRunDiff(t *testing.T) {
 	t.Run("dir: missing local file -> exit 4 with 'missing locally' + published size", func(t *testing.T) {
 		dir := t.TempDir() // empty
 		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 4242, helloSHA)})
-		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
+		err := diff.Run(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
 		clitest.WantExit(t, err, cob.ExitMismatch)
 		out := stdout.String()
 		if !strings.Contains(out, "missing locally") {
@@ -725,21 +726,21 @@ func TestRunDiff(t *testing.T) {
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		dir := t.TempDir()
 		mf := clitest.WriteFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x\n")
-		err := runDiff(ctx, cfg, []string{mf, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
+		err := diff.Run(ctx, cfg, []string{mf, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
 		clitest.WantExit(t, err, cob.ExitError)
 	})
 
 	t.Run("dir: coordinates without a version → routed-error", func(t *testing.T) {
 		dir := t.TempDir()
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
-		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg"}, "", false, false, false)
+		err := diff.Run(ctx, cfg, []string{dir, "dom/repo/ns/pkg"}, "", false, false, false)
 		clitest.WantExit(t, err, cob.ExitError)
 	})
 
 	t.Run("dir: single-dir-arg case gets a shape hint", func(t *testing.T) {
 		dir := t.TempDir()
 		cfg, _, stderr := clitest.UseFake(t, &clitest.FakeCA{})
-		err := runDiff(ctx, cfg, []string{dir}, "", false, false, false)
+		err := diff.Run(ctx, cfg, []string{dir}, "", false, false, false)
 		clitest.WantExit(t, err, cob.ExitError)
 		if !strings.Contains(stderr.String(), "is a directory") {
 			t.Errorf("error should call out the directory-without-coords case:\n%s", stderr.String())
@@ -764,7 +765,7 @@ func TestRunDiff(t *testing.T) {
 		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{
 			ListAssetsFn: publishedAsset(traversalName, 6, helloSHA),
 		})
-		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
+		err := diff.Run(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
 		// op-error path: exit 1 (not 0/4) and the row carries the cliutil.SafeJoin reason.
 		clitest.WantExit(t, err, cob.ExitError)
 		out := stdout.String()

@@ -192,7 +192,7 @@ func manifestHeader(c *cob.PackageCoordinates, prov *cob.Provenance, fromProv bo
 			fmt.Sprintf("%s/%s@%s in %s/%s", c.Namespace, c.Package, c.Version, c.Domain, c.Repository))
 		for _, e := range prov.Chain {
 			if e.Event == "publish" {
-				lines = append(lines, fmt.Sprintf("originally published %s by %s", e.Time, actorStr(e.Actor)))
+				lines = append(lines, fmt.Sprintf("originally published %s by %s", e.Time, cliutil.ActorStr(e.Actor)))
 				break
 			}
 		}
