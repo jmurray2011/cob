@@ -95,7 +95,7 @@ func TestEndToEndPublishPullDiffPromote(t *testing.T) {
 
 	t.Run("pull restores the exact bytes that were published", func(t *testing.T) {
 		dest := t.TempDir()
-		if err := pull.Run(ctx, cfg, "acme/dev/tools/app@1.0.0", "", dest, "", "", 4); err != nil {
+		if err := pull.Run(ctx, cfg, "acme/dev/tools/app@1.0.0", "", dest, 4); err != nil {
 			t.Fatalf("pull: %v", err)
 		}
 		for name, want := range map[string]string{
@@ -122,7 +122,7 @@ func TestEndToEndPublishPullDiffPromote(t *testing.T) {
 
 	t.Run("diff dir vs published is clean immediately after pull", func(t *testing.T) {
 		dest := t.TempDir()
-		if err := pull.Run(ctx, cfg, "acme/dev/tools/app@1.0.0", "", dest, "", "", 4); err != nil {
+		if err := pull.Run(ctx, cfg, "acme/dev/tools/app@1.0.0", "", dest, 4); err != nil {
 			t.Fatalf("setup pull: %v", err)
 		}
 		if err := diff.Run(ctx, cfg, []string{dest, "acme/dev/tools/app@1.0.0"}, "", false, false, false); err != nil {
@@ -278,7 +278,7 @@ func TestEndToEndPublishPullDiffPromote(t *testing.T) {
 		cfg3, _, _ := clitest.UseFake(t, ca)
 		_, _ = cliutil.SetCurrentPackage(coordsStr, false)
 		pulldir := t.TempDir()
-		if err := pull.Run(ctx, cfg3, "", "", pulldir, "", "", 4); err != nil {
+		if err := pull.Run(ctx, cfg3, "", "", pulldir, 4); err != nil {
 			t.Fatalf("pull with no args + current package set: %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(pulldir, "app.bin")); err != nil {
@@ -307,7 +307,7 @@ func TestEndToEndPublishPullDiffPromote(t *testing.T) {
 		ca.Seed("acme", "dev", "tools", "evil", "0.0.1",
 			map[string][]byte{"../escape.bin": []byte("should not land")})
 		dest := t.TempDir()
-		err := pull.Run(ctx, cfg, "acme/dev/tools/evil@0.0.1", "", dest, "", "", 4)
+		err := pull.Run(ctx, cfg, "acme/dev/tools/evil@0.0.1", "", dest, 4)
 		if err == nil {
 			t.Fatal("pull should fail on a traversal-shaped asset name")
 		}

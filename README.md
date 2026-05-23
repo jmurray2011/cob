@@ -90,36 +90,52 @@ see [Provenance](#provenance).
 
 ### pull
 
-Downloads assets to a local directory. Works with a manifest or compact coordinates.
+`cob pull <SOURCE> [DESTINATION]` — same shape as `cp`/`scp`/`rsync`/
+`aws s3 cp`. SOURCE is a manifest or compact coordinates; an inline
+filter `:asset[,asset...]` after coordinates downloads only the named
+files. DESTINATION defaults to the current directory.
 
 ```bash
-# With a manifest -- pull all assets
-cob pull my-package.yaml --version 2.1.0 --output ./assets/
+# Whole package into a directory
+cob pull my-domain/dev/my-namespace/my-package@2.1.0 ./assets/
 
-# Ad-hoc -- grab one asset by its stored name (the source filename)
-cob pull my-domain/dev/my-namespace/my-package@2.1.0 app-2.1.0.tar.gz
+# Latest version into the cwd (no DESTINATION → '.')
+cob pull my-domain/dev/my-namespace/my-package@latest
 
-# Ad-hoc -- grab all assets
-cob pull my-domain/dev/my-namespace/my-package@2.1.0 --output ./assets/
+# One asset to a specific file path
+cob pull my-domain/dev/my-namespace/my-package@latest:app.tar.gz ./app.tar.gz
 
-# Pull the latest published version
-cob pull my-domain/dev/my-namespace/my-package@latest --output ./assets/
+# Two named assets into a directory
+cob pull my-domain/dev/my-namespace/my-package@2.1.0:app.tar.gz,sha256.txt ~/downloads/
 
-# Pull specific assets by stored name
-cob pull my-domain/dev/my-namespace/my-package@2.1.0 --assets app-2.1.0.tar.gz,app-config.yaml
+# With a manifest -- pull all assets the manifest declares
+cob pull my-package.yaml --version 2.1.0 ./assets/
+
+# Combined with `cob use` — when a current package is set:
+cob pull @latest:app.tar.gz ./d/                     # @version override + filter + dest
+cob pull vtdocs/vtdocs-installer@6.1.3 ~/d/          # ns/pkg shorthand + dest
+cob pull ~/d/                                        # just the dest — uses current pkg + version
 ```
 
 Skips files that already exist with a matching SHA-256.
 
-A **whole-package pull into a directory** (no single asset, no `--assets`)
-also writes a `cob-manifest.yaml` next to the assets -- the same manifest
-[`cob manifest`](#manifest) would produce (reconstructed from provenance, or
-inferred). So `cob pull <coords> --output ./d/` gives you the assets, their
-`cob-provenance.json`, and a manifest to re-publish or inspect from. Partial
-or single-asset pulls don't (the manifest would misrepresent the package);
-a manifest hiccup only warns -- the assets are already down.
+A **whole-package pull into a directory** (no inline filter) also
+writes a `cob-manifest.yaml` next to the assets -- the same manifest
+[`cob manifest`](#manifest) would produce (reconstructed from
+provenance, or inferred). So `cob pull <coords> ./d/` gives you the
+assets, their `cob-provenance.json`, and a manifest to re-publish or
+inspect from. Filtered pulls don't (the manifest would misrepresent
+the package); a manifest hiccup only warns -- the assets are already
+down.
 
-Flags: `--version`, `--output`, `--assets`, `--concurrency`
+Inline filter is rejected in manifest mode (the manifest is the source
+of truth for which assets exist). One caveat: `:` and `,` are
+technically legal in CodeArtifact generic asset names; the inline
+filter syntax can't express filters for asset names that contain
+either. You can always pull the whole version and pick the file out
+of the destination.
+
+Flags: `--version` (manifest mode only), `--concurrency`
 
 ### promote
 
@@ -237,7 +253,7 @@ cob resolve my-domain/dev/my-namespace/my-package
 
 # Use in scripts
 VERSION=$(cob resolve my-domain/dev/my-namespace/my-package)
-cob pull my-domain/dev/my-namespace/my-package@$VERSION --output ./assets/
+cob pull my-domain/dev/my-namespace/my-package@$VERSION ./assets/
 
 # JSON output
 cob resolve my-domain/dev/my-namespace/my-package --json
@@ -475,7 +491,7 @@ commands against the same coordinates back-to-back. Instead of retyping
 cob use acme/prod/tools/my-app@2.1.0
 cob log                              # picks it up
 cob diff                             # picks it up
-cob pull --output ./assets/          # picks it up
+cob pull ./assets/                   # picks it up — destination as second positional
 ```
 
 Storage is project-local by default: `./.cob/current`. A `.gitignore` is
@@ -601,8 +617,8 @@ asset name stored in CodeArtifact is the source's basename:
 | `ca://acme/dev/tools/shared-lib@2.0.0/shared-lib-2.0.deb` | `shared-lib-2.0.deb` |
 | `./local-overrides.yaml` | `local-overrides.yaml` |
 
-`cob pull <coords> <asset>` and `--assets` select by this stored name, not by
-the manifest key. Put `${VERSION}` in the source URI so the version travels
+`cob pull <coords>:<asset>` selects by this stored name, not by the
+manifest key. Put `${VERSION}` in the source URI so the version travels
 with the filename (`app-${VERSION}.tar.gz`).
 
 Because the basename is the identity, two sources that resolve to the same

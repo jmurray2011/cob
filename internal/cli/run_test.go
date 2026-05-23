@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -118,14 +119,16 @@ func TestRunPull(t *testing.T) {
 			return nil, &catypes.ResourceNotFoundException{}
 		}}
 		cfg, _, _ := clitest.UseFake(t, ca)
-		err := pull.Run(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "", t.TempDir(), "", "", 4)
+		err := pull.Run(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "", t.TempDir(), 4)
 		clitest.WantExit(t, err, cob.ExitNotFound)
 	})
 
 	t.Run("requested asset not in version", func(t *testing.T) {
 		ca := &clitest.FakeCA{ListAssetsFn: oneAsset("real.bin", 3)}
 		cfg, _, _ := clitest.UseFake(t, ca)
-		err := pull.Run(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "missing.bin", t.TempDir(), "", "missing.bin", 4)
+		// Inline filter: SOURCE:asset selects a single asset. The
+		// asset doesn't exist in the version → exit code 2.
+		err := pull.Run(ctx, cfg, "dom/repo/ns/pkg@1.0.0:missing.bin", "", t.TempDir(), 4)
 		clitest.WantExit(t, err, cob.ExitNotFound)
 	})
 
@@ -138,12 +141,70 @@ func TestRunPull(t *testing.T) {
 		}
 		cfg, _, _ := clitest.UseFake(t, ca)
 		dst := filepath.Join(t.TempDir(), "out.bin")
-		if err := pull.Run(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "a.bin", dst, "", "a.bin", 4); err != nil {
+		// SOURCE:asset DEST — filter inline, dest as positional.
+		if err := pull.Run(ctx, cfg, "dom/repo/ns/pkg@1.0.0:a.bin", "", dst, 4); err != nil {
 			t.Fatalf("pull: %v", err)
 		}
 		got, err := os.ReadFile(dst)
 		if err != nil || string(got) != "hello" {
 			t.Fatalf("pulled file = %q, %v", got, err)
+		}
+	})
+
+	t.Run("inline multi-asset filter selects exactly the named assets", func(t *testing.T) {
+		// SOURCE:foo,bar,baz syntax — comma-separated assets.
+		// ListAssets reports three; filter selects two; only those two
+		// should be fetched. The fake guards `gotten` with a mutex
+		// because the puller fans out across concurrency goroutines.
+		var (
+			mu     sync.Mutex
+			gotten []string
+		)
+		ca := &clitest.FakeCA{
+			ListAssetsFn: func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
+				return &codeartifact.ListPackageVersionAssetsOutput{
+					Assets: []catypes.AssetSummary{
+						{Name: aws.String("a.bin"), Size: aws.Int64(1)},
+						{Name: aws.String("b.bin"), Size: aws.Int64(1)},
+						{Name: aws.String("c.bin"), Size: aws.Int64(1)},
+					},
+				}, nil
+			},
+			GetAssetFn: func(in *codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
+				mu.Lock()
+				gotten = append(gotten, aws.ToString(in.Asset))
+				mu.Unlock()
+				return &codeartifact.GetPackageVersionAssetOutput{Asset: io.NopCloser(strings.NewReader("x"))}, nil
+			},
+		}
+		cfg, _, _ := clitest.UseFake(t, ca)
+		dst := t.TempDir()
+		if err := pull.Run(ctx, cfg, "dom/repo/ns/pkg@1.0.0:a.bin,c.bin", "", dst, 4); err != nil {
+			t.Fatalf("pull: %v", err)
+		}
+		want := map[string]bool{"a.bin": true, "c.bin": true}
+		mu.Lock()
+		got := append([]string(nil), gotten...)
+		mu.Unlock()
+		for _, g := range got {
+			if !want[g] {
+				t.Errorf("unexpected asset fetched: %q (filter was a.bin,c.bin)", g)
+			}
+			delete(want, g)
+		}
+		if len(want) > 0 {
+			t.Errorf("expected assets not fetched: %v", want)
+		}
+	})
+
+	t.Run("inline filter on manifest mode is rejected", func(t *testing.T) {
+		// Manifests own their asset list; a filter would muddy the
+		// contract. Error before any AWS call.
+		cfg, _, stderr := clitest.UseFake(t, &clitest.FakeCA{})
+		err := pull.Run(ctx, cfg, "./my-pkg.yaml:foo.bin", "1.0.0", t.TempDir(), 4)
+		clitest.WantExit(t, err, cob.ExitError)
+		if !strings.Contains(stderr.String(), "inline asset filter") {
+			t.Errorf("stderr should call out 'inline asset filter'; got %q", stderr.String())
 		}
 	})
 }

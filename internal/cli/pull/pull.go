@@ -24,54 +24,99 @@ const generatedManifestFile = "cob-manifest.yaml"
 func NewCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagVersion     string
-		flagOutput      string
-		flagAssets      string
 		flagConcurrency int
 	)
 
 	cmd := &cobra.Command{
-		Use:   "pull <manifest|coordinates> [asset]",
+		Use:   "pull <manifest|coords>[:asset[,asset...]] [destination]",
 		Short: "Download assets from CodeArtifact",
-		Long:  "Downloads assets to a local directory. Use with a manifest (all assets) or compact coordinates (ad-hoc).",
+		Long: "Downloads assets to a local destination. Shape mirrors cp/scp/rsync:\n\n" +
+			"  cob pull <SOURCE> [DESTINATION]\n\n" +
+			"SOURCE is either a manifest file or compact coordinates. Compact\n" +
+			"coordinates may carry an inline asset filter — `:asset1,asset2,...`\n" +
+			"after the coords — to download only the named files instead of the\n" +
+			"whole version. Manifest mode pulls every asset the manifest\n" +
+			"declares; inline filter on a manifest is rejected (the manifest\n" +
+			"is the source of truth for which assets exist).\n\n" +
+			"DESTINATION defaults to '.' (the current directory). For a multi-\n" +
+			"asset pull, DESTINATION must be a directory (or end in '/' so cob\n" +
+			"creates it). For a single-asset pull, DESTINATION may be a file\n" +
+			"path or a directory.\n\n" +
+			"Caveat: `:` and `,` are technically legal in CodeArtifact generic\n" +
+			"asset names; the inline filter syntax can't express filters for\n" +
+			"asset names that contain either. Those names work fine without a\n" +
+			"filter (you'd pull the whole version) but can't be selectively\n" +
+			"filtered through this CLI shape.",
 		Example: `  # pull every asset of a version into a directory
-  cob pull acme/dev/tools/my-app@2.1.0 --output ./assets/
+  cob pull acme/dev/tools/my-app@2.1.0 ./assets/
 
-  # pull one asset, resolving the latest version
-  cob pull acme/dev/tools/my-app@latest app.tar.gz --output ./app.tar.gz`,
+  # pull one asset of the latest version to a specific file path
+  cob pull acme/dev/tools/my-app@latest:app.tar.gz ./app.tar.gz
+
+  # pull two named assets, resolving latest, to ~/downloads/
+  cob pull acme/dev/tools/my-app@latest:app.tar.gz,sha256.txt ~/downloads/
+
+  # combined with cob use: in a session where the current package is set
+  cob pull @latest:app.tar.gz ~/staging/   # @version override + filter + dest
+  cob pull vtdocs/vtdocs-installer@6.1.3 ~/d/  # ns/pkg shorthand + dest`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Single arg is always the target (a hypothetical
-			// "asset-name-with-implicit-target" rule would collide
-			// with pull's existing 1-or-2 positional shape). 0 args
-			// triggers the current-package fallback inside Run.
-			var target, assetName string
+			// 0 args → empty target (Run falls back to current package).
+			// 1 arg  → source only.
+			// 2 args → source + destination.
+			var target, destination string
 			if len(args) > 0 {
 				target = args[0]
 			}
 			if len(args) > 1 {
-				assetName = args[1]
+				destination = args[1]
 			}
-			return Run(cmd.Context(), cfg, target, flagVersion, flagOutput, flagAssets, assetName, flagConcurrency)
+			return Run(cmd.Context(), cfg, target, flagVersion, destination, flagConcurrency)
 		},
 	}
 
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Specific version (required with manifest)")
-	cmd.Flags().StringVarP(&flagOutput, "output", "o", "", "Output path (directory or filename)")
-	cmd.Flags().StringVar(&flagAssets, "assets", "", "Pull specific assets only (comma-separated)")
 	cmd.Flags().IntVar(&flagConcurrency, "concurrency", cliutil.DefaultConcurrency, "Max assets downloaded in parallel (1 = sequential; clamped to [1,32] to avoid CodeArtifact throttling — a warning prints if a passed value was changed)")
 
 	return cmd
 }
 
-func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
+// splitSourceAndFilter divides the SOURCE positional into the
+// coords/manifest part and the inline asset filter, splitting on the
+// first ':' that isn't inside coordinate syntax. Coordinate strings
+// don't legally contain ':' (segments are alphanumeric +.-_, version
+// is [a-zA-Z0-9.+-]+ per CodeArtifact), so the first ':' is
+// unambiguously the filter separator. Returns (source, filter) where
+// filter is "" when no inline filter was given.
+func splitSourceAndFilter(s string) (source, filter string) {
+	i := strings.IndexByte(s, ':')
+	if i < 0 {
+		return s, ""
+	}
+	return s[:i], s[i+1:]
+}
+
+func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, destination string, concurrency int) error {
 	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
 
-	// Always route the target through ResolveTarget so the
+	// Peel the inline asset filter off the source first — the coords/
+	// manifest part is what ResolveTarget and ParseCoordinates need.
+	source, assetsFilter := splitSourceAndFilter(target)
+
+	// Manifest mode owns its own asset list (the manifest is the source
+	// of truth for what gets published); an inline filter would just
+	// confuse the contract.
+	if assetsFilter != "" && cliutil.IsManifestPath(source) {
+		return cliutil.Fail(out, "pull", cob.ExitError,
+			"inline asset filter (:%s) is not supported in manifest mode — the manifest determines which assets are pulled", assetsFilter)
+	}
+
+	// Always route the source through ResolveTarget so the
 	// shorthand merges apply when a current package is set:
-	//   - empty target → CurrentPackage fallback (--package /
+	//   - empty source → CurrentPackage fallback (--package /
 	//     COB_PACKAGE_COORDS / .cob/current / ~/.config/cob/current)
 	//   - "@<version>" alone → version override on current package
 	//   - "ns/pkg" or "ns/pkg@version" → merge onto current's dom/repo
@@ -81,15 +126,16 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, outputPa
 	// the merge and ship the partial coords straight to AWS.
 	{
 		var rargs []string
-		if target != "" {
-			rargs = []string{target}
+		if source != "" {
+			rargs = []string{source}
 		}
 		var err error
-		target, err = cliutil.ResolveTarget(cfg, out, rargs, "pull")
+		source, err = cliutil.ResolveTarget(cfg, out, rargs, "pull")
 		if err != nil {
 			return cliutil.Fail(out, "pull", cob.ExitError, "%s", err)
 		}
 	}
+	target = source
 
 	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
@@ -160,8 +206,8 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, outputPa
 		return cliutil.Fail(out, "pull", cliutil.CodeFor(err), "listing assets: %s", err)
 	}
 
-	// Narrow to the requested assets.
-	assets, unmatched, err := selectAssets(allAssets, assetArg, assetsFilter)
+	// Narrow to the requested assets via the inline filter (if any).
+	assets, unmatched, err := selectAssets(allAssets, "", assetsFilter)
 	for _, name := range unmatched {
 		out.Warn("asset %q not found in %s/%s@%s, skipping", name, coords.Namespace, coords.Package, coords.Version)
 	}
@@ -169,6 +215,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, outputPa
 		return cliutil.Fail(out, "pull", cob.ExitNotFound, "%s in %s/%s@%s", err, coords.Namespace, coords.Package, coords.Version)
 	}
 
+	outputPath := destination
 	if outputPath == "" {
 		outputPath = "."
 	}
@@ -288,7 +335,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, outputPa
 	// A whole-package pull into a directory also gets a recoverable
 	// manifest (reconstructed from provenance, or inferred). Best-effort:
 	// the assets are already down, so a manifest hiccup only warns.
-	wholePackage := assetArg == "" && assetsFilter == ""
+	wholePackage := assetsFilter == ""
 	if wholePackage && dirTarget {
 		writePulledManifest(ctx, client, coords, assets, outputPath, out)
 	}
