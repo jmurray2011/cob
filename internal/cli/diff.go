@@ -258,7 +258,7 @@ func runDiffLint(out *output.Writer, manifestPath string) error {
 // version's assets. Implicit validateManifest runs at the top — so a
 // broken manifest can't reach the comparison loop.
 func runDiffManifest(ctx context.Context, cfg *Config, out *output.Writer, manifestPath, version string, deep, verbose bool) error {
-	ctx, cancel := interruptable(ctx, out)
+	ctx, cancel := interruptable(ctx, cfg, out)
 	defer cancel()
 
 	m, err := manifest.Load(manifestPath)
@@ -409,7 +409,7 @@ func runDiffManifest(ctx context.Context, cfg *Config, out *output.Writer, manif
 // to what CodeArtifact currently stores. Was `cob verify <coords>`.
 // Chain of evidence is printed first; the comparison follows.
 func runDiffSelfCheck(ctx context.Context, cfg *Config, out *output.Writer, target string, verbose bool) error {
-	ctx, cancel := interruptable(ctx, out)
+	ctx, cancel := interruptable(ctx, cfg, out)
 	defer cancel()
 
 	coords, err := manifest.ParseCoordinates(target)
@@ -542,7 +542,7 @@ func runDiffSelfCheck(ctx context.Context, cfg *Config, out *output.Writer, targ
 // "missing locally". The cob-provenance.json asset is excluded — it's
 // audit metadata, not a package file.
 func runDiffDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath, coordsArg string, verbose bool) error {
-	ctx, cancel := interruptable(ctx, out)
+	ctx, cancel := interruptable(ctx, cfg, out)
 	defer cancel()
 
 	coords, err := manifest.ParseCoordinates(coordsArg)

@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -24,6 +25,14 @@ type Config struct {
 	// scriptable output without the JSON envelope. Set by --no-tui or
 	// COB_TUI=0.
 	NoTUI bool
+	// Timeout bounds how long a long-running operation (pull, publish,
+	// promote, diff dir/manifest/versions) may run before the ambient ctx
+	// is canceled. 0 = no deadline (the AWS SDK still has its own per-call
+	// timeouts). Set by --timeout or COB_TIMEOUT (a Go duration string
+	// like 30m, 90s, 2h). Quick commands (ls, log, version, …) aren't
+	// wrapped — they're either fast or pure local, so a deadline there
+	// would mostly create confusing aborts.
+	Timeout time.Duration
 	// Version is the cob build version string, recorded into provenance
 	// documents and surfaced via `cob --version`. For richer structured
 	// build metadata (commit, time, toolchain) see Build, which the
@@ -66,6 +75,18 @@ func applyEnvFallbacks(cmd *cobra.Command, cfg *Config) {
 	if !cmd.Flags().Changed("debug") {
 		if set, b := envBool("COB_DEBUG"); set {
 			cfg.Debug = b
+		}
+	}
+	if !cmd.Flags().Changed("timeout") {
+		if v := os.Getenv("COB_TIMEOUT"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				cfg.Timeout = d
+			}
+			// Silently ignore an unparseable COB_TIMEOUT — surfacing it
+			// from PersistentPreRun would either need to bubble up as an
+			// error (intrusive) or fmt.Fprint to stderr (race with the
+			// command's own output). The flag form's parser catches
+			// typos for anyone who cares enough to set --timeout.
 		}
 	}
 	// COB_TUI maps inversely: COB_TUI=0 means "disable the TUI" (set

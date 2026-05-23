@@ -53,7 +53,7 @@ func newPublishCmd(cfg *Config) *cobra.Command {
 func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag string, force, dryRun, yes, resume bool, concurrency int) error {
 	out := newWriter(cfg)
 	defer out.Close()
-	ctx, cancel := interruptable(ctx, out)
+	ctx, cancel := interruptable(ctx, cfg, out)
 	defer cancel()
 
 	if resume && force {

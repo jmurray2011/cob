@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jmurray2011/cob/internal/cob"
+	"github.com/jmurray2011/cob/internal/output"
 )
 
 func b(v bool) *bool { return &v }
@@ -109,3 +113,43 @@ func TestSafeJoinRejectsSymlinkEscape(t *testing.T) {
 		t.Errorf("safeJoin rejected a legitimate subdirectory: %v", err)
 	}
 }
+
+// TestInterruptableAppliesTimeout pins the --timeout / COB_TIMEOUT
+// contract: when cfg.Timeout is set, the returned ctx is a deadline
+// child of the input. A hung operation eventually surfaces as
+// context.DeadlineExceeded so a CI pipeline doesn't sit on a stalled
+// AWS call forever.
+func TestInterruptableAppliesTimeout(t *testing.T) {
+	cfg := &Config{Timeout: 5 * time.Millisecond}
+	w := output.NewWithWriters(&dummyBuf{}, &dummyBuf{}, output.Mode{})
+	ctx, cancel := interruptable(context.Background(), cfg, w)
+	defer cancel()
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Errorf("ctx.Err() = %v, want DeadlineExceeded", ctx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout context did not fire within 1s; --timeout=5ms is not wired through")
+	}
+}
+
+// TestInterruptableNoTimeoutByDefault: cfg.Timeout == 0 leaves the ctx
+// without a deadline (operators on local dev runs should never be
+// surprised by a clock they didn't set).
+func TestInterruptableNoTimeoutByDefault(t *testing.T) {
+	cfg := &Config{} // Timeout: 0 — no deadline
+	w := output.NewWithWriters(&dummyBuf{}, &dummyBuf{}, output.Mode{})
+	ctx, cancel := interruptable(context.Background(), cfg, w)
+	defer cancel()
+	if _, ok := ctx.Deadline(); ok {
+		t.Error("ctx should have no deadline when cfg.Timeout == 0")
+	}
+}
+
+// dummyBuf is a minimal io.Writer that discards everything — output.Writer
+// only needs somewhere to send bytes, and the tests above only care about
+// the ctx side of interruptable, not the renderer.
+type dummyBuf struct{}
+
+func (dummyBuf) Write(p []byte) (int, error) { return len(p), nil }

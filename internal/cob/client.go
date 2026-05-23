@@ -51,6 +51,19 @@ type Client struct {
 	actor     Actor
 }
 
+// debugClientLogMode is what --debug enables on the AWS SDK: response
+// status lines and retry attempts to stderr — enough to diagnose
+// region / credential / throttling failures.
+//
+// Request logging (aws.LogRequest / aws.LogRequestWithBody) is
+// deliberately excluded: a signed AWS request carries a live
+// X-Amz-Security-Token header (SSO, instance role, ECS task role), and
+// --debug output routinely lands in CI logs. Pinned with a unit test
+// (TestDebugLogModeExcludesRequests) so a careless refactor that flips
+// LogRequest back on fails the build instead of silently leaking
+// credentials.
+const debugClientLogMode = aws.LogResponse | aws.LogRetries
+
 // ClientOptions configures how the AWS client is created.
 type ClientOptions struct {
 	Profile string
@@ -72,12 +85,7 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 		cfgOpts = append(cfgOpts, config.WithRegion(opts.Region))
 	}
 	if opts.Debug {
-		// Response status lines and retry attempts to stderr — enough to
-		// diagnose region/credential/throttling failures. Request logging is
-		// deliberately excluded: a signed AWS request carries a live
-		// X-Amz-Security-Token header (SSO / instance / ECS-role
-		// credentials), and --debug output routinely lands in CI logs.
-		cfgOpts = append(cfgOpts, config.WithClientLogMode(aws.LogResponse|aws.LogRetries))
+		cfgOpts = append(cfgOpts, config.WithClientLogMode(debugClientLogMode))
 	}
 
 	cfg, err := config.LoadDefaultConfig(ctx, cfgOpts...)

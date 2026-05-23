@@ -53,7 +53,7 @@ func newPullCmd(cfg *Config) *cobra.Command {
 func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
 	out := newWriter(cfg)
 	defer out.Close()
-	ctx, cancel := interruptable(ctx, out)
+	ctx, cancel := interruptable(ctx, cfg, out)
 	defer cancel()
 
 	client, err := dialClient(ctx, cfg)

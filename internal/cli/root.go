@@ -31,6 +31,7 @@ func NewRootCmd(build BuildInfo) *cobra.Command {
 	root.PersistentFlags().BoolVar(&cfg.Debug, "debug", false, "Log AWS API responses/retries to stderr")
 	root.PersistentFlags().StringVar(&cfg.TmpDir, "tmpdir", "", "Directory for streaming spill files (default: $TMPDIR)")
 	root.PersistentFlags().BoolVar(&cfg.NoTUI, "no-tui", false, "Force line-stream output even on a TTY (also: COB_TUI=0)")
+	root.PersistentFlags().DurationVar(&cfg.Timeout, "timeout", 0, "Deadline for long-running ops (pull/publish/promote/diff); e.g. 30m. 0 = no deadline (also: COB_TIMEOUT)")
 
 	root.AddCommand(
 		newPublishCmd(cfg),

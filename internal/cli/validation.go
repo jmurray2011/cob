@@ -41,19 +41,34 @@ func validateManifest(m *manifest.Manifest, version string) error {
 			errs = append(errs, fmt.Sprintf("%s: %s", s.Name, err))
 			continue
 		}
-		if asset == cob.ProvenanceFile {
-			errs = append(errs, fmt.Sprintf("%s: uses the reserved asset name %q (cob writes that as the publish finalizer)", s.Name, asset))
+		if err := registerAssetName(byAsset, asset, s.Name); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %s", s.Name, err))
 			continue
 		}
-		if prev, dup := byAsset[asset]; dup {
-			errs = append(errs, fmt.Sprintf("%s: collides with source %q — both publish as asset %q", s.Name, prev, asset))
-			continue
-		}
-		byAsset[asset] = s.Name
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("manifest validation failed:\n  - %s", strings.Join(errs, "\n  - "))
 	}
+	return nil
+}
+
+// registerAssetName performs the two asset-name checks both buildSources
+// and validateManifest need: reject the reserved cob-provenance.json name
+// (cob writes that as the publish finalizer) and reject any collision
+// with a name already recorded in byAsset. On success, records
+// (name → srcKey) so subsequent checks see the new entry.
+//
+// Callers prepend their own per-source label (manifest key) when wrapping
+// the returned error so the two messages stay where the user expects.
+// One helper, one place to evolve the rule.
+func registerAssetName(byAsset map[string]string, name, srcKey string) error {
+	if name == cob.ProvenanceFile {
+		return fmt.Errorf("uses the reserved asset name %q (cob writes that as the publish finalizer)", name)
+	}
+	if prev, dup := byAsset[name]; dup {
+		return fmt.Errorf("collides with source %q — both publish as asset %q", prev, name)
+	}
+	byAsset[name] = srcKey
 	return nil
 }
 

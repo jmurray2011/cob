@@ -13,17 +13,29 @@ import (
 	"github.com/jmurray2011/cob/internal/output"
 )
 
-// interruptable wraps ctx with a cancel func, registers that cancel as
-// the writer's Ctrl-C handler, and returns the new ctx. The caller
-// keeps the cancel func via defer cancel() (or just relies on the
-// runXxx returning to clean up via the parent ctx). Used by every
-// command that engages the live renderer's asset stream so a TTY
-// Ctrl-C reaches in-flight AWS calls — bubbletea's raw mode otherwise
-// swallows the signal and main's signal.NotifyContext never fires.
-func interruptable(ctx context.Context, out *output.Writer) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(ctx)
-	out.SetInterrupt(cancel)
-	return ctx, cancel
+// interruptable wraps ctx with cancellation hooks for every long-running
+// operation: a TTY Ctrl-C rescue (bubbletea's raw mode otherwise swallows
+// the signal — main's signal.NotifyContext can't see it while the TUI is
+// up) and, when cfg.Timeout > 0, a deadline. The returned cancel fires
+// both, in reverse order. Caller defers it.
+func interruptable(ctx context.Context, cfg *Config, out *output.Writer) (context.Context, context.CancelFunc) {
+	var cancels []context.CancelFunc
+	if cfg != nil && cfg.Timeout > 0 {
+		var tcancel context.CancelFunc
+		ctx, tcancel = context.WithTimeout(ctx, cfg.Timeout)
+		cancels = append(cancels, tcancel)
+	}
+	ctx, icancel := context.WithCancel(ctx)
+	cancels = append(cancels, icancel)
+	out.SetInterrupt(icancel)
+	return ctx, func() {
+		// Fire in reverse: cancel the user-rescue first so the SetInterrupt
+		// hook is the most-recent observer to see "we're done", then collapse
+		// the timeout's timer goroutine.
+		for i := len(cancels) - 1; i >= 0; i-- {
+			cancels[i]()
+		}
+	}
 }
 
 // fillClientMeta records the executing principal and region onto a
@@ -54,9 +66,20 @@ func resolveVersion(flag string) (string, error) {
 	return "", fmt.Errorf("version is required: use --version or set COB_VERSION")
 }
 
-// isManifestPath returns true if the arg looks like a file path (ends in .yaml/.yml).
+// isManifestPath returns true if the arg looks like a manifest file path.
+// Suffix-only detection — a coordinate-shaped string that happens to end
+// in .yaml (e.g. a package literally named "config.yaml") would be
+// misclassified, but that ambiguity is rare enough in practice that we
+// surface it via the routed-error path rather than adding a stat probe.
+// filepath.Ext over HasSuffix gets us the right behavior on weird inputs
+// (a trailing dot, ".YAML" in case-sensitive land, dotfiles like ".yaml"
+// at the path root) without growing the rule.
 func isManifestPath(arg string) bool {
-	return strings.HasSuffix(arg, ".yaml") || strings.HasSuffix(arg, ".yml")
+	switch filepath.Ext(arg) {
+	case ".yaml", ".yml":
+		return true
+	}
+	return false
 }
 
 // NamedSource pairs an asset name with its source, preserving manifest order.
@@ -79,13 +102,9 @@ func buildSources(m *manifest.Manifest, client *cob.Client) ([]NamedSource, erro
 		// the manifest key — two sources with the same basename would
 		// collide (one silently clobbering the other).
 		if name := src.Filename(); name != "" {
-			if name == cob.ProvenanceFile {
-				return nil, fmt.Errorf("source %q uses the reserved asset name %q (cob writes that as the publish finalizer)", entry.Name, name)
+			if err := registerAssetName(byAsset, name, entry.Name); err != nil {
+				return nil, fmt.Errorf("source %q: %w", entry.Name, err)
 			}
-			if prev, dup := byAsset[name]; dup {
-				return nil, fmt.Errorf("sources %q and %q both publish as asset %q", prev, entry.Name, name)
-			}
-			byAsset[name] = entry.Name
 		}
 		sources = append(sources, NamedSource{Name: entry.Name, Source: src})
 	}
