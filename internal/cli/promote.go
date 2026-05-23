@@ -213,7 +213,7 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 		todos = append(todos, i)
 	}
 
-	promoteOne := func(i int) (*cob.AssetResult, error) {
+	promoteOne := func(ctx context.Context, i int) (*cob.AssetResult, error) {
 		name := realNames[i]
 		out.AssetStart(name, "", 0)
 		ar, err := promoter.PromoteAsset(ctx, coords, srcRepo, toRepo, name, true)
@@ -231,7 +231,7 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 	ok := true
 	if len(todos) > 0 {
 		first := todos[0]
-		ar, err := promoteOne(first)
+		ar, err := promoteOne(ctx, first)
 		results[first] = ar
 		if err != nil {
 			ok = false
@@ -241,8 +241,8 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 
 	if ok && len(todos) > 0 {
 		concurrency = resolveConcurrency(concurrency, out)
-		rest, restOk := runConcurrent(len(todos), concurrency, func(j int) (*cob.AssetResult, error) {
-			return promoteOne(todos[j])
+		rest, restOk := runConcurrent(ctx, len(todos), concurrency, func(ctx context.Context, j int) (*cob.AssetResult, error) {
+			return promoteOne(ctx, todos[j])
 		})
 		for j, r := range rest {
 			results[todos[j]] = r

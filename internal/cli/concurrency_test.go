@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"sync/atomic"
@@ -13,7 +14,7 @@ import (
 func TestRunConcurrentEnforcesCeiling(t *testing.T) {
 	const n = 200
 	var inFlight, peak int32
-	runConcurrent(n, 5000, func(int) (*cob.AssetResult, error) {
+	runConcurrent(context.Background(), n, 5000, func(context.Context, int) (*cob.AssetResult, error) {
 		cur := atomic.AddInt32(&inFlight, 1)
 		for {
 			p := atomic.LoadInt32(&peak)
@@ -41,7 +42,7 @@ func TestClampConcurrency(t *testing.T) {
 func TestRunConcurrentOrderAndCompleteness(t *testing.T) {
 	const n = 25
 	var calls int32
-	results, ok := runConcurrent(n, 6, func(i int) (*cob.AssetResult, error) {
+	results, ok := runConcurrent(context.Background(), n, 6, func(_ context.Context, i int) (*cob.AssetResult, error) {
 		atomic.AddInt32(&calls, 1)
 		return &cob.AssetResult{Name: strconv.Itoa(i)}, nil
 	})
@@ -60,7 +61,7 @@ func TestRunConcurrentOrderAndCompleteness(t *testing.T) {
 
 func TestRunConcurrentSequentialStopsAtFirstError(t *testing.T) {
 	var calls int32
-	results, ok := runConcurrent(6, 1, func(i int) (*cob.AssetResult, error) {
+	results, ok := runConcurrent(context.Background(), 6, 1, func(_ context.Context, i int) (*cob.AssetResult, error) {
 		atomic.AddInt32(&calls, 1)
 		if i == 3 {
 			return &cob.AssetResult{}, errors.New("boom")
@@ -79,7 +80,7 @@ func TestRunConcurrentSequentialStopsAtFirstError(t *testing.T) {
 }
 
 func TestRunConcurrentParallelFailureReportsNotOK(t *testing.T) {
-	_, ok := runConcurrent(20, 8, func(i int) (*cob.AssetResult, error) {
+	_, ok := runConcurrent(context.Background(), 20, 8, func(_ context.Context, i int) (*cob.AssetResult, error) {
 		if i == 5 {
 			return &cob.AssetResult{}, errors.New("boom")
 		}
@@ -87,5 +88,60 @@ func TestRunConcurrentParallelFailureReportsNotOK(t *testing.T) {
 	})
 	if ok {
 		t.Fatal("a failed task must make the whole run not-ok")
+	}
+}
+
+// TestRunConcurrentFirstErrorCancelsInFlightTasks pins the ctx-aware
+// behavior added in C8: when one task errors, the wrapped ctx is
+// canceled so peers that respect ctx (the AWS SDK is the production
+// case; here, a select-on-ctx.Done sleep) shortcut instead of running
+// the answer-discarded full duration.
+func TestRunConcurrentFirstErrorCancelsInFlightTasks(t *testing.T) {
+	var aborted int32
+	// 8 tasks; task 0 fails fast. The other 7 sleep up to a second,
+	// returning early when ctx is canceled. Without the new cancel
+	// signal, they'd each run the full sleep — we'd see the test take
+	// ~1s wall time. With cancellation wired, they all bail in
+	// milliseconds and aborted should land at 7.
+	start := time.Now()
+	_, ok := runConcurrent(context.Background(), 8, 8, func(ctx context.Context, i int) (*cob.AssetResult, error) {
+		if i == 0 {
+			return &cob.AssetResult{}, errors.New("first to fail")
+		}
+		select {
+		case <-ctx.Done():
+			atomic.AddInt32(&aborted, 1)
+			return &cob.AssetResult{}, ctx.Err()
+		case <-time.After(time.Second):
+			return &cob.AssetResult{Name: strconv.Itoa(i)}, nil
+		}
+	})
+	if ok {
+		t.Fatal("first-error run must be not-ok")
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("in-flight peers did not honor first-error cancel (elapsed %v) — runConcurrent's cancel signal isn't wiring through", elapsed)
+	}
+	if aborted < 1 {
+		t.Errorf("expected at least one peer to observe ctx.Done() and abort; aborted=%d", aborted)
+	}
+}
+
+// TestRunConcurrentRespectsAlreadyCanceledCtx: a ctx canceled before
+// runConcurrent starts must not schedule any work.
+func TestRunConcurrentRespectsAlreadyCanceledCtx(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var calls int32
+	_, ok := runConcurrent(ctx, 10, 4, func(context.Context, int) (*cob.AssetResult, error) {
+		atomic.AddInt32(&calls, 1)
+		return &cob.AssetResult{}, nil
+	})
+	if ok {
+		t.Error("ok should be false when ctx is canceled before any task runs")
+	}
+	if calls > 1 {
+		// 0 or 1 is acceptable — the very first iteration might race the cancel.
+		t.Errorf("scheduled %d tasks against a canceled ctx; expected at most 1 (the loop's first check)", calls)
 	}
 }

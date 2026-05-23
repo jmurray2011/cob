@@ -198,7 +198,7 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 		todos = append(todos, i)
 	}
 
-	uploadOne := func(i int) (*cob.AssetResult, error) {
+	uploadOne := func(ctx context.Context, i int) (*cob.AssetResult, error) {
 		ns := sources[i]
 		out.AssetStart(ns.Name, ns.Source.URI(), 0)
 		ar, err := publisher.PublishAsset(ctx, coords, ns.Name, ns.Source, true)
@@ -216,7 +216,7 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 	ok := true
 	if len(todos) > 0 {
 		first := todos[0]
-		ar, err := uploadOne(first)
+		ar, err := uploadOne(ctx, first)
 		results[first] = ar
 		if err != nil {
 			ok = false
@@ -226,8 +226,8 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 
 	if ok && len(todos) > 0 {
 		concurrency = resolveConcurrency(concurrency, out)
-		rest, restOk := runConcurrent(len(todos), concurrency, func(j int) (*cob.AssetResult, error) {
-			return uploadOne(todos[j])
+		rest, restOk := runConcurrent(ctx, len(todos), concurrency, func(ctx context.Context, j int) (*cob.AssetResult, error) {
+			return uploadOne(ctx, todos[j])
 		})
 		for j, r := range rest {
 			results[todos[j]] = r
