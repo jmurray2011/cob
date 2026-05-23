@@ -574,9 +574,15 @@ A few things to know about scope:
 
 Most commands support `--json` for machine-readable output. JSON goes to stdout, errors always go to stderr. A JSON object is emitted even on early failures (auth, config) so CI pipelines can reliably parse the output.
 
-`publish`, `pull`, `promote` emit a `CommandResult` object with `command`, `package`, `repository`, `assets`, `status`, etc. Any warnings raised during the command are collected into its `warnings` array -- warnings also print to stderr, but `--json` consumers should read this field.
+`publish`, `pull`, `promote`, `verify`, `diff`, `rm` emit a `CommandResult` object with `command`, `package`, `repository`, `region`, `actor`, `assets`, `status`, etc. `region` and `actor` (STS account/ARN/user_id) identify which account/role and region executed the operation -- audit pipelines no longer need to scan per-asset Origin records or the provenance chain to attribute a run. Any warnings raised during the command are collected into its `warnings` array -- warnings also print to stderr, but `--json` consumers should read this field.
 
 `ls` emits an array of the relevant type: packages, versions, assets, or promotion statuses.
+
+`ls -R` emits a flat array of strings (one fully-qualified coordinate per leaf), for shell pipelines.
+
+`tree` emits a flat array of typed records -- one per walked node, in walk order, no nesting. Each record carries `path`, `kind` (`domain`|`repo`|`package`|`version`|`asset`), the matching coordinate components, and a typed payload (`repo_count`, `package_count`, `version_count`/`latest_version`, `asset_count`/`published`, `size`/`sha256`) -- jq filters on `select(.kind == "package" and .version_count > 5)` work directly, without recursion or parsing stringy metadata.
+
+`log` emits the full `Provenance` struct: schema, package, `chain[]` of events (publish/promote), `assets[]` with per-asset SHA + `origin` (recursing into `ca://` upstreams).
 
 `resolve` emits its own minimal schema designed for scripting:
 

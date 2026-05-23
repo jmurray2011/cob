@@ -112,7 +112,7 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 
 	if dryRun {
 		out.Header("Publishing %s/%s@%s -> %s/%s (dry run)", m.Namespace, m.Package, version, m.Domain, m.Repository)
-		return runDryRun(ctx, coords, sources, out)
+		return runDryRun(ctx, coords, sources, client, out)
 	}
 
 	present, code, gerr := gatePublish(ctx, registry, coords, status, exists, resume, force)
@@ -160,6 +160,7 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 		Repository: fmt.Sprintf("%s/%s", m.Domain, m.Repository),
 		Status:     "ok",
 	}
+	fillClientMeta(ctx, client, result)
 
 	// Real sources publish concurrently as Unfinished; the provenance
 	// document is published last with unfinished=false, which both records
@@ -275,13 +276,14 @@ func firstResultError(results []*cob.AssetResult) string {
 	return "asset transfer failed"
 }
 
-func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []NamedSource, out *output.Writer) error {
+func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []NamedSource, client *cob.Client, out *output.Writer) error {
 	result := &cob.CommandResult{
 		Command:    "publish",
 		Package:    fmt.Sprintf("%s/%s@%s", coords.Namespace, coords.Package, coords.Version),
 		Repository: fmt.Sprintf("%s/%s", coords.Domain, coords.Repository),
 		Status:     "ok",
 	}
+	fillClientMeta(ctx, client, result)
 
 	var failures int
 	for _, ns := range sources {

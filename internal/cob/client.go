@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -42,6 +43,12 @@ type Client struct {
 	// TmpDir is where publish/promote spill assets while streaming ("" = the
 	// OS default temp dir). Point it at real disk if $TMPDIR is RAM-backed.
 	TmpDir string
+
+	// actorOnce + actor cache the STS caller identity so commands that
+	// fetch it more than once per run (provenance write + CommandResult
+	// audit field) pay for one round-trip, not two.
+	actorOnce sync.Once
+	actor     Actor
 }
 
 // ClientOptions configures how the AWS client is created.
@@ -93,20 +100,25 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 	}, nil
 }
 
-// CallerIdentity returns the AWS principal recorded in provenance. It is
-// best-effort: identity is evidence, not correctness, so a failure yields a
-// zero Actor rather than blocking a publish/promote.
+// CallerIdentity returns the AWS principal recorded in provenance and on
+// CommandResult.Actor. It is best-effort: identity is evidence, not
+// correctness, so a failure yields a zero Actor rather than blocking a
+// publish/promote. Cached for the life of the Client — once per process
+// — so repeated calls don't each pay an STS round-trip.
 func (c *Client) CallerIdentity(ctx context.Context) Actor {
-	if c.STS == nil {
-		return Actor{}
-	}
-	out, err := c.STS.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
-	if err != nil {
-		return Actor{}
-	}
-	return Actor{
-		Account: aws.ToString(out.Account),
-		ARN:     aws.ToString(out.Arn),
-		UserID:  aws.ToString(out.UserId),
-	}
+	c.actorOnce.Do(func() {
+		if c.STS == nil {
+			return
+		}
+		out, err := c.STS.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+		if err != nil {
+			return
+		}
+		c.actor = Actor{
+			Account: aws.ToString(out.Account),
+			ARN:     aws.ToString(out.Arn),
+			UserID:  aws.ToString(out.UserId),
+		}
+	})
+	return c.actor
 }

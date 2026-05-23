@@ -112,6 +112,7 @@ func runDiffVersions(ctx context.Context, cfg *Config, leftTarget, rightTarget s
 		Repository: fmt.Sprintf("%s/%s vs %s/%s", left.Domain, left.Repository, right.Domain, right.Repository),
 		Status:     "ok",
 	}
+	fillClientMeta(ctx, client, result)
 
 	var added, removed, changed, same int
 	for _, c := range cmps {
@@ -275,6 +276,7 @@ func runDiff(ctx context.Context, cfg *Config, manifestPath, versionFlag string,
 		Repository: fmt.Sprintf("%s/%s", m.Domain, m.Repository),
 		Status:     "ok",
 	}
+	fillClientMeta(ctx, client, result)
 
 	var added, removed, changed, same, unknown, errs int
 	for _, c := range cmps {

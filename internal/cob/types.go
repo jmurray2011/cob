@@ -32,10 +32,22 @@ func (r *AssetResult) SetError(err error) {
 }
 
 // CommandResult is the top-level JSON output for any command.
+//
+// Region and Actor are populated for every command that successfully
+// dialed an AWS client — audit pipelines need to know which account/role
+// executed the operation and in which region without grepping the chain
+// or scanning per-asset Origin records. Both are best-effort: a Region
+// might be unknown if the SDK couldn't resolve one; an Actor with empty
+// ARN/UserID indicates STS GetCallerIdentity failed and is rendered as
+// "unknown" by callers. The two are also recorded into provenance for
+// publish/promote — this exposes the same information for read commands
+// (verify/diff/ls/etc.) where there's no chain event to record.
 type CommandResult struct {
 	Command    string        `json:"command"`
 	Package    string        `json:"package"`
 	Repository string        `json:"repository"`
+	Region     string        `json:"region,omitempty"`
+	Actor      *Actor        `json:"actor,omitempty"`
 	Assets     []AssetResult `json:"assets"`
 	TotalSize  int64         `json:"total_size"`
 	DurationMs int64         `json:"duration_ms"`

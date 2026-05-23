@@ -127,7 +127,7 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 	// Dry-run before the conflict/resume gate: a preview mutates nothing and
 	// is most useful precisely when the destination version already exists.
 	if dryRun {
-		return runPromoteDryRun(ctx, cob.NewPromoter(client), coords, srcRepo, toRepo, exists, out)
+		return runPromoteDryRun(ctx, client, cob.NewPromoter(client), coords, srcRepo, toRepo, exists, out)
 	}
 
 	present, code, gerr := gatePromote(ctx, registry, destCoords, toRepo, status, exists, resume, force)
@@ -177,6 +177,7 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 		Repository: fmt.Sprintf("%s -> %s", srcRepo, toRepo),
 		Status:     "ok",
 	}
+	fillClientMeta(ctx, client, cmdResult)
 
 	// The provenance asset is not copied verbatim — it is read, a promote
 	// link is appended, and the updated document is written to the
@@ -290,7 +291,7 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 // runPromoteDryRun lists what a promote would copy and exits without
 // mutating anything. The destination conflict is already checked, so
 // destExists here means the real run would proceed under --force.
-func runPromoteDryRun(ctx context.Context, promoter *cob.Promoter, coords *cob.PackageCoordinates,
+func runPromoteDryRun(ctx context.Context, client *cob.Client, promoter *cob.Promoter, coords *cob.PackageCoordinates,
 	srcRepo, toRepo string, destExists bool, out *output.Writer) error {
 
 	out.Header("Promote (dry run) %s/%s@%s: %s -> %s",
@@ -307,6 +308,7 @@ func runPromoteDryRun(ctx context.Context, promoter *cob.Promoter, coords *cob.P
 		Repository: fmt.Sprintf("%s -> %s", srcRepo, toRepo),
 		Status:     "ok",
 	}
+	fillClientMeta(ctx, client, result)
 	for _, name := range assetNames {
 		if name == cob.ProvenanceFile {
 			continue // regenerated at promote time, not copied verbatim

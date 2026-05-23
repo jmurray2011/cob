@@ -143,6 +143,7 @@ func runRm(ctx context.Context, cfg *Config, target string, force, everywhere, y
 		Repository: fmt.Sprintf("%s/%s", coords.Domain, coords.Repository),
 		Status:     "ok",
 	}
+	fillClientMeta(ctx, client, result)
 	out.Summary("Deleted %s/%s@%s from %s/%s",
 		coords.Namespace, coords.Package, coords.Version,
 		coords.Domain, coords.Repository)

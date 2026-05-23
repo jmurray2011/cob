@@ -13,6 +13,23 @@ import (
 	"github.com/jmurray2011/cob/internal/output"
 )
 
+// fillClientMeta records the executing principal and region onto a
+// CommandResult so audit pipelines can answer "which account/role ran
+// this, in which region?" without grepping per-asset Origin or the
+// provenance chain. Called right before out.CommandResult(result) on
+// every command that has a live cob.Client; safe to call multiple times
+// (CallerIdentity is cached on the Client).
+func fillClientMeta(ctx context.Context, client *cob.Client, result *cob.CommandResult) {
+	if client == nil || result == nil {
+		return
+	}
+	result.Region = client.Region
+	a := client.CallerIdentity(ctx)
+	if a.ARN != "" || a.UserID != "" || a.Account != "" {
+		result.Actor = &a
+	}
+}
+
 // resolveVersion returns the version from the flag, env var, or an error.
 func resolveVersion(flag string) (string, error) {
 	if flag != "" {

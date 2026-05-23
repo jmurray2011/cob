@@ -109,6 +109,7 @@ func runVerifyManifest(ctx context.Context, cfg *Config, manifestPath, versionFl
 		Repository: fmt.Sprintf("%s/%s", m.Domain, m.Repository),
 		Status:     "ok",
 	}
+	fillClientMeta(ctx, client, result)
 
 	var failures, opErrors, unverified, extra int
 	for _, c := range cmps {
@@ -239,6 +240,7 @@ func runVerifyCoords(ctx context.Context, cfg *Config, target, versionFlag strin
 		Repository: fmt.Sprintf("%s/%s", coords.Domain, coords.Repository),
 		Status:     "ok",
 	}
+	fillClientMeta(ctx, client, result)
 
 	var failures int
 	for _, e := range prov.Assets {

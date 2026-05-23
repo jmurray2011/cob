@@ -141,6 +141,7 @@ func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, 
 		Repository: fmt.Sprintf("%s/%s", coords.Domain, coords.Repository),
 		Status:     "ok",
 	}
+	fillClientMeta(ctx, client, result)
 
 	meter := newProgressMeter(out, totalAssetSize(assets))
 	puller.Progress = meter.add
