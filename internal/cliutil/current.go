@@ -269,6 +269,43 @@ func PackageOverrideMissingErr(cmd string) error {
 	)
 }
 
+// mergeNsPkgShorthand handles the "vtdocs/vtdocs-installer@6.1.3"
+// shorthand — a positional with exactly 2 path segments (plus optional
+// @version), merged onto the current package's dom/repo. Returns the
+// merged coords + true when the merge applies, ("", false) otherwise.
+//
+// The two checks that gate the merge:
+//   - positional has exactly 2 segments before any @ — anything more
+//     is a full or near-full coord that should pass through verbatim
+//   - a current package exists with at least 4 segments (dom/repo/ns/pkg)
+//     so we have a dom/repo to graft onto
+func mergeNsPkgShorthand(arg string, cfg *Config, out *output.Writer) (string, bool) {
+	// Split off @version (if any) for shape-checking.
+	pathPart, versionPart := arg, ""
+	if at := strings.LastIndex(arg, "@"); at >= 0 {
+		pathPart, versionPart = arg[:at], arg[at:]
+	}
+	if strings.Count(pathPart, "/") != 1 || strings.HasPrefix(pathPart, "/") || strings.HasSuffix(pathPart, "/") {
+		return "", false
+	}
+	coords, src, err := CurrentPackage(cfg)
+	if err != nil || coords == "" {
+		return "", false
+	}
+	// Need at least dom/repo from the current package to graft onto.
+	cur := coords
+	if at := strings.LastIndex(cur, "@"); at >= 0 {
+		cur = cur[:at]
+	}
+	curSegs := strings.Split(cur, "/")
+	if len(curSegs) < 2 {
+		return "", false
+	}
+	merged := curSegs[0] + "/" + curSegs[1] + "/" + pathPart + versionPart
+	out.Notice("Using %s (from %s + %s override)", merged, src, arg)
+	return merged, true
+}
+
 // ResolveTarget returns the coordinate target for a read-only command.
 // If positional was given, that wins. Otherwise it falls back to the
 // current package (--package > COB_PACKAGE_COORDS > .cob/current >
@@ -315,7 +352,21 @@ func ResolveTarget(cfg *Config, out *output.Writer, args []string, command strin
 		out.Notice("Using %s (from %s + %s override)", merged, src, args[0])
 		return merged, nil
 	}
+	// kubectl-style shorthand: if the positional has exactly 2 segments
+	// (namespace/package, possibly +@version) AND a current package is
+	// set, merge the positional's ns/pkg onto the current's dom/repo.
+	// `cob pull vtdocs/vtdocs-installer@6.1.3` in a session where
+	// `cob use vt-dev/installer-artifacts/anypkg` is active becomes
+	// `vt-dev/installer-artifacts/vtdocs/vtdocs-installer@6.1.3` —
+	// matches the operator's intent of "different package, same repo
+	// I'm working in." Unambiguous because the consumers of
+	// ResolveTarget (log/diff/pull/manifest/resolve) all require a
+	// package-level coord; 2-segment dom/repo input was always an
+	// error for them.
 	if len(args) > 0 {
+		if merged, ok := mergeNsPkgShorthand(args[0], cfg, out); ok {
+			return merged, nil
+		}
 		return args[0], nil
 	}
 	coords, src, err := CurrentPackage(cfg)

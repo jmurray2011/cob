@@ -389,6 +389,92 @@ func TestResolveTargetFullPositionalWinsOverCurrent(t *testing.T) {
 	})
 }
 
+func TestResolveTargetNsPkgShorthandMergesWithCurrent(t *testing.T) {
+	// The reported case: `cob pull vtdocs/vtdocs-installer@6.1.3`
+	// against a session where `cob use vt-dev/installer-artifacts/anypkg`
+	// is active. The shorthand should merge so the operator gets
+	// "vt-dev/installer-artifacts/vtdocs/vtdocs-installer@6.1.3"
+	// instead of a ParseCoordinates-only result that drops dom/repo.
+	dir := t.TempDir()
+	withCwd(t, dir, func() {
+		withHomeRedirect(t)
+		_, _ = SetCurrentPackage("vt-dev/installer-artifacts/vtwriter/vtwriter-installer", false)
+
+		var stdout, stderr bytes.Buffer
+		w := output.NewWithWriters(&stdout, &stderr, output.Mode{})
+		got, err := ResolveTarget(&Config{}, w, []string{"vtdocs/vtdocs-installer@6.1.3"}, "pull")
+		if err != nil {
+			t.Fatalf("ResolveTarget: %v", err)
+		}
+		want := "vt-dev/installer-artifacts/vtdocs/vtdocs-installer@6.1.3"
+		if got != want {
+			t.Errorf("shorthand merge = %q, want %q", got, want)
+		}
+		if !bytes.Contains(stderr.Bytes(), []byte(want)) {
+			t.Errorf("Notice should show the merged coords %q; stderr was %q", want, stderr.String())
+		}
+	})
+}
+
+func TestResolveTargetNsPkgShorthandWithoutVersion(t *testing.T) {
+	// Two-segment + no version: still merges. Read-only commands that
+	// require a version (log/pull) will still error downstream, but the
+	// shape merge happens first so the operator's intent is honored.
+	dir := t.TempDir()
+	withCwd(t, dir, func() {
+		withHomeRedirect(t)
+		_, _ = SetCurrentPackage("vt-dev/installer-artifacts/x/y@1", false)
+
+		var stdout, stderr bytes.Buffer
+		w := output.NewWithWriters(&stdout, &stderr, output.Mode{})
+		got, _ := ResolveTarget(&Config{}, w, []string{"vtdocs/vtdocs-installer"}, "pull")
+		if got != "vt-dev/installer-artifacts/vtdocs/vtdocs-installer" {
+			t.Errorf("got %q, want vt-dev/installer-artifacts/vtdocs/vtdocs-installer", got)
+		}
+	})
+}
+
+func TestResolveTargetShorthandWithoutCurrentPassesThrough(t *testing.T) {
+	// Without a current package, the 2-segment positional passes
+	// through verbatim — ParseCoordinates downstream then interprets it
+	// as dom/repo and the consuming command errors out. The shorthand
+	// merge is opt-in via `cob use`; ResolveTarget must not invent
+	// coords when nothing's set.
+	withCwd(t, t.TempDir(), func() {
+		withHomeRedirect(t)
+		var stdout, stderr bytes.Buffer
+		w := output.NewWithWriters(&stdout, &stderr, output.Mode{})
+		got, _ := ResolveTarget(&Config{}, w, []string{"vtdocs/vtdocs-installer@6.1.3"}, "pull")
+		if got != "vtdocs/vtdocs-installer@6.1.3" {
+			t.Errorf("without current package, 2-segment positional must pass through verbatim; got %q", got)
+		}
+		if stderr.Len() != 0 {
+			t.Errorf("no Notice should fire when nothing was merged; stderr was %q", stderr.String())
+		}
+	})
+}
+
+func TestResolveTargetFullPositionalSkipsShorthand(t *testing.T) {
+	// A positional with 4 segments is a full coord — it must pass
+	// through verbatim even when a current package is set, never
+	// trigger the merge.
+	dir := t.TempDir()
+	withCwd(t, dir, func() {
+		withHomeRedirect(t)
+		_, _ = SetCurrentPackage("a/b/c/d@1", false)
+
+		var stdout, stderr bytes.Buffer
+		w := output.NewWithWriters(&stdout, &stderr, output.Mode{})
+		got, _ := ResolveTarget(&Config{}, w, []string{"x/y/z/w@2"}, "pull")
+		if got != "x/y/z/w@2" {
+			t.Errorf("full 4-segment positional must pass through verbatim; got %q", got)
+		}
+		if stderr.Len() != 0 {
+			t.Errorf("no Notice on full positional; stderr was %q", stderr.String())
+		}
+	})
+}
+
 func TestReadCoordsFileRejectsMultiline(t *testing.T) {
 	// A corrupt file with embedded newlines is treated as absent (false),
 	// not silently used. Protects against an operator's editor that added

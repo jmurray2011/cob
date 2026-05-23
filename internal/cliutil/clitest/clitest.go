@@ -117,6 +117,27 @@ func UseFake(t *testing.T, ca cob.CodeArtifactAPI) (cfg *cliutil.Config, stdout,
 	stdout, stderr = &bytes.Buffer{}, &bytes.Buffer{}
 	cfg = &cliutil.Config{}
 
+	// Isolate cwd and HOME so a developer's local .cob/current (cwd or
+	// home global) can't leak into test runs via ResolveTarget's
+	// walk-up. Without this, every cli/* test running from inside the
+	// repo would inherit whatever pointer was set by an earlier smoke
+	// test — turning "no args + no current package" assertions into
+	// flaky "got merged with whatever happens to be on disk" failures.
+	// Each call to UseFake gets a fresh tmpdir-as-cwd and tmpdir-as-HOME.
+	prevCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	isoCwd := t.TempDir()
+	if err := os.Chdir(isoCwd); err != nil {
+		t.Fatalf("chdir %s: %v", isoCwd, err)
+	}
+	isoHome := t.TempDir()
+	prevHome, hadHome := os.LookupEnv("HOME")
+	prevXDG, hadXDG := os.LookupEnv("XDG_CONFIG_HOME")
+	os.Setenv("HOME", isoHome)
+	os.Setenv("XDG_CONFIG_HOME", isoHome)
+
 	origClient, origWriter := cliutil.NewClient, cliutil.NewWriter
 	cliutil.NewClient = func(context.Context, cob.ClientOptions) (*cob.Client, error) {
 		return &cob.Client{CodeArtifact: ca, Region: "us-east-2"}, nil
@@ -135,6 +156,17 @@ func UseFake(t *testing.T, ca cob.CodeArtifactAPI) (cfg *cliutil.Config, stdout,
 
 	t.Cleanup(func() {
 		cliutil.NewClient, cliutil.NewWriter = origClient, origWriter
+		_ = os.Chdir(prevCwd)
+		if hadHome {
+			os.Setenv("HOME", prevHome)
+		} else {
+			os.Unsetenv("HOME")
+		}
+		if hadXDG {
+			os.Setenv("XDG_CONFIG_HOME", prevXDG)
+		} else {
+			os.Unsetenv("XDG_CONFIG_HOME")
+		}
 	})
 	return cfg, stdout, stderr
 }

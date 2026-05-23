@@ -69,13 +69,23 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, outputPa
 	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
 
-	// Empty target → fall back to the current package (sourced from
-	// --package, COB_PACKAGE_COORDS, .cob/current, or
-	// ~/.config/cob/current). Cobra's MaximumNArgs(2) allows the
-	// zero-arg call.
-	if target == "" {
+	// Always route the target through ResolveTarget so the
+	// shorthand merges apply when a current package is set:
+	//   - empty target → CurrentPackage fallback (--package /
+	//     COB_PACKAGE_COORDS / .cob/current / ~/.config/cob/current)
+	//   - "@<version>" alone → version override on current package
+	//   - "ns/pkg" or "ns/pkg@version" → merge onto current's dom/repo
+	//   - full 4-segment coords → passes through verbatim
+	// Without this, `cob pull vtdocs/vtdocs-installer@6.1.3` (a
+	// shorthand against the current package) would short-circuit past
+	// the merge and ship the partial coords straight to AWS.
+	{
+		var rargs []string
+		if target != "" {
+			rargs = []string{target}
+		}
 		var err error
-		target, err = cliutil.ResolveTarget(cfg, out, nil, "pull")
+		target, err = cliutil.ResolveTarget(cfg, out, rargs, "pull")
 		if err != nil {
 			return cliutil.Fail(out, "pull", cob.ExitError, "%s", err)
 		}
@@ -122,6 +132,16 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, outputPa
 		coords, err = manifest.ParseCoordinates(target)
 		if err != nil {
 			return cliutil.Fail(out, "pull", cob.ExitError, "%s", err)
+		}
+		// ParseCoordinates accepts 1- and 2-segment forms (used by
+		// `cob ls dom/repo` to list packages). Pull operates on a
+		// specific package: short-circuit here with a clear error
+		// rather than shipping empty namespace/package fields to
+		// CodeArtifact and getting back a cryptic validation
+		// exception. Mirrors the guard in log/manifest.
+		if coords.Namespace == "" || coords.Package == "" {
+			return cliutil.Fail(out, "pull", cob.ExitError,
+				"full coordinates required (domain/repo/namespace/package[@version]); got %q", target)
 		}
 		if coords.Version == "" {
 			return cliutil.Fail(out, "pull", cob.ExitError, "version is required for pull (use domain/repo/ns/pkg@version or @latest)")

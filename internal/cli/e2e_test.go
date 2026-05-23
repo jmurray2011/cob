@@ -240,25 +240,12 @@ func TestEndToEndPublishPullDiffPromote(t *testing.T) {
 		// read-only commands without retyping. Then confirm destructive
 		// commands (rm here) still demand explicit coordinates.
 		//
-		// We use Chdir into a fresh dir + a redirected HOME so the
-		// .cob/current we set lands in test-local space (not the
-		// developer's actual cwd or home).
-		workdir := t.TempDir()
-		homedir := t.TempDir()
-		prevHome := os.Getenv("HOME")
-		prevXDG := os.Getenv("XDG_CONFIG_HOME")
-		prevCwd, _ := os.Getwd()
-		os.Setenv("HOME", homedir)
-		os.Setenv("XDG_CONFIG_HOME", homedir)
-		if err := os.Chdir(workdir); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			os.Setenv("HOME", prevHome)
-			os.Setenv("XDG_CONFIG_HOME", prevXDG)
-			_ = os.Chdir(prevCwd)
-		})
-
+		// clitest.UseFake isolates cwd + HOME under fresh tmpdirs per
+		// call, so the .cob/current we set below lands in test-local
+		// space (not the developer's actual cwd or home) and so each
+		// subtest's UseFake gets a clean environment that can't see
+		// state another subtest wrote.
+		cfg, stdout, _ := clitest.UseFake(t, ca)
 		// Reuse the version published in subtest #1 (acme/dev/tools/app@1.0.0).
 		coordsStr := "acme/dev/tools/app@1.0.0"
 		path, err := cliutil.SetCurrentPackage(coordsStr, false)
@@ -270,24 +257,26 @@ func TestEndToEndPublishPullDiffPromote(t *testing.T) {
 		}
 
 		// log with NO args should pick up the current package.
-		cfg, stdout, stderr := clitest.UseFake(t, ca)
-		_ = stderr
 		if err := runLog(ctx, cfg, nil, false); err != nil {
 			t.Fatalf("log with no args + current package set: %v", err)
 		}
-		out := stdout.String()
-		if !strings.Contains(out, "chain of evidence:") {
-			t.Errorf("log should have rendered the chain; got %q", out)
+		if !strings.Contains(stdout.String(), "chain of evidence:") {
+			t.Errorf("log should have rendered the chain; got %q", stdout.String())
 		}
 
-		// diff <no args> should self-check the current package.
+		// diff <no args> should self-check the current package. Re-set
+		// the current package in the new UseFake's tmpdir (each call
+		// gets a fresh isolated cwd).
 		cfg2, _, _ := clitest.UseFake(t, ca)
+		_, _ = cliutil.SetCurrentPackage(coordsStr, false)
 		if err := diff.Run(ctx, cfg2, nil, "", false, false, false); err != nil {
 			t.Fatalf("diff with no args + current package set: %v", err)
 		}
 
-		// pull <no args> should pull the current package's assets.
+		// pull <no args> should pull the current package's assets. Same
+		// re-set pattern — every UseFake is a clean cwd.
 		cfg3, _, _ := clitest.UseFake(t, ca)
+		_, _ = cliutil.SetCurrentPackage(coordsStr, false)
 		pulldir := t.TempDir()
 		if err := pull.Run(ctx, cfg3, "", "", pulldir, "", "", 4); err != nil {
 			t.Fatalf("pull with no args + current package set: %v", err)
@@ -296,12 +285,12 @@ func TestEndToEndPublishPullDiffPromote(t *testing.T) {
 			t.Errorf("pull should have downloaded app.bin via current package; %v", err)
 		}
 
-		// Destructive commands must NOT inherit. We don't have a
-		// stand-alone runRm helper here (it's in cli/rm.go and uses its
-		// own dispatch); we exercise the rule indirectly via the cobra
-		// command's Args validator instead.
+		// Destructive commands must NOT inherit. We exercise the rule
+		// via the cobra command's Args validator: `cob rm` with no
+		// coords must fail even when the current package is set.
+		_, _, _ = clitest.UseFake(t, ca) // fresh isolated env for the cobra exec
 		root := NewRootCmd(cliutil.BuildInfo{Version: "test"})
-		root.SetArgs([]string{"rm"}) // no coords
+		root.SetArgs([]string{"rm"})
 		root.SetOut(&strings.Builder{})
 		root.SetErr(&strings.Builder{})
 		if err := root.Execute(); err == nil {
