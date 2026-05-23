@@ -149,20 +149,10 @@ func runVerifyDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath,
 	}
 	fillClientMeta(ctx, client, result)
 
-	// Column width for asset name padding — pick from the actual names
-	// so the alignment looks right for this particular package.
-	nameWidth := 12
-	for _, a := range pub {
-		if a.Name == cob.ProvenanceFile {
-			continue
-		}
-		if n := len(a.Name); n > nameWidth {
-			nameWidth = n
-		}
-	}
-	if nameWidth > 40 {
-		nameWidth = 40 // hard cap to keep rows from getting absurd
-	}
+	nameWidth := pickNameColumnWidth(extractAssetNames(pub))
+	termWidth := output.TerminalWidth()
+	pubLabel := fmt.Sprintf("%s/%s/%s/%s@%s",
+		coords.Domain, coords.Repository, coords.Namespace, coords.Package, coords.Version)
 
 	var matched, mismatch, missing, opErrors int
 	for _, a := range pub {
@@ -179,22 +169,25 @@ func runVerifyDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath,
 			ar.Method = "missing-local"
 			ar.Size = a.Size
 			ar.SHA256 = a.SHA256
-			out.Plain("  ✗ %s  missing locally (published: %s)",
-				padRight(a.Name, nameWidth), output.FormatSize(a.Size))
+			renderVerifySingleFail(out, a.Name, "missing locally", nameWidth,
+				[]verifyDetail{
+					{"published", fmt.Sprintf("%s   %s", rightPadSize(a.Size, 10), pubLabel)},
+					{"sha256", a.SHA256},
+				}, termWidth)
 			result.Assets = append(result.Assets, ar)
 			continue
 		case statErr != nil:
 			opErrors++
 			ar.SetError(statErr)
-			out.Plain("  ✗ %s  could not stat local file: %s",
-				padRight(a.Name, nameWidth), statErr)
+			renderVerifySingleFail(out, a.Name, "could not stat local file", nameWidth,
+				[]verifyDetail{{"error", statErr.Error()}}, termWidth)
 			result.Assets = append(result.Assets, ar)
 			continue
 		case !info.Mode().IsRegular():
 			opErrors++
 			err := fmt.Errorf("not a regular file (mode %s)", info.Mode())
 			ar.SetError(err)
-			out.Plain("  ✗ %s  %s", padRight(a.Name, nameWidth), err)
+			renderVerifySingleFail(out, a.Name, err.Error(), nameWidth, nil, termWidth)
 			result.Assets = append(result.Assets, ar)
 			continue
 		}
@@ -203,8 +196,8 @@ func runVerifyDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath,
 		if hashErr != nil {
 			opErrors++
 			ar.SetError(hashErr)
-			out.Plain("  ✗ %s  could not hash local file: %s",
-				padRight(a.Name, nameWidth), hashErr)
+			renderVerifySingleFail(out, a.Name, "could not hash local file", nameWidth,
+				[]verifyDetail{{"error", hashErr.Error()}}, termWidth)
 			result.Assets = append(result.Assets, ar)
 			continue
 		}
@@ -214,25 +207,17 @@ func runVerifyDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath,
 		if strings.EqualFold(localHash, a.SHA256) {
 			matched++
 			ar.Method = "match"
-			// One-line match row: name • size • full sha256.
-			out.Plain("  ✓ %s  %s  %s",
-				padRight(a.Name, nameWidth),
-				rightPadSize(info.Size(), 10),
-				localHash)
+			renderVerifyMatch(out, a.Name, localPath,
+				fmt.Sprintf("%s   match", rightPadSize(info.Size(), 10)),
+				localHash, nameWidth, termWidth)
 		} else {
 			mismatch++
 			ar.Method = "mismatch"
 			ar.ErrorMsg = fmt.Sprintf("SHA-256 mismatch: local=%s published=%s", localHash, a.SHA256)
-			// Multi-line mismatch row: header + both sides labeled with
-			// full hashes so the operator can sha256sum the local file
-			// and string-compare.
-			out.Plain("  ✗ %s  mismatch", padRight(a.Name, nameWidth))
-			out.Plain("      local     %s   %s   %s",
-				rightPadSize(info.Size(), 10), localPath, localHash)
-			out.Plain("      published %s   %s/%s/%s/%s@%s   %s",
-				rightPadSize(a.Size, 10),
-				coords.Domain, coords.Repository, coords.Namespace, coords.Package, coords.Version,
-				a.SHA256)
+			renderVerifyMismatch(out, a.Name, nameWidth,
+				verifySide{label: "local", uri: localPath, size: info.Size(), hash: localHash},
+				verifySide{label: "published", uri: pubLabel, size: a.Size, hash: a.SHA256},
+			)
 		}
 		result.Assets = append(result.Assets, ar)
 	}
@@ -333,16 +318,14 @@ func runVerifyManifest(ctx context.Context, cfg *Config, manifestPath, versionFl
 	}
 	fillClientMeta(ctx, client, result)
 
-	// Column width for asset name padding.
-	nameWidth := 12
+	names := make([]string, 0, len(cmps))
 	for _, c := range cmps {
-		if n := len(c.Name); n > nameWidth {
-			nameWidth = n
-		}
+		names = append(names, c.Name)
 	}
-	if nameWidth > 40 {
-		nameWidth = 40
-	}
+	nameWidth := pickNameColumnWidth(names)
+	termWidth := output.TerminalWidth()
+	pubLabel := fmt.Sprintf("%s/%s/%s/%s@%s",
+		m.Domain, m.Repository, m.Namespace, m.Package, version)
 
 	var failures, opErrors, unverified, extra int
 	for _, c := range cmps {
@@ -351,50 +334,51 @@ func runVerifyManifest(ctx context.Context, cfg *Config, manifestPath, versionFl
 		case !c.InManifest && c.InPublished:
 			extra++
 			ar.Method = "extra"
-			out.Plain("  ⊘ %s  (published, not in manifest)", padRight(c.Name, nameWidth))
+			renderVerifySkipped(out, c.Name, "(published, not in manifest)", nameWidth, nil)
 		case c.Err != nil:
-			// An operational error (couldn't hash a source, network) — the
-			// check did not complete; distinct from a real mismatch.
 			opErrors++
 			ar.SetError(c.Err)
-			out.Plain("  ✗ %s  could not check: %s", padRight(c.Name, nameWidth), c.Err)
-			out.Plain("      source     %s", c.Source)
+			renderVerifySingleFail(out, c.Name, "could not check", nameWidth,
+				[]verifyDetail{
+					{"source", c.Source},
+					{"error", c.Err.Error()},
+				}, termWidth)
 		case !c.InPublished:
 			failures++
 			ar.Method = "missing"
-			out.Plain("  ✗ %s  not published in @%s", padRight(c.Name, nameWidth), version)
-			out.Plain("      source     %s   %s", c.Source, c.SrcSHA)
+			renderVerifySingleFail(out, c.Name,
+				fmt.Sprintf("not published in @%s", version), nameWidth,
+				[]verifyDetail{
+					{"source", c.Source},
+					{"sha256", c.SrcSHA},
+				}, termWidth)
 		case c.OriginDrift:
 			failures++
 			ar.Method = "drift"
-			out.Plain("  ✗ %s  S3 source changed since publish (etag/version differs from provenance)",
-				padRight(c.Name, nameWidth))
-			out.Plain("      source     %s", c.Source)
+			renderVerifySingleFail(out, c.Name,
+				"S3 source changed since publish (etag/version differs from provenance)",
+				nameWidth, []verifyDetail{{"source", c.Source}}, termWidth)
 		case c.SrcSHA == "":
 			unverified++
 			ar.Method = "unverified"
-			out.Plain("  ⊘ %s  unverified — no checksum/provenance (use --deep to hash)",
-				padRight(c.Name, nameWidth))
-			out.Plain("      source     %s", c.Source)
+			renderVerifySkipped(out, c.Name,
+				"unverified — no checksum/provenance (use --deep to hash)",
+				nameWidth, []verifyDetail{{"source", c.Source}})
 		case strings.EqualFold(c.SrcSHA, c.PubSHA):
 			// hex SHA-256 is case-insensitive — different sources/SDKs
 			// return upper- vs lower-hex; EqualFold avoids a spurious
 			// mismatch.
 			ar.Method = "match(" + c.SrcFrom + ")"
-			out.Plain("  ✓ %s  %s   match(%s)",
-				padRight(c.Name, nameWidth), c.Source, c.SrcFrom)
-			out.Plain("      sha256     %s", c.SrcSHA)
+			renderVerifyMatch(out, c.Name, c.Source,
+				fmt.Sprintf("match(%s)", c.SrcFrom), c.SrcSHA, nameWidth, termWidth)
 		default:
 			failures++
 			ar.Method = "mismatch"
 			ar.ErrorMsg = fmt.Sprintf("SHA-256 mismatch: source=%s published=%s", c.SrcSHA, c.PubSHA)
-			out.Plain("  ✗ %s  mismatch", padRight(c.Name, nameWidth))
-			out.Plain("      source     %s   %s   %s",
-				rightPadSize(0, 10), c.Source, c.SrcSHA)
-			out.Plain("      published  %s   %s/%s/%s/%s@%s   %s",
-				rightPadSize(pubSize[c.Name], 10),
-				m.Domain, m.Repository, m.Namespace, m.Package, version,
-				c.PubSHA)
+			renderVerifyMismatch(out, c.Name, nameWidth,
+				verifySide{label: "source", uri: c.Source, hash: c.SrcSHA},
+				verifySide{label: "published", uri: pubLabel, size: pubSize[c.Name], hash: c.PubSHA},
+			)
 		}
 		result.Assets = append(result.Assets, ar)
 	}
@@ -498,15 +482,14 @@ func runVerifyCoords(ctx context.Context, cfg *Config, target, versionFlag strin
 	}
 	fillClientMeta(ctx, client, result)
 
-	nameWidth := 12
+	names := make([]string, 0, len(prov.Assets))
 	for _, e := range prov.Assets {
-		if n := len(e.Asset); n > nameWidth {
-			nameWidth = n
-		}
+		names = append(names, e.Asset)
 	}
-	if nameWidth > 40 {
-		nameWidth = 40
-	}
+	nameWidth := pickNameColumnWidth(names)
+	termWidth := output.TerminalWidth()
+	pubLabel := fmt.Sprintf("%s/%s/%s/%s@%s",
+		coords.Domain, coords.Repository, coords.Namespace, coords.Package, coords.Version)
 
 	var failures int
 	for _, e := range prov.Assets {
@@ -516,22 +499,25 @@ func runVerifyCoords(ctx context.Context, cfg *Config, target, versionFlag strin
 		case !ok:
 			failures++
 			ar.Method = "missing"
-			out.Plain("  ✗ %s  recorded in provenance but not in the published version",
-				padRight(e.Asset, nameWidth))
-			out.Plain("      recorded   %s   %s", rightPadSize(e.Size, 10), e.SHA256)
+			renderVerifySingleFail(out, e.Asset,
+				"recorded in provenance but not in the published version", nameWidth,
+				[]verifyDetail{
+					{"recorded", fmt.Sprintf("%s   %s", rightPadSize(e.Size, 10), e.SHA256)},
+				}, termWidth)
 		case strings.EqualFold(cur, e.SHA256):
 			// hex SHA-256 case-insensitive — see compareManifestToPublished.
 			ar.Method = "match(provenance)"
-			out.Plain("  ✓ %s  %s   match(provenance)",
-				padRight(e.Asset, nameWidth), rightPadSize(e.Size, 10))
-			out.Plain("      sha256     %s", e.SHA256)
+			renderVerifyMatch(out, e.Asset, "",
+				fmt.Sprintf("%s   match(provenance)", rightPadSize(e.Size, 10)),
+				e.SHA256, nameWidth, termWidth)
 		default:
 			failures++
 			ar.Method = "altered"
 			ar.ErrorMsg = fmt.Sprintf("altered since publish: recorded=%s published=%s", e.SHA256, cur)
-			out.Plain("  ✗ %s  altered since publish", padRight(e.Asset, nameWidth))
-			out.Plain("      recorded   %s   %s", rightPadSize(e.Size, 10), e.SHA256)
-			out.Plain("      published  %s   %s", rightPadSize(pubSize[e.Asset], 10), cur)
+			renderVerifyMismatch(out, e.Asset, nameWidth,
+				verifySide{label: "recorded", uri: "(provenance)", size: e.Size, hash: e.SHA256},
+				verifySide{label: "published", uri: pubLabel, size: pubSize[e.Asset], hash: cur},
+			)
 		}
 		result.Assets = append(result.Assets, ar)
 	}
@@ -561,6 +547,116 @@ func runVerifyCoords(ctx context.Context, cfg *Config, target, versionFlag strin
 	}
 	out.Summary("OK: every recorded asset still matches; chain intact.")
 	return out.CommandResult(result)
+}
+
+// pickNameColumnWidth picks an alignment column width from the longest
+// asset name in the set, capped to keep absurdly long names from
+// pushing the rest of every row to the right. Padding is purely visual
+// — names longer than the cap still render in full, just unaligned.
+func pickNameColumnWidth(names []string) int {
+	const minCol, maxCol = 12, 40
+	w := minCol
+	for _, n := range names {
+		if l := len(n); l > w {
+			w = l
+		}
+	}
+	if w > maxCol {
+		w = maxCol
+	}
+	return w
+}
+
+// extractAssetNames pulls the names out of a published-asset list,
+// skipping the provenance asset. Convenience for pickNameColumnWidth.
+func extractAssetNames(pub []cob.AssetSummary) []string {
+	out := make([]string, 0, len(pub))
+	for _, a := range pub {
+		if a.Name == cob.ProvenanceFile {
+			continue
+		}
+		out = append(out, a.Name)
+	}
+	return out
+}
+
+// verifySide is one half of a mismatch row — the bytes we hashed (or
+// listed) on one side of the comparison. Used by renderVerifyMismatch
+// so the same renderer works for dir mode (local vs published),
+// manifest mode (source vs published), and coords mode (recorded vs
+// published).
+type verifySide struct {
+	label string // "local", "source", "recorded", "published"
+	uri   string // path, S3/CA URI, or coords string
+	size  int64  // 0 if unknown
+	hash  string // full SHA-256 (lowercase hex)
+}
+
+// verifyLabelWidth is the column the detail labels (sha256, source,
+// path) line up to. Wide enough for "published" without truncating.
+const verifyLabelWidth = 10
+
+// renderVerifyMatch prints a "✓ matched" row. If the compact one-line
+// form would fit in the current terminal, use it; otherwise drop the
+// URI to its own detail line so wrapping doesn't fragment the row
+// into a soup of half-words. The full SHA-256 always gets its own
+// line so an operator can string-compare against `sha256sum` output.
+func renderVerifyMatch(out *output.Writer, name, uri, status, hash string, nameWidth, termWidth int) {
+	compact := fmt.Sprintf("  ✓ %s  %s   %s", padRight(name, nameWidth), uri, status)
+	if uri == "" || len(compact) <= termWidth {
+		// Compact form fits (or there's no URI to bother with) — use it.
+		out.Plain("%s", compact)
+		if hash != "" {
+			out.Plain("      %-*s %s", verifyLabelWidth, "sha256", hash)
+		}
+		return
+	}
+	// Expanded form: status stays on the header, URI drops to its own
+	// labeled line. Reading top-to-bottom remains "this asset → these
+	// facts about it."
+	out.Plain("  ✓ %s  %s", padRight(name, nameWidth), status)
+	out.Plain("      %-*s %s", verifyLabelWidth, "source", uri)
+	if hash != "" {
+		out.Plain("      %-*s %s", verifyLabelWidth, "sha256", hash)
+	}
+}
+
+// renderVerifyMismatch prints an "✗ mismatch" row with both sides laid
+// out symmetrically. Each side gets its own size+URI line and hash
+// line — so no matter how wide the terminal is, the row is parseable
+// by eye and the hash is never wrapped mid-string.
+func renderVerifyMismatch(out *output.Writer, name string, nameWidth int, left, right verifySide) {
+	out.Plain("  ✗ %s  mismatch", padRight(name, nameWidth))
+	for _, side := range []verifySide{left, right} {
+		out.Plain("      %-*s %s   %s", verifyLabelWidth, side.label, rightPadSize(side.size, 10), side.uri)
+		out.Plain("                 %s", side.hash)
+	}
+}
+
+// renderVerifySingleFail prints a one-sided failure (missing locally,
+// not-published, drift, op-error) — the asset has only one side worth
+// describing, so layout collapses to a header + a detail line.
+func renderVerifySingleFail(out *output.Writer, name, summary string, nameWidth int, details []verifyDetail, termWidth int) {
+	out.Plain("  ✗ %s  %s", padRight(name, nameWidth), summary)
+	for _, d := range details {
+		out.Plain("      %-*s %s", verifyLabelWidth, d.label, d.value)
+	}
+}
+
+// renderVerifySkipped prints a "⊘ skipped" / "⊘ extra" / "⊘ unverified"
+// row — non-fatal states that still deserve a context line so the
+// operator knows why nothing was checked.
+func renderVerifySkipped(out *output.Writer, name, summary string, nameWidth int, details []verifyDetail) {
+	out.Plain("  ⊘ %s  %s", padRight(name, nameWidth), summary)
+	for _, d := range details {
+		out.Plain("      %-*s %s", verifyLabelWidth, d.label, d.value)
+	}
+}
+
+// verifyDetail is one label/value line on a multi-line verify row.
+type verifyDetail struct {
+	label string
+	value string
 }
 
 // fileSHA256 streams a file through sha256 and returns the lowercase

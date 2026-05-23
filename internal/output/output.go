@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"text/tabwriter"
+
+	"github.com/charmbracelet/x/term"
 
 	"github.com/jmurray2011/cob/internal/cob"
 )
@@ -292,4 +295,20 @@ func IsTerminal(f *os.File) bool {
 		return false
 	}
 	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
+// TerminalWidth returns the current stdout column count for adaptive
+// rendering (verify's row-format picker, future help text wrapping,
+// etc.). Falls back to $COLUMNS, then to 80, so non-TTY callers get a
+// sensible default without erroring. Cheap to call repeatedly.
+func TerminalWidth() int {
+	if w, _, err := term.GetSize(os.Stdout.Fd()); err == nil && w > 0 {
+		return w
+	}
+	if env := os.Getenv("COLUMNS"); env != "" {
+		if n, err := strconv.Atoi(env); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 80
 }
