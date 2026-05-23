@@ -2,16 +2,18 @@ package cli
 
 import (
 	"github.com/spf13/cobra"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
 // NewRootCmd creates the top-level cob command. It owns the per-process
-// *Config; subcommand constructors close over it so a run* function reads
+// *cliutil.Config; subcommand constructors close over it so a run* function reads
 // configuration through an argument rather than a package global. The
-// BuildInfo flows into both Config.Version (a plain string for chain
-// stamping) and Config.Build (the structured shape `cob version --json`
+// cliutil.BuildInfo flows into both cliutil.Config.Version (a plain string for chain
+// stamping) and cliutil.Config.Build (the structured shape `cob version --json`
 // emits).
-func NewRootCmd(build BuildInfo) *cobra.Command {
-	cfg := &Config{Version: build.Version, Build: build}
+func NewRootCmd(build cliutil.BuildInfo) *cobra.Command {
+	cfg := &cliutil.Config{Version: build.Version, Build: build}
 
 	root := &cobra.Command{
 		Use:           "cob",
@@ -20,7 +22,7 @@ func NewRootCmd(build BuildInfo) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			applyEnvFallbacks(cmd, cfg)
+			cliutil.ApplyEnvFallbacks(cmd, cfg)
 		},
 	}
 

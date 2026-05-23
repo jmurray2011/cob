@@ -1,4 +1,4 @@
-package cli
+package cliutil
 
 import (
 	"context"
@@ -13,12 +13,12 @@ import (
 	"github.com/jmurray2011/cob/internal/output"
 )
 
-// interruptable wraps ctx with cancellation hooks for every long-running
+// Interruptable wraps ctx with cancellation hooks for every long-running
 // operation: a TTY Ctrl-C rescue (bubbletea's raw mode otherwise swallows
 // the signal — main's signal.NotifyContext can't see it while the TUI is
 // up) and, when cfg.Timeout > 0, a deadline. The returned cancel fires
 // both, in reverse order. Caller defers it.
-func interruptable(ctx context.Context, cfg *Config, out *output.Writer) (context.Context, context.CancelFunc) {
+func Interruptable(ctx context.Context, cfg *Config, out *output.Writer) (context.Context, context.CancelFunc) {
 	var cancels []context.CancelFunc
 	if cfg != nil && cfg.Timeout > 0 {
 		var tcancel context.CancelFunc
@@ -38,13 +38,13 @@ func interruptable(ctx context.Context, cfg *Config, out *output.Writer) (contex
 	}
 }
 
-// fillClientMeta records the executing principal and region onto a
+// FillClientMeta records the executing principal and region onto a
 // CommandResult so audit pipelines can answer "which account/role ran
 // this, in which region?" without grepping per-asset Origin or the
 // provenance chain. Called right before out.CommandResult(result) on
 // every command that has a live cob.Client; safe to call multiple times
 // (CallerIdentity is cached on the Client).
-func fillClientMeta(ctx context.Context, client *cob.Client, result *cob.CommandResult) {
+func FillClientMeta(ctx context.Context, client *cob.Client, result *cob.CommandResult) {
 	if client == nil || result == nil {
 		return
 	}
@@ -55,8 +55,8 @@ func fillClientMeta(ctx context.Context, client *cob.Client, result *cob.Command
 	}
 }
 
-// resolveVersion returns the version from the flag, env var, or an error.
-func resolveVersion(flag string) (string, error) {
+// ResolveVersion returns the version from the flag, env var, or an error.
+func ResolveVersion(flag string) (string, error) {
 	if flag != "" {
 		return flag, nil
 	}
@@ -66,7 +66,7 @@ func resolveVersion(flag string) (string, error) {
 	return "", fmt.Errorf("version is required: use --version or set COB_VERSION")
 }
 
-// isManifestPath returns true if the arg looks like a manifest file path.
+// IsManifestPath returns true if the arg looks like a manifest file path.
 // Suffix-only detection — a coordinate-shaped string that happens to end
 // in .yaml (e.g. a package literally named "config.yaml") would be
 // misclassified, but that ambiguity is rare enough in practice that we
@@ -74,7 +74,7 @@ func resolveVersion(flag string) (string, error) {
 // filepath.Ext over HasSuffix gets us the right behavior on weird inputs
 // (a trailing dot, ".YAML" in case-sensitive land, dotfiles like ".yaml"
 // at the path root) without growing the rule.
-func isManifestPath(arg string) bool {
+func IsManifestPath(arg string) bool {
 	switch filepath.Ext(arg) {
 	case ".yaml", ".yml":
 		return true
@@ -82,100 +82,17 @@ func isManifestPath(arg string) bool {
 	return false
 }
 
-// NamedSource pairs an asset name with its source, preserving manifest order.
-type NamedSource struct {
-	Name   string
-	Source cob.AssetSource
-}
-
-// buildSources creates AssetSource instances from resolved manifest source URIs.
-// Returns a slice that preserves the order from the manifest file.
-func buildSources(m *manifest.Manifest, client *cob.Client) ([]NamedSource, error) {
-	sources := make([]NamedSource, 0, len(m.Sources))
-	byAsset := make(map[string]string, len(m.Sources)) // stored name -> manifest key
-	for _, entry := range m.Sources {
-		src, err := buildSource(entry.URI, m.Dir, client)
-		if err != nil {
-			return nil, fmt.Errorf("asset %q: %w", entry.Name, err)
-		}
-		// The stored CodeArtifact asset name is the source's basename, not
-		// the manifest key — two sources with the same basename would
-		// collide (one silently clobbering the other).
-		if name := src.Filename(); name != "" {
-			if err := registerAssetName(byAsset, name, entry.Name); err != nil {
-				return nil, fmt.Errorf("source %q: %w", entry.Name, err)
-			}
-		}
-		sources = append(sources, NamedSource{Name: entry.Name, Source: src})
-	}
-	return sources, nil
-}
-
-// uriKind is the scheme classification of a source URI.
-type uriKind int
-
-const (
-	uriInvalid uriKind = iota // zero value: returned only alongside an error
-	uriS3
-	uriCA
-	uriFile
-)
-
-// classifyURI determines what kind of source a (variable-resolved) URI is.
-// For a file URI it also returns the path resolved against manifestDir. An
-// unrecognised "scheme://" is an error, not a file path — buildSource (used
-// by publish) and validateSourceURI (used by validate) both go through here,
-// so the two commands cannot disagree on what a valid source is.
-func classifyURI(uri, manifestDir string) (uriKind, string, error) {
-	switch {
-	case strings.HasPrefix(uri, "s3://"):
-		return uriS3, "", nil
-	case strings.HasPrefix(uri, "ca://"):
-		return uriCA, "", nil
-	case strings.HasPrefix(uri, "./"), strings.HasPrefix(uri, "/"):
-		path := uri
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(manifestDir, path)
-		}
-		return uriFile, path, nil
-	default:
-		// A "scheme://" we don't recognise is a mistake, not a local file —
-		// reject it rather than silently turning gs://b/x into a path.
-		if i := strings.Index(uri, "://"); i > 0 {
-			return uriInvalid, "", fmt.Errorf("unsupported source scheme in %q (use s3://, ca://, or a file path)", uri)
-		}
-		// Otherwise a relative path from the manifest directory — covers
-		// bare filenames like "README.md" or "subdir/file.bin".
-		return uriFile, filepath.Join(manifestDir, uri), nil
-	}
-}
-
-func buildSource(uri, manifestDir string, client *cob.Client) (cob.AssetSource, error) {
-	kind, path, err := classifyURI(uri, manifestDir)
-	if err != nil {
-		return nil, err
-	}
-	switch kind {
-	case uriS3:
-		return cob.NewS3Source(client.S3, uri)
-	case uriCA:
-		return cob.NewCASource(client.CodeArtifact, uri)
-	default: // uriFile
-		return cob.NewFileSource(path, uri), nil
-	}
-}
-
-// warnManifestOverrides logs any env var overrides applied to the manifest.
-func warnManifestOverrides(m *manifest.Manifest, out *output.Writer) {
+// WarnManifestOverrides logs any env var overrides applied to the manifest.
+func WarnManifestOverrides(m *manifest.Manifest, out *output.Writer) {
 	for _, o := range m.Overrides {
 		out.Warn("using %s=%s (overrides manifest %s)", o.Env, o.Value, o.Field)
 	}
 }
 
-// resolveLatestIfNeeded checks if coords.Version is "latest" and, if so,
+// ResolveLatestIfNeeded checks if coords.Version is "latest" and, if so,
 // resolves it to the most recently published version. Prints the resolved
 // version so the user knows what they got.
-func resolveLatestIfNeeded(ctx context.Context, coords *cob.PackageCoordinates, registry *cob.Registry, out *output.Writer) error {
+func ResolveLatestIfNeeded(ctx context.Context, coords *cob.PackageCoordinates, registry *cob.Registry, out *output.Writer) error {
 	if coords.Version != "latest" {
 		return nil
 	}
@@ -188,7 +105,7 @@ func resolveLatestIfNeeded(ctx context.Context, coords *cob.PackageCoordinates, 
 	return nil
 }
 
-// confirmAction decides whether a mutating action may proceed.
+// ConfirmAction decides whether a mutating action may proceed.
 //
 //   - --yes: always proceeds.
 //   - interactive TTY: prompts; only a "y"/"yes" answer proceeds.
@@ -199,7 +116,7 @@ func resolveLatestIfNeeded(ctx context.Context, coords *cob.PackageCoordinates, 
 // A non-nil error means the action must not run and the command should fail
 // loudly. (false, nil) means the user declined at the prompt — a clean,
 // expected abort.
-func confirmAction(ctx context.Context, yes bool, prompt string) (bool, error) {
+func ConfirmAction(ctx context.Context, yes bool, prompt string) (bool, error) {
 	if yes {
 		return true, nil
 	}
@@ -227,13 +144,13 @@ func confirmAction(ctx context.Context, yes bool, prompt string) (bool, error) {
 	}
 }
 
-// finalizeProvenance publishes the cob-provenance.json finalizer for a
+// FinalizeProvenance publishes the cob-provenance.json finalizer for a
 // freshly published or promoted version and folds the result into cmdResult.
 // Publishing it with unfinished=false also flips the CodeArtifact version to
 // Published. On failure it emits failureHint — the full command-specific
 // operator guidance, since publish and promote recover differently — and
 // returns a non-zero ExitError for the caller to return as-is.
-func finalizeProvenance(ctx context.Context, publisher *cob.Publisher, coords *cob.PackageCoordinates,
+func FinalizeProvenance(ctx context.Context, publisher *cob.Publisher, coords *cob.PackageCoordinates,
 	prov *cob.Provenance, out *output.Writer, cmdResult *cob.CommandResult, start time.Time, failureHint string) error {
 
 	provBytes, err := prov.Marshal()

@@ -13,9 +13,11 @@ import (
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/internal/output"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newPullCmd(cfg *Config) *cobra.Command {
+func newPullCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagVersion     string
 		flagOutput      string
@@ -45,44 +47,44 @@ func newPullCmd(cfg *Config) *cobra.Command {
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Specific version (required with manifest)")
 	cmd.Flags().StringVarP(&flagOutput, "output", "o", "", "Output path (directory or filename)")
 	cmd.Flags().StringVar(&flagAssets, "assets", "", "Pull specific assets only (comma-separated)")
-	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets downloaded in parallel (1 = sequential; clamped to [1,32] to avoid CodeArtifact throttling — a warning prints if a passed value was changed)")
+	cmd.Flags().IntVar(&flagConcurrency, "concurrency", cliutil.DefaultConcurrency, "Max assets downloaded in parallel (1 = sequential; clamped to [1,32] to avoid CodeArtifact throttling — a warning prints if a passed value was changed)")
 
 	return cmd
 }
 
-func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
-	out := newWriter(cfg)
+func runPull(ctx context.Context, cfg *cliutil.Config, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
-	ctx, cancel := interruptable(ctx, cfg, out)
+	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "pull", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "pull", cob.ExitError, "%s", err)
 	}
 
 	puller := cob.NewPuller(client)
 	var coords *cob.PackageCoordinates
 
-	if isManifestPath(target) {
+	if cliutil.IsManifestPath(target) {
 		// Manifest mode.
-		version, err := resolveVersion(versionFlag)
+		version, err := cliutil.ResolveVersion(versionFlag)
 		if err != nil {
-			return fail(out, "pull", cob.ExitError, "%s", err)
+			return cliutil.Fail(out, "pull", cob.ExitError, "%s", err)
 		}
 
 		m, err := manifest.Load(target)
 		if err != nil {
-			return fail(out, "pull", cob.ExitError, "%s", err)
+			return cliutil.Fail(out, "pull", cob.ExitError, "%s", err)
 		}
-		warnManifestOverrides(m, out)
+		cliutil.WarnManifestOverrides(m, out)
 		// Implicit pre-flight lint — see runPublish for rationale.
 		// Pull only reads m.Domain/Repository/Namespace/Package to
 		// resolve coords, but a malformed manifest (bad URI syntax,
-		// reserved asset name, basename collision) should still fail
+		// reserved asset name, basename collision) should still cliutil.Fail
 		// the same way every other manifest-based command does.
-		if err := validateManifest(m, version); err != nil {
-			return fail(out, "pull", cob.ExitError, "%s", err)
+		if err := cliutil.ValidateManifest(m, version); err != nil {
+			return cliutil.Fail(out, "pull", cob.ExitError, "%s", err)
 		}
 
 		coords = &cob.PackageCoordinates{
@@ -96,23 +98,23 @@ func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, 
 		// Compact coordinates mode.
 		coords, err = manifest.ParseCoordinates(target)
 		if err != nil {
-			return fail(out, "pull", cob.ExitError, "%s", err)
+			return cliutil.Fail(out, "pull", cob.ExitError, "%s", err)
 		}
 		if coords.Version == "" {
-			return fail(out, "pull", cob.ExitError, "version is required for pull (use domain/repo/ns/pkg@version or @latest)")
+			return cliutil.Fail(out, "pull", cob.ExitError, "version is required for pull (use domain/repo/ns/pkg@version or @latest)")
 		}
 	}
 
 	// Resolve @latest if needed.
 	registry := cob.NewRegistry(client)
-	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		return fail(out, "pull", codeFor(err), "%s", err)
+	if err := cliutil.ResolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
+		return cliutil.Fail(out, "pull", cliutil.CodeFor(err), "%s", err)
 	}
 
 	// Fetch all asset metadata in a single API call.
 	allAssets, err := puller.FetchAssetInfo(ctx, coords)
 	if err != nil {
-		return fail(out, "pull", codeFor(err), "listing assets: %s", err)
+		return cliutil.Fail(out, "pull", cliutil.CodeFor(err), "listing assets: %s", err)
 	}
 
 	// Narrow to the requested assets.
@@ -121,7 +123,7 @@ func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, 
 		out.Warn("asset %q not found in %s/%s@%s, skipping", name, coords.Namespace, coords.Package, coords.Version)
 	}
 	if err != nil {
-		return fail(out, "pull", cob.ExitNotFound, "%s in %s/%s@%s", err, coords.Namespace, coords.Package, coords.Version)
+		return cliutil.Fail(out, "pull", cob.ExitNotFound, "%s in %s/%s@%s", err, coords.Namespace, coords.Package, coords.Version)
 	}
 
 	if outputPath == "" {
@@ -138,7 +140,7 @@ func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, 
 	}
 	if mkdir != "" && mkdir != "." {
 		if err := os.MkdirAll(mkdir, 0o755); err != nil {
-			return fail(out, "pull", cob.ExitError, "creating output directory %s: %s", mkdir, err)
+			return cliutil.Fail(out, "pull", cob.ExitError, "creating output directory %s: %s", mkdir, err)
 		}
 	}
 
@@ -152,17 +154,17 @@ func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, 
 		Repository: fmt.Sprintf("%s/%s", coords.Domain, coords.Repository),
 		Status:     "ok",
 	}
-	fillClientMeta(ctx, client, result)
+	cliutil.FillClientMeta(ctx, client, result)
 
 	out.AssetsExpected(len(assets), totalAssetSize(assets))
 	puller.Progress = out.AssetProgress
 
-	concurrency = resolveConcurrency(concurrency, out)
-	results, ok := runConcurrent(ctx, len(assets), concurrency, func(ctx context.Context, i int) (*cob.AssetResult, error) {
+	concurrency = cliutil.ResolveConcurrency(concurrency, out)
+	results, ok := cliutil.RunConcurrent(ctx, len(assets), concurrency, func(ctx context.Context, i int) (*cob.AssetResult, error) {
 		info := assets[i]
 		dest := outputPath
 		if dirTarget {
-			d, jerr := safeJoin(outputPath, info.Name)
+			d, jerr := cliutil.SafeJoin(outputPath, info.Name)
 			if jerr != nil {
 				out.AssetFail(info.Name, "", jerr)
 				ar := &cob.AssetResult{Name: info.Name}
@@ -227,7 +229,7 @@ func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, 
 		out.Summary("Interrupted: %d downloaded, %d already present, %d incomplete — re-run to resume (present files with matching SHA-256 will be skipped)",
 			downloaded, skipped, incomplete)
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitInterrupted}
+		return &cliutil.ExitError{Code: cob.ExitInterrupted}
 	}
 
 	out.Summary("Pulled %d assets to %s", downloaded+skipped, outputPath)
@@ -237,7 +239,7 @@ func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, 
 	// JSON is still emitted so pipelines can parse the partial result.
 	if result.Status == "error" {
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitError}
+		return &cliutil.ExitError{Code: cob.ExitError}
 	}
 
 	// A whole-package pull into a directory also gets a recoverable
@@ -317,60 +319,6 @@ func writePulledManifest(ctx context.Context, client *cob.Client, coords *cob.Pa
 		return
 	}
 	out.Plain("Wrote %s", p)
-}
-
-// safeJoin joins an asset name under root and confirms the result stays
-// within root — lexically (no ../ traversal) and physically (no symlink at
-// root or at an existing component of the destination redirects the write).
-// CodeArtifact asset names are path-like and server-controlled; cob must not
-// write outside the chosen output directory regardless of what they contain.
-func safeJoin(root, name string) (string, error) {
-	dest := filepath.Join(root, name)
-	if escapes(root, dest) {
-		return "", fmt.Errorf("asset %q escapes the output directory", name)
-	}
-	// Lexical containment is not enough: a symlink at root, or at any
-	// existing component of dest, could redirect the write elsewhere.
-	// Resolve symlinks on the deepest existing prefix of each and re-check.
-	realRoot, err := resolveExisting(root)
-	if err != nil {
-		return "", err
-	}
-	realDest, err := resolveExisting(dest)
-	if err != nil {
-		return "", err
-	}
-	if escapes(realRoot, realDest) {
-		return "", fmt.Errorf("asset %q escapes the output directory via a symlink", name)
-	}
-	return dest, nil
-}
-
-// escapes reports whether dest lies outside root by lexical path comparison.
-func escapes(root, dest string) bool {
-	rel, err := filepath.Rel(root, dest)
-	return err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator))
-}
-
-// resolveExisting returns filepath.EvalSymlinks of the deepest ancestor of p
-// that exists. A pull target usually does not exist yet, so EvalSymlinks(p)
-// itself would fail; resolving the existing prefix is what containment needs.
-func resolveExisting(p string) (string, error) {
-	p = filepath.Clean(p)
-	for {
-		resolved, err := filepath.EvalSymlinks(p)
-		if err == nil {
-			return resolved, nil
-		}
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-		parent := filepath.Dir(p)
-		if parent == p {
-			return p, nil // reached the filesystem root; nothing existed
-		}
-		p = parent
-	}
 }
 
 func isDir(path string) bool {

@@ -1,4 +1,14 @@
-package cli
+// Package cliutil holds the shared building blocks every cob subcommand
+// needs: the per-process Config, the AWS client / output writer test
+// seams, validation + concurrency helpers, and the small utilities that
+// keep run* signatures honest about what they depend on.
+//
+// Lives as a sibling of internal/cli so per-command packages
+// (internal/cli/diff, /publish, /promote, /pull) can import it without
+// dragging in the rest of the CLI, and so a future non-CLI consumer
+// (daemon mode, e.g.) could reuse the same building blocks without
+// pulling in cobra wiring.
+package cliutil
 
 import (
 	"os"
@@ -41,10 +51,43 @@ type Config struct {
 	Build   BuildInfo
 }
 
-// applyEnvFallbacks merges COB_* env vars into cfg for any persistent flag
+// BuildInfo carries the version metadata cob can determine from the
+// build: the version string (from -ldflags or VCS), the VCS revision
+// and timestamp when available, plus runtime details (Go toolchain,
+// OS/arch). Surfaced both as the cobra --version line and as
+// `cob version --json` for CI consumers that want to pin or detect
+// upgrades programmatically.
+type BuildInfo struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit,omitempty"`
+	Time    string `json:"time,omitempty"`
+	Go      string `json:"go"`
+	OS      string `json:"os"`
+	Arch    string `json:"arch"`
+}
+
+// HumanString renders the parenthesized "version (commit, go, time)" shape
+// the cobra --version line and the `cob version` subcommand both use, so
+// the two paths stay in lockstep.
+func (b BuildInfo) HumanString() string {
+	extra := b.Go
+	if b.Commit != "" {
+		extra = b.Commit + ", " + extra
+	}
+	if b.Time != "" {
+		extra += ", " + b.Time
+	}
+	if extra != "" {
+		return b.Version + " (" + extra + ")"
+	}
+	return b.Version
+}
+
+// ApplyEnvFallbacks merges COB_* env vars into cfg for any persistent flag
 // the user didn't pass explicitly. Mirrors the precedence the README
-// promises: CLI flag > COB_* env > zero value.
-func applyEnvFallbacks(cmd *cobra.Command, cfg *Config) {
+// promises: CLI flag > COB_* env > zero value. Called from root.go's
+// PersistentPreRun.
+func ApplyEnvFallbacks(cmd *cobra.Command, cfg *Config) {
 	// Use Changed() so an explicit "--profile ''" still clears the value;
 	// only fall back to the env var when the flag was *not* passed.
 	if !cmd.Flags().Changed("profile") {

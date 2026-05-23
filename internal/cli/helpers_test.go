@@ -8,10 +8,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/jmurray2011/cob/internal/cob"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
 // fakeSTS implements cob.STSAPI with a hand-rolled GetCallerIdentity
-// response. Used to verify that fillClientMeta records the executing
+// response. Used to verify that cliutil.FillClientMeta records the executing
 // principal — and that the cache shape on Client returns one identity
 // across multiple calls.
 type fakeSTS struct {
@@ -36,7 +38,7 @@ func TestFillClientMetaPopulatesRegionAndActor(t *testing.T) {
 	}}
 	client := &cob.Client{Region: "us-west-2", STS: sts}
 	var result cob.CommandResult
-	fillClientMeta(context.Background(), client, &result)
+	cliutil.FillClientMeta(context.Background(), client, &result)
 
 	if result.Region != "us-west-2" {
 		t.Errorf("Region = %q, want us-west-2", result.Region)
@@ -63,8 +65,8 @@ func TestFillClientMetaCachesIdentityAcrossCalls(t *testing.T) {
 	}}
 	client := &cob.Client{Region: "us-east-2", STS: stsFake}
 	var a, b cob.CommandResult
-	fillClientMeta(context.Background(), client, &a)
-	fillClientMeta(context.Background(), client, &b)
+	cliutil.FillClientMeta(context.Background(), client, &a)
+	cliutil.FillClientMeta(context.Background(), client, &b)
 	_ = client.CallerIdentity(context.Background()) // a third caller
 	if stsFake.calls != 1 {
 		t.Errorf("STS GetCallerIdentity called %d times, want 1 (cached)", stsFake.calls)
@@ -80,7 +82,7 @@ func TestFillClientMetaFailedSTSLeavesActorNil(t *testing.T) {
 	// it for "some real identity that happens to have empty fields".
 	client := &cob.Client{Region: "us-east-2", STS: &fakeSTS{err: errBoom{}}}
 	var result cob.CommandResult
-	fillClientMeta(context.Background(), client, &result)
+	cliutil.FillClientMeta(context.Background(), client, &result)
 	if result.Region != "us-east-2" {
 		t.Errorf("Region should still be set despite STS failure")
 	}
@@ -93,7 +95,7 @@ func TestFillClientMetaNilClientIsNoOp(t *testing.T) {
 	// validate has no client at all (offline). Passing nil must not panic
 	// and must leave the result untouched.
 	var result cob.CommandResult
-	fillClientMeta(context.Background(), nil, &result)
+	cliutil.FillClientMeta(context.Background(), nil, &result)
 	if result.Region != "" || result.Actor != nil {
 		t.Errorf("nil client should be a no-op, got %+v", result)
 	}

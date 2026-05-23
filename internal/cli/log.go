@@ -9,9 +9,11 @@ import (
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/concurrency"
 	"github.com/jmurray2011/cob/internal/manifest"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newLogCmd(cfg *Config) *cobra.Command {
+func newLogCmd(cfg *cliutil.Config) *cobra.Command {
 	var flagCheckRefs bool
 
 	cmd := &cobra.Command{
@@ -49,43 +51,43 @@ func newLogCmd(cfg *Config) *cobra.Command {
 	return cmd
 }
 
-func runLog(ctx context.Context, cfg *Config, target string, checkRefs bool) error {
-	out := newWriter(cfg)
+func runLog(ctx context.Context, cfg *cliutil.Config, target string, checkRefs bool) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
-		return fail(out, "log", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "log", cob.ExitError, "%s", err)
 	}
 	if coords.Namespace == "" || coords.Package == "" {
-		return fail(out, "log", cob.ExitError,
+		return cliutil.Fail(out, "log", cob.ExitError,
 			"full coordinates required (domain/repo/namespace/package[@version])")
 	}
 	if coords.Version == "" {
 		// Mirror manifest/verify: version is required, no implicit
 		// COB_VERSION fallback (a chain is per-version, not per-package).
-		return fail(out, "log", cob.ExitError, "version is required (use @version or @latest)")
+		return cliutil.Fail(out, "log", cob.ExitError, "version is required (use @version or @latest)")
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "log", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "log", cob.ExitError, "%s", err)
 	}
 	registry := cob.NewRegistry(client)
-	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		return fail(out, "log", codeFor(err), "%s", err)
+	if err := cliutil.ResolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
+		return cliutil.Fail(out, "log", cliutil.CodeFor(err), "%s", err)
 	}
 
 	prov, err := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
 	if err != nil {
-		return fail(out, "log", cob.ExitError, "reading %s: %s", cob.ProvenanceFile, err)
+		return cliutil.Fail(out, "log", cob.ExitError, "reading %s: %s", cob.ProvenanceFile, err)
 	}
 	if prov == nil {
 		// Distinguishing "no provenance" from a hash mismatch matters —
 		// verify treats "no provenance" as a check that couldn't run, log
 		// as a hard precondition. The chain is the artifact log knows
 		// about; nothing to render without it.
-		return fail(out, "log", cob.ExitError,
+		return cliutil.Fail(out, "log", cob.ExitError,
 			"no %s for %s/%s@%s — version was not published with cob",
 			cob.ProvenanceFile, coords.Namespace, coords.Package, coords.Version)
 	}

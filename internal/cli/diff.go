@@ -13,6 +13,8 @@ import (
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/internal/output"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
 // diff is cob's only comparison verb. Mode is picked from the
@@ -28,7 +30,7 @@ import (
 //	cob diff <coords>                    → self-integrity: provenance vs live
 //	cob diff <dir> <coords>              → local files vs published
 //	cob diff <coords-A> <coords-B>       → version vs version
-func newDiffCmd(cfg *Config) *cobra.Command {
+func newDiffCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagVersion   string
 		flagDeep      bool
@@ -94,14 +96,14 @@ func newDiffCmd(cfg *Config) *cobra.Command {
 // filesystem state. Each branch's discriminator is explicit so a typo
 // surfaces as an error pointing at the right invocation, not as a
 // silent fallback into the wrong mode.
-func runDiff(ctx context.Context, cfg *Config, args []string, versionFlag string, deep, verbose, checkRefs bool) error {
-	out := newWriter(cfg)
+func runDiff(ctx context.Context, cfg *cliutil.Config, args []string, versionFlag string, deep, verbose, checkRefs bool) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 
 	switch len(args) {
 	case 1:
 		target := args[0]
-		if isManifestPath(target) {
+		if cliutil.IsManifestPath(target) {
 			version := versionFlag
 			if version == "" {
 				version = os.Getenv("COB_VERSION")
@@ -117,7 +119,7 @@ func runDiff(ctx context.Context, cfg *Config, args []string, versionFlag string
 		// Directory as a single arg is ambiguous (which package?) — point
 		// at the right shape instead of guessing.
 		if info, err := os.Stat(target); err == nil && info.IsDir() {
-			return fail(out, "diff", cob.ExitError,
+			return cliutil.Fail(out, "diff", cob.ExitError,
 				"%s is a directory — to diff its files against a published version, give the coordinates as a second argument:\n  cob diff %s <domain>/<repo>/<ns>/<pkg>@<version>",
 				target, target)
 		}
@@ -133,26 +135,26 @@ func runDiff(ctx context.Context, cfg *Config, args []string, versionFlag string
 		// is manifest mode, which takes ONE positional. A two-arg invocation
 		// where the first isn't a directory is a typo.
 		if err == nil {
-			return fail(out, "diff", cob.ExitError,
+			return cliutil.Fail(out, "diff", cob.ExitError,
 				"first argument must be a directory or coordinates when two args are given; got file %s", args[0])
 		}
 		return runDiffVersions(ctx, cfg, out, args[0], args[1], verbose)
 	}
-	return fail(out, "diff", cob.ExitError, "diff takes one or two positional arguments")
+	return cliutil.Fail(out, "diff", cob.ExitError, "diff takes one or two positional arguments")
 }
 
 // runDiffLint runs the offline checks the old `cob validate` exposed.
 // Same per-source rendering — labels each line with what was actually
 // checked (local existence vs remote syntax-only). The underlying
-// validateManifest helper is the same one publish/promote/pull invoke
+// cliutil.ValidateManifest helper is the same one publish/promote/pull invoke
 // implicitly, so "lint says it's OK" and "implicit pre-flight said
 // nothing" can never disagree.
 func runDiffLint(out *output.Writer, manifestPath string) error {
 	m, err := manifest.Load(manifestPath)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
-	warnManifestOverrides(m, out)
+	cliutil.WarnManifestOverrides(m, out)
 
 	version := os.Getenv("COB_VERSION")
 	versionResolved := version != ""
@@ -184,7 +186,7 @@ func runDiffLint(out *output.Writer, manifestPath string) error {
 		}
 		ar.Source = resolved
 
-		asset, size, kind, err := validateSourceURI(resolved, m.Dir)
+		asset, size, kind, err := cliutil.ValidateSourceURI(resolved, m.Dir)
 		if err != nil {
 			ar.SetError(err)
 			out.Plain("  ✗ %s  %s", s.Name, err)
@@ -212,15 +214,15 @@ func runDiffLint(out *output.Writer, manifestPath string) error {
 		byAsset[asset] = s.Name
 
 		switch kind {
-		case uriFile:
+		case cliutil.URIFile:
 			ar.Method = "exists"
 			localOK++
 			out.Plain("  ✓ %s  %s  (%s)", s.Name, resolved, output.FormatSize(size))
-		case uriS3:
+		case cliutil.URIS3:
 			ar.Method = "syntax(s3)"
 			remoteOK++
 			out.Plain("  ✓ %s  %s  (remote, syntax only)", s.Name, resolved)
-		case uriCA:
+		case cliutil.URICA:
 			ar.Method = "syntax(ca)"
 			remoteOK++
 			out.Plain("  ✓ %s  %s  (remote, syntax only)", s.Name, resolved)
@@ -237,39 +239,39 @@ func runDiffLint(out *output.Writer, manifestPath string) error {
 		result.Error = fmt.Sprintf("%d of %d sources invalid", failures, len(m.Sources))
 		out.Summary("Invalid: %d of %d sources failed.", failures, len(m.Sources))
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitError}
+		return &cliutil.ExitError{Code: cob.ExitError}
 	}
 
 	switch {
 	case localOK > 0 && remoteOK > 0:
 		out.Summary("Lint OK: %d sources — %d local files verified to exist, %d remote URIs syntax-only. %d-stage promote pipeline.",
-			len(m.Sources), localOK, remoteOK, promoteStageCount(m))
+			len(m.Sources), localOK, remoteOK, cliutil.PromoteStageCount(m))
 	case localOK > 0:
 		out.Summary("Lint OK: %d sources — %d local files verified to exist. %d-stage promote pipeline.",
-			len(m.Sources), localOK, promoteStageCount(m))
+			len(m.Sources), localOK, cliutil.PromoteStageCount(m))
 	case remoteOK > 0:
 		out.Summary("Lint OK: %d sources — all remote URIs, syntax-only (pass --version to diff bytes against a published version). %d-stage promote pipeline.",
-			len(m.Sources), promoteStageCount(m))
+			len(m.Sources), cliutil.PromoteStageCount(m))
 	default:
-		out.Summary("Lint OK: %d sources, %d-stage promote pipeline.", len(m.Sources), promoteStageCount(m))
+		out.Summary("Lint OK: %d sources, %d-stage promote pipeline.", len(m.Sources), cliutil.PromoteStageCount(m))
 	}
 	return out.CommandResult(result)
 }
 
 // runDiffManifest compares a manifest's sources to a published
-// version's assets. Implicit validateManifest runs at the top — so a
+// version's assets. Implicit cliutil.ValidateManifest runs at the top — so a
 // broken manifest can't reach the comparison loop.
-func runDiffManifest(ctx context.Context, cfg *Config, out *output.Writer, manifestPath, version string, deep, verbose, checkRefs bool) error {
-	ctx, cancel := interruptable(ctx, cfg, out)
+func runDiffManifest(ctx context.Context, cfg *cliutil.Config, out *output.Writer, manifestPath, version string, deep, verbose, checkRefs bool) error {
+	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
 
 	m, err := manifest.Load(manifestPath)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
-	warnManifestOverrides(m, out)
-	if err := validateManifest(m, version); err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+	cliutil.WarnManifestOverrides(m, out)
+	if err := cliutil.ValidateManifest(m, version); err != nil {
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
 
 	coords := &cob.PackageCoordinates{
@@ -277,27 +279,27 @@ func runDiffManifest(ctx context.Context, cfg *Config, out *output.Writer, manif
 		Namespace: m.Namespace, Package: m.Package, Version: version,
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
 
 	// Resolve @latest before expanding ${VERSION} — otherwise the
 	// manifest's source URIs and the lookup would target a version
 	// literally "latest".
 	registry := cob.NewRegistry(client)
-	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		return fail(out, "diff", codeFor(err), "%s", err)
+	if err := cliutil.ResolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
+		return cliutil.Fail(out, "diff", cliutil.CodeFor(err), "%s", err)
 	}
 	version = coords.Version
 
 	if err := m.ResolveVariables(version); err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
 
-	sources, err := buildSources(m, client)
+	sources, err := cliutil.BuildSources(m, client)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
 
 	prov, perr := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
@@ -313,7 +315,7 @@ func runDiffManifest(ctx context.Context, cfg *Config, out *output.Writer, manif
 	}
 	cmps, err := compareManifestToPublished(ctx, sources, registry, coords, deep, prov)
 	if err != nil {
-		return fail(out, "diff", codeFor(err), "%s", err)
+		return cliutil.Fail(out, "diff", cliutil.CodeFor(err), "%s", err)
 	}
 
 	// Pub size lookup so mismatch rows show both sides' sizes when known.
@@ -332,7 +334,7 @@ func runDiffManifest(ctx context.Context, cfg *Config, out *output.Writer, manif
 		Repository: fmt.Sprintf("%s/%s", m.Domain, m.Repository),
 		Status:     "ok",
 	}
-	fillClientMeta(ctx, client, result)
+	cliutil.FillClientMeta(ctx, client, result)
 
 	names := make([]string, 0, len(cmps))
 	for _, c := range cmps {
@@ -403,13 +405,13 @@ func runDiffManifest(ctx context.Context, cfg *Config, out *output.Writer, manif
 		result.Status = "error"
 		result.Error = fmt.Sprintf("%d source(s) could not be resolved", errs)
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitError}
+		return &cliutil.ExitError{Code: cob.ExitError}
 	}
 	if drift > 0 {
 		result.Status = "drift"
 		result.Error = fmt.Sprintf("%d added, %d removed, %d changed", added, removed, changed)
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitMismatch}
+		return &cliutil.ExitError{Code: cob.ExitMismatch}
 	}
 	return out.CommandResult(result)
 }
@@ -443,38 +445,38 @@ func warnMissingChainRefs(ctx context.Context, registry *cob.Registry, coords *c
 // runDiffSelfCheck compares a published version's recorded provenance
 // to what CodeArtifact currently stores. Was `cob verify <coords>`.
 // Chain of evidence is printed first; the comparison follows.
-func runDiffSelfCheck(ctx context.Context, cfg *Config, out *output.Writer, target string, verbose, checkRefs bool) error {
-	ctx, cancel := interruptable(ctx, cfg, out)
+func runDiffSelfCheck(ctx context.Context, cfg *cliutil.Config, out *output.Writer, target string, verbose, checkRefs bool) error {
+	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
 	if coords.Namespace == "" || coords.Package == "" {
-		return fail(out, "diff", cob.ExitError,
+		return cliutil.Fail(out, "diff", cob.ExitError,
 			"full coordinates required (domain/repo/namespace/package[@version])")
 	}
 	if coords.Version == "" {
-		return fail(out, "diff", cob.ExitError,
+		return cliutil.Fail(out, "diff", cob.ExitError,
 			"version required (use @version or @latest)")
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
 	registry := cob.NewRegistry(client)
-	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		return fail(out, "diff", codeFor(err), "%s", err)
+	if err := cliutil.ResolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
+		return cliutil.Fail(out, "diff", cliutil.CodeFor(err), "%s", err)
 	}
 
 	prov, err := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
 	if prov == nil {
-		return fail(out, "diff", cob.ExitError,
+		return cliutil.Fail(out, "diff", cob.ExitError,
 			"no %s for %s/%s@%s — cannot self-check (was it published with cob?)",
 			cob.ProvenanceFile, coords.Namespace, coords.Package, coords.Version)
 	}
@@ -484,7 +486,7 @@ func runDiffSelfCheck(ctx context.Context, cfg *Config, out *output.Writer, targ
 
 	assets, err := registry.ListAssets(ctx, coords)
 	if err != nil {
-		return fail(out, "diff", codeFor(err), "%s", err)
+		return cliutil.Fail(out, "diff", cliutil.CodeFor(err), "%s", err)
 	}
 	pubSHA := make(map[string]string, len(assets))
 	pubSize := make(map[string]int64, len(assets))
@@ -505,7 +507,7 @@ func runDiffSelfCheck(ctx context.Context, cfg *Config, out *output.Writer, targ
 		Repository: fmt.Sprintf("%s/%s", coords.Domain, coords.Repository),
 		Status:     "ok",
 	}
-	fillClientMeta(ctx, client, result)
+	cliutil.FillClientMeta(ctx, client, result)
 
 	names := make([]string, 0, len(prov.Assets))
 	for _, e := range prov.Assets {
@@ -566,7 +568,7 @@ func runDiffSelfCheck(ctx context.Context, cfg *Config, out *output.Writer, targ
 		result.Error = fmt.Sprintf("%d asset(s) altered or missing since publish", failures)
 		out.Summary("FAILED: %d asset(s) altered or missing since publish.", failures)
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitMismatch}
+		return &cliutil.ExitError{Code: cob.ExitMismatch}
 	}
 	out.Summary("OK: every recorded asset still matches; chain intact.")
 	return out.CommandResult(result)
@@ -579,35 +581,35 @@ func runDiffSelfCheck(ctx context.Context, cfg *Config, out *output.Writer, targ
 // files, etc.). Published assets without a local file are reported as
 // "missing locally". The cob-provenance.json asset is excluded — it's
 // audit metadata, not a package file.
-func runDiffDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath, coordsArg string, verbose bool) error {
-	ctx, cancel := interruptable(ctx, cfg, out)
+func runDiffDir(ctx context.Context, cfg *cliutil.Config, out *output.Writer, dirPath, coordsArg string, verbose bool) error {
+	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
 
 	coords, err := manifest.ParseCoordinates(coordsArg)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
 	if coords.Namespace == "" || coords.Package == "" {
-		return fail(out, "diff", cob.ExitError,
+		return cliutil.Fail(out, "diff", cob.ExitError,
 			"full coordinates required (domain/repo/namespace/package[@version]); got %q", coordsArg)
 	}
 	if coords.Version == "" {
-		return fail(out, "diff", cob.ExitError,
+		return cliutil.Fail(out, "diff", cob.ExitError,
 			"version required: use @version or @latest in the coordinates")
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
 	registry := cob.NewRegistry(client)
-	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		return fail(out, "diff", codeFor(err), "%s", err)
+	if err := cliutil.ResolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
+		return cliutil.Fail(out, "diff", cliutil.CodeFor(err), "%s", err)
 	}
 
 	pub, err := registry.ListAssets(ctx, coords)
 	if err != nil {
-		return fail(out, "diff", codeFor(err), "%s", err)
+		return cliutil.Fail(out, "diff", cliutil.CodeFor(err), "%s", err)
 	}
 
 	absDir, _ := filepath.Abs(dirPath)
@@ -622,7 +624,7 @@ func runDiffDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath, c
 		Repository: fmt.Sprintf("%s/%s", coords.Domain, coords.Repository),
 		Status:     "ok",
 	}
-	fillClientMeta(ctx, client, result)
+	cliutil.FillClientMeta(ctx, client, result)
 
 	nameWidth := pickNameColumnWidth(extractAssetNames(pub))
 	termWidth := output.TerminalWidth()
@@ -635,11 +637,11 @@ func runDiffDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath, c
 			continue
 		}
 		// CodeArtifact asset names are server-controlled and path-like; route
-		// through the same safeJoin defense as pull so a malicious or
+		// through the same cliutil.SafeJoin defense as pull so a malicious or
 		// malformed name (../../etc/passwd, an absolute path, a symlinked
 		// component) can't pull hashes of files outside dirPath into the
 		// comparison report.
-		localPath, joinErr := safeJoin(dirPath, a.Name)
+		localPath, joinErr := cliutil.SafeJoin(dirPath, a.Name)
 		if joinErr != nil {
 			opErrors++
 			ar := cob.AssetResult{Name: a.Name, Source: filepath.Join(dirPath, a.Name)}
@@ -716,7 +718,7 @@ func runDiffDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath, c
 	// op-errors. CI gates that branch on exit 4 (ExitMismatch) get the
 	// user-visible truth — "stuff differs" — even when one row also
 	// failed to stat. The opposite ordering meant a single transient
-	// op-error masked the actual diff and turned a deterministic-fail
+	// op-error masked the actual diff and turned a deterministic-cliutil.Fail
 	// gate into "retry, maybe it's flaky." Op errors still surface
 	// (warning in the summary line + per-asset Err on the JSON result),
 	// they just don't *override* a mismatch verdict.
@@ -733,13 +735,13 @@ func runDiffDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath, c
 				mismatch, missing, matched)
 		}
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitMismatch}
+		return &cliutil.ExitError{Code: cob.ExitMismatch}
 	case opErrors > 0:
 		result.Status = "error"
 		result.Error = fmt.Sprintf("%d asset(s) could not be checked", opErrors)
 		out.Summary("FAILED: %d could not be checked (%d matched).", opErrors, matched)
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitError}
+		return &cliutil.ExitError{Code: cob.ExitError}
 	}
 	out.Summary("OK: %d files match the published version byte-for-byte.", matched)
 	return out.CommandResult(result)
@@ -750,42 +752,42 @@ func runDiffDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath, c
 // provenance asset is excluded (its bytes trivially differ even when
 // the package didn't change). Cross-repo same-package is allowed —
 // the natural "did promotion preserve the bytes?" check.
-func runDiffVersions(ctx context.Context, cfg *Config, out *output.Writer, leftTarget, rightTarget string, verbose bool) error {
+func runDiffVersions(ctx context.Context, cfg *cliutil.Config, out *output.Writer, leftTarget, rightTarget string, verbose bool) error {
 	left, err := manifest.ParseCoordinates(leftTarget)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "left: %s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "left: %s", err)
 	}
 	right, err := manifest.ParseCoordinates(rightTarget)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "right: %s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "right: %s", err)
 	}
 	for _, c := range []*cob.PackageCoordinates{left, right} {
 		if c.Namespace == "" || c.Package == "" || c.Version == "" {
-			return fail(out, "diff", cob.ExitError,
+			return cliutil.Fail(out, "diff", cob.ExitError,
 				"both arguments must be full coordinates with a version (domain/repo/ns/pkg@version)")
 		}
 	}
 	if left.Namespace != right.Namespace || left.Package != right.Package {
-		return fail(out, "diff", cob.ExitError,
+		return cliutil.Fail(out, "diff", cob.ExitError,
 			"both versions must reference the same package (%s/%s vs %s/%s)",
 			left.Namespace, left.Package, right.Namespace, right.Package)
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "diff", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
 	registry := cob.NewRegistry(client)
-	if err := resolveLatestIfNeeded(ctx, left, registry, out); err != nil {
-		return fail(out, "diff", codeFor(err), "left: %s", err)
+	if err := cliutil.ResolveLatestIfNeeded(ctx, left, registry, out); err != nil {
+		return cliutil.Fail(out, "diff", cliutil.CodeFor(err), "left: %s", err)
 	}
-	if err := resolveLatestIfNeeded(ctx, right, registry, out); err != nil {
-		return fail(out, "diff", codeFor(err), "right: %s", err)
+	if err := cliutil.ResolveLatestIfNeeded(ctx, right, registry, out); err != nil {
+		return cliutil.Fail(out, "diff", cliutil.CodeFor(err), "right: %s", err)
 	}
 
 	cmps, err := compareVersions(ctx, registry, left, right)
 	if err != nil {
-		return fail(out, "diff", codeFor(err), "%s", err)
+		return cliutil.Fail(out, "diff", cliutil.CodeFor(err), "%s", err)
 	}
 
 	leftLabel := fmt.Sprintf("%s/%s/%s/%s@%s", left.Domain, left.Repository, left.Namespace, left.Package, left.Version)
@@ -798,7 +800,7 @@ func runDiffVersions(ctx context.Context, cfg *Config, out *output.Writer, leftT
 		Repository: fmt.Sprintf("%s/%s vs %s/%s", left.Domain, left.Repository, right.Domain, right.Repository),
 		Status:     "ok",
 	}
-	fillClientMeta(ctx, client, result)
+	cliutil.FillClientMeta(ctx, client, result)
 
 	_ = verbose // version-vs-version mode shows compact +/-/~ rows; verbose has no extra detail to add yet
 
@@ -833,7 +835,7 @@ func runDiffVersions(ctx context.Context, cfg *Config, out *output.Writer, leftT
 		result.Status = "drift"
 		result.Error = fmt.Sprintf("%d added, %d removed, %d changed", added, removed, changed)
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitMismatch}
+		return &cliutil.ExitError{Code: cob.ExitMismatch}
 	}
 	return out.CommandResult(result)
 }

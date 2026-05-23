@@ -13,19 +13,21 @@ import (
 	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 
 	"github.com/jmurray2011/cob/internal/cob"
+
+	"github.com/jmurray2011/cob/internal/cliutil/clitest"
 )
 
-// provenanceCA returns a fakeCA whose GetPackageVersionAsset for
+// provenanceCA returns a clitest.FakeCA whose GetPackageVersionAsset for
 // cob-provenance.json returns the given provenance document (JSON-encoded).
 // Other asset names return ResourceNotFound, matching real behavior.
-func provenanceCA(t *testing.T, prov *cob.Provenance) *fakeCA {
+func provenanceCA(t *testing.T, prov *cob.Provenance) *clitest.FakeCA {
 	t.Helper()
 	body, err := json.Marshal(prov)
 	if err != nil {
 		t.Fatalf("marshal provenance: %v", err)
 	}
-	return &fakeCA{
-		getAssetFn: func(in *codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
+	return &clitest.FakeCA{
+		GetAssetFn: func(in *codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
 			if in.Asset == nil || *in.Asset != cob.ProvenanceFile {
 				return nil, &catypes.ResourceNotFoundException{}
 			}
@@ -70,7 +72,7 @@ func sampleProvenance() *cob.Provenance {
 
 func TestRunLogTextEmitsChainAndOrigins(t *testing.T) {
 	ctx := context.Background()
-	cfg, stdout, _ := useFake(t, provenanceCA(t, sampleProvenance()))
+	cfg, stdout, _ := clitest.UseFake(t, provenanceCA(t, sampleProvenance()))
 	if err := runLog(ctx, cfg, "acme/dev/tools/app@2.1.0", false); err != nil {
 		t.Fatalf("log: %v", err)
 	}
@@ -95,7 +97,7 @@ func TestRunLogTextEmitsChainAndOrigins(t *testing.T) {
 
 func TestRunLogJSONEmitsProvenance(t *testing.T) {
 	ctx := context.Background()
-	cfg, stdout, _ := useFake(t, provenanceCA(t, sampleProvenance()))
+	cfg, stdout, _ := clitest.UseFake(t, provenanceCA(t, sampleProvenance()))
 	cfg.JSON = true
 	if err := runLog(ctx, cfg, "acme/dev/tools/app@2.1.0", false); err != nil {
 		t.Fatalf("log --json: %v", err)
@@ -122,23 +124,23 @@ func TestRunLogMissingProvenance(t *testing.T) {
 	// FetchProvenance returns (nil, nil). log should refuse rather than
 	// fabricate a chain.
 	ctx := context.Background()
-	cfg, _, _ := useFake(t, &fakeCA{}) // default getAsset returns ResourceNotFound
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{}) // default getAsset returns ResourceNotFound
 	err := runLog(ctx, cfg, "acme/dev/tools/app@2.1.0", false)
-	wantExit(t, err, cob.ExitError)
+	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunLogRequiresVersion(t *testing.T) {
 	ctx := context.Background()
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	err := runLog(ctx, cfg, "acme/dev/tools/app", false)
-	wantExit(t, err, cob.ExitError)
+	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunLogPartialCoords(t *testing.T) {
 	ctx := context.Background()
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	err := runLog(ctx, cfg, "acme/dev", false)
-	wantExit(t, err, cob.ExitError)
+	clitest.WantExit(t, err, cob.ExitError)
 }
 
 // chainRefFake serves the provenance asset AND a per-repo
@@ -146,20 +148,20 @@ func TestRunLogPartialCoords(t *testing.T) {
 // --check-references can be exercised end-to-end. existsByRepo[repo]
 // of type bool says "version exists / deleted"; an error value injects a
 // transient probe failure.
-func chainRefFake(t *testing.T, prov *cob.Provenance, existsByRepo map[string]any) *fakeCA {
+func chainRefFake(t *testing.T, prov *cob.Provenance, existsByRepo map[string]any) *clitest.FakeCA {
 	t.Helper()
 	body, err := json.Marshal(prov)
 	if err != nil {
 		t.Fatalf("marshal provenance: %v", err)
 	}
-	return &fakeCA{
-		getAssetFn: func(in *codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
+	return &clitest.FakeCA{
+		GetAssetFn: func(in *codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
 			if in.Asset == nil || *in.Asset != cob.ProvenanceFile {
 				return nil, &catypes.ResourceNotFoundException{}
 			}
 			return &codeartifact.GetPackageVersionAssetOutput{Asset: io.NopCloser(strings.NewReader(string(body)))}, nil
 		},
-		describeFn: func(in *codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+		DescribeFn: func(in *codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 			repo := aws.ToString(in.Repository)
 			answer, ok := existsByRepo[repo]
 			if !ok {
@@ -186,7 +188,7 @@ func TestRunLogCheckReferencesAnnotatesDeleted(t *testing.T) {
 	// copy. The source repo "dev" has been deleted; "staging" still has
 	// the version (it's what we're logging from).
 	ctx := context.Background()
-	cfg, stdout, stderr := useFake(t, chainRefFake(t, sampleProvenance(), map[string]any{
+	cfg, stdout, stderr := clitest.UseFake(t, chainRefFake(t, sampleProvenance(), map[string]any{
 		"dev":     false,
 		"staging": true,
 	}))
@@ -211,7 +213,7 @@ func TestRunLogCheckReferencesSilentWhenAllResolve(t *testing.T) {
 	// Clean chain → no inline annotations, no warning. Common-case
 	// readability matters here.
 	ctx := context.Background()
-	cfg, stdout, stderr := useFake(t, chainRefFake(t, sampleProvenance(), map[string]any{
+	cfg, stdout, stderr := clitest.UseFake(t, chainRefFake(t, sampleProvenance(), map[string]any{
 		"dev":     true,
 		"staging": true,
 	}))
@@ -231,7 +233,7 @@ func TestRunLogCheckReferencesAnnotatesProbeFailure(t *testing.T) {
 	// from (deleted) — so operators can't confuse "couldn't check" with
 	// "definitely gone".
 	ctx := context.Background()
-	cfg, stdout, _ := useFake(t, chainRefFake(t, sampleProvenance(), map[string]any{
+	cfg, stdout, _ := clitest.UseFake(t, chainRefFake(t, sampleProvenance(), map[string]any{
 		"dev":     &catypes.AccessDeniedException{Message: aws.String("denied")},
 		"staging": true,
 	}))
@@ -248,7 +250,7 @@ func TestRunLogCheckReferencesNoOpInJSONMode(t *testing.T) {
 	// an extra "references" field. The output must round-trip cleanly to
 	// a Provenance struct.
 	ctx := context.Background()
-	cfg, stdout, _ := useFake(t, chainRefFake(t, sampleProvenance(), map[string]any{
+	cfg, stdout, _ := clitest.UseFake(t, chainRefFake(t, sampleProvenance(), map[string]any{
 		"dev":     false,
 		"staging": true,
 	}))
@@ -271,8 +273,8 @@ func TestProbeChainReferencesDedupes(t *testing.T) {
 	// exactly once. The set dedupes by "domain/repo" before fan-out.
 	calls := map[string]int{}
 	var mu sync.Mutex
-	ca := &fakeCA{
-		describeFn: func(in *codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+	ca := &clitest.FakeCA{
+		DescribeFn: func(in *codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 			mu.Lock()
 			calls[aws.ToString(in.Repository)]++
 			mu.Unlock()
@@ -281,7 +283,7 @@ func TestProbeChainReferencesDedupes(t *testing.T) {
 			}, nil
 		},
 	}
-	cfg, _, _ := useFake(t, ca)
+	cfg, _, _ := clitest.UseFake(t, ca)
 	_ = cfg
 	registry := cob.NewRegistry(&cob.Client{CodeArtifact: ca, Region: "us-east-2"})
 	coords := &cob.PackageCoordinates{Namespace: "tools", Package: "app", Version: "2.1.0"}

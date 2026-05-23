@@ -9,12 +9,14 @@ import (
 	"time"
 
 	"github.com/jmurray2011/cob/internal/cob"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
 func TestRunConcurrentEnforcesCeiling(t *testing.T) {
 	const n = 200
 	var inFlight, peak int32
-	runConcurrent(context.Background(), n, 5000, func(context.Context, int) (*cob.AssetResult, error) {
+	cliutil.RunConcurrent(context.Background(), n, 5000, func(context.Context, int) (*cob.AssetResult, error) {
 		cur := atomic.AddInt32(&inFlight, 1)
 		for {
 			p := atomic.LoadInt32(&peak)
@@ -26,15 +28,15 @@ func TestRunConcurrentEnforcesCeiling(t *testing.T) {
 		atomic.AddInt32(&inFlight, -1)
 		return &cob.AssetResult{}, nil
 	})
-	if peak > maxConcurrency {
-		t.Fatalf("peak concurrency %d exceeded ceiling %d (--concurrency must be clamped)", peak, maxConcurrency)
+	if peak > cliutil.MaxConcurrency {
+		t.Fatalf("peak concurrency %d exceeded ceiling %d (--concurrency must be clamped)", peak, cliutil.MaxConcurrency)
 	}
 }
 
 func TestClampConcurrency(t *testing.T) {
 	for in, want := range map[int]int{-3: 1, 0: 1, 1: 1, 4: 4, 32: 32, 5000: 32} {
-		if got := clampConcurrency(in); got != want {
-			t.Errorf("clampConcurrency(%d) = %d, want %d", in, got, want)
+		if got := cliutil.ClampConcurrency(in); got != want {
+			t.Errorf("cliutil.ClampConcurrency(%d) = %d, want %d", in, got, want)
 		}
 	}
 }
@@ -42,7 +44,7 @@ func TestClampConcurrency(t *testing.T) {
 func TestRunConcurrentOrderAndCompleteness(t *testing.T) {
 	const n = 25
 	var calls int32
-	results, ok := runConcurrent(context.Background(), n, 6, func(_ context.Context, i int) (*cob.AssetResult, error) {
+	results, ok := cliutil.RunConcurrent(context.Background(), n, 6, func(_ context.Context, i int) (*cob.AssetResult, error) {
 		atomic.AddInt32(&calls, 1)
 		return &cob.AssetResult{Name: strconv.Itoa(i)}, nil
 	})
@@ -61,7 +63,7 @@ func TestRunConcurrentOrderAndCompleteness(t *testing.T) {
 
 func TestRunConcurrentSequentialStopsAtFirstError(t *testing.T) {
 	var calls int32
-	results, ok := runConcurrent(context.Background(), 6, 1, func(_ context.Context, i int) (*cob.AssetResult, error) {
+	results, ok := cliutil.RunConcurrent(context.Background(), 6, 1, func(_ context.Context, i int) (*cob.AssetResult, error) {
 		atomic.AddInt32(&calls, 1)
 		if i == 3 {
 			return &cob.AssetResult{}, errors.New("boom")
@@ -80,7 +82,7 @@ func TestRunConcurrentSequentialStopsAtFirstError(t *testing.T) {
 }
 
 func TestRunConcurrentParallelFailureReportsNotOK(t *testing.T) {
-	_, ok := runConcurrent(context.Background(), 20, 8, func(_ context.Context, i int) (*cob.AssetResult, error) {
+	_, ok := cliutil.RunConcurrent(context.Background(), 20, 8, func(_ context.Context, i int) (*cob.AssetResult, error) {
 		if i == 5 {
 			return &cob.AssetResult{}, errors.New("boom")
 		}
@@ -104,9 +106,9 @@ func TestRunConcurrentFirstErrorCancelsInFlightTasks(t *testing.T) {
 	// ~1s wall time. With cancellation wired, they all bail in
 	// milliseconds and aborted should land at 7.
 	start := time.Now()
-	_, ok := runConcurrent(context.Background(), 8, 8, func(ctx context.Context, i int) (*cob.AssetResult, error) {
+	_, ok := cliutil.RunConcurrent(context.Background(), 8, 8, func(ctx context.Context, i int) (*cob.AssetResult, error) {
 		if i == 0 {
-			return &cob.AssetResult{}, errors.New("first to fail")
+			return &cob.AssetResult{}, errors.New("first to cliutil.Fail")
 		}
 		select {
 		case <-ctx.Done():
@@ -120,7 +122,7 @@ func TestRunConcurrentFirstErrorCancelsInFlightTasks(t *testing.T) {
 		t.Fatal("first-error run must be not-ok")
 	}
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
-		t.Errorf("in-flight peers did not honor first-error cancel (elapsed %v) — runConcurrent's cancel signal isn't wiring through", elapsed)
+		t.Errorf("in-flight peers did not honor first-error cancel (elapsed %v) — cliutil.RunConcurrent's cancel signal isn't wiring through", elapsed)
 	}
 	if aborted < 1 {
 		t.Errorf("expected at least one peer to observe ctx.Done() and abort; aborted=%d", aborted)
@@ -128,12 +130,12 @@ func TestRunConcurrentFirstErrorCancelsInFlightTasks(t *testing.T) {
 }
 
 // TestRunConcurrentRespectsAlreadyCanceledCtx: a ctx canceled before
-// runConcurrent starts must not schedule any work.
+// cliutil.RunConcurrent starts must not schedule any work.
 func TestRunConcurrentRespectsAlreadyCanceledCtx(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var calls int32
-	_, ok := runConcurrent(ctx, 10, 4, func(context.Context, int) (*cob.AssetResult, error) {
+	_, ok := cliutil.RunConcurrent(ctx, 10, 4, func(context.Context, int) (*cob.AssetResult, error) {
 		atomic.AddInt32(&calls, 1)
 		return &cob.AssetResult{}, nil
 	})

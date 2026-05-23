@@ -9,9 +9,11 @@ import (
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/internal/output"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newTreeCmd(cfg *Config) *cobra.Command {
+func newTreeCmd(cfg *cliutil.Config) *cobra.Command {
 	var flagDepth string
 
 	cmd := &cobra.Command{
@@ -56,20 +58,20 @@ func newTreeCmd(cfg *Config) *cobra.Command {
 // runTree resolves the start coordinates, picks a final depth (honoring an
 // explicit --depth, otherwise descending one level under the targeted
 // node), walks the hierarchy, and renders the result.
-func runTree(ctx context.Context, cfg *Config, cmd *cobra.Command, target, depthFlag string) error {
-	out := newWriter(cfg)
+func runTree(ctx context.Context, cfg *cliutil.Config, cmd *cobra.Command, target, depthFlag string) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 
 	depth, err := parseTreeDepth(depthFlag)
 	if err != nil {
-		return fail(out, "tree", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "tree", cob.ExitError, "%s", err)
 	}
 
 	var start *cob.PackageCoordinates
 	if target != "" {
 		start, err = manifest.ParseCoordinates(target)
 		if err != nil {
-			return fail(out, "tree", cob.ExitError, "%s", err)
+			return cliutil.Fail(out, "tree", cob.ExitError, "%s", err)
 		}
 	}
 
@@ -87,15 +89,15 @@ func runTree(ctx context.Context, cfg *Config, cmd *cobra.Command, target, depth
 	if start != nil && cmd.Flags().Changed("depth") {
 		startKind := startDepthOf(start)
 		if depth < startKind {
-			return fail(out, "tree", cob.ExitError,
+			return cliutil.Fail(out, "tree", cob.ExitError,
 				"--depth %s is shallower than the target (level %s); pick a deeper depth or drop the target",
 				depthName(depth), depthName(startKind))
 		}
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "tree", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "tree", cob.ExitError, "%s", err)
 	}
 	registry := cob.NewRegistry(client)
 

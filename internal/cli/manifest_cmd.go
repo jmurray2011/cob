@@ -10,9 +10,11 @@ import (
 
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newManifestCmd(cfg *Config) *cobra.Command {
+func newManifestCmd(cfg *cliutil.Config) *cobra.Command {
 	var flagVersion string
 
 	cmd := &cobra.Command{
@@ -38,37 +40,37 @@ func newManifestCmd(cfg *Config) *cobra.Command {
 	return cmd
 }
 
-func runManifest(ctx context.Context, cfg *Config, target, versionFlag string) error {
-	out := newWriter(cfg)
+func runManifest(ctx context.Context, cfg *cliutil.Config, target, versionFlag string) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
-		return fail(out, "manifest", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "manifest", cob.ExitError, "%s", err)
 	}
 	if coords.Namespace == "" || coords.Package == "" {
-		return fail(out, "manifest", cob.ExitError, "full coordinates required (domain/repo/namespace/package[@version])")
+		return cliutil.Fail(out, "manifest", cob.ExitError, "full coordinates required (domain/repo/namespace/package[@version])")
 	}
 	if coords.Version == "" {
-		v, verr := resolveVersion(versionFlag)
+		v, verr := cliutil.ResolveVersion(versionFlag)
 		if verr != nil {
-			return fail(out, "manifest", cob.ExitError, "%s", verr)
+			return cliutil.Fail(out, "manifest", cob.ExitError, "%s", verr)
 		}
 		coords.Version = v
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "manifest", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "manifest", cob.ExitError, "%s", err)
 	}
 	registry := cob.NewRegistry(client)
-	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		return fail(out, "manifest", codeFor(err), "%s", err)
+	if err := cliutil.ResolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
+		return cliutil.Fail(out, "manifest", cliutil.CodeFor(err), "%s", err)
 	}
 
 	yaml, err := manifestYAMLFor(ctx, client, coords)
 	if err != nil {
-		return fail(out, "manifest", codeFor(err), "%s", err)
+		return cliutil.Fail(out, "manifest", cliutil.CodeFor(err), "%s", err)
 	}
 	fmt.Fprint(out.Stdout(), yaml)
 	return nil

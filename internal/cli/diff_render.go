@@ -141,7 +141,7 @@ func extractAssetNames(pub []cob.AssetSummary) []string {
 //
 // Symlink defense: the leaf is opened via openLeafNoFollow, which on unix
 // uses O_NOFOLLOW (atomic refusal — even a TOCTOU swap to a symlink
-// between the safeJoin check and the open is caught) and on other
+// between the cliutil.SafeJoin check and the open is caught) and on other
 // platforms falls back to an Lstat-then-Open check. Hashing a symlinked
 // file would let a local symlink (planted earlier, or accidentally
 // created with `ln -s`) redirect the integrity check to arbitrary

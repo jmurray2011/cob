@@ -10,18 +10,20 @@ import (
 	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 
 	"github.com/jmurray2011/cob/internal/cob"
+
+	"github.com/jmurray2011/cob/internal/cliutil/clitest"
 )
 
-// unfinishedCA returns a fakeCA whose DescribePackageVersion reports the
+// unfinishedCA returns a clitest.FakeCA whose DescribePackageVersion reports the
 // version as Unfinished — the cleanup case that rm allows by default.
-func unfinishedCA(deleted *int) *fakeCA {
-	return &fakeCA{
-		describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+func unfinishedCA(deleted *int) *clitest.FakeCA {
+	return &clitest.FakeCA{
+		DescribeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 			return &codeartifact.DescribePackageVersionOutput{
 				PackageVersion: &catypes.PackageVersionDescription{Status: catypes.PackageVersionStatusUnfinished},
 			}, nil
 		},
-		deleteFn: func(*codeartifact.DeletePackageVersionsInput) (*codeartifact.DeletePackageVersionsOutput, error) {
+		DeleteFn: func(*codeartifact.DeletePackageVersionsInput) (*codeartifact.DeletePackageVersionsOutput, error) {
 			if deleted != nil {
 				*deleted++
 			}
@@ -30,19 +32,19 @@ func unfinishedCA(deleted *int) *fakeCA {
 	}
 }
 
-// publishedCA returns a fakeCA whose DescribePackageVersion reports the
+// publishedCA returns a clitest.FakeCA whose DescribePackageVersion reports the
 // version as Published (a real release). Used to verify the Tier 1 gate.
 // downstreamRepos, if non-nil, makes the version exist in *those* repos
 // too (matched against input.Repository) — every other repo gets a
 // ResourceNotFound. ListRepositoriesInDomain returns every name in
 // allRepos.
-func publishedCA(deleted *int, allRepos, downstreamRepos []string) *fakeCA {
+func publishedCA(deleted *int, allRepos, downstreamRepos []string) *clitest.FakeCA {
 	dn := make(map[string]bool, len(downstreamRepos))
 	for _, r := range downstreamRepos {
 		dn[r] = true
 	}
-	return &fakeCA{
-		describeFn: func(in *codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+	return &clitest.FakeCA{
+		DescribeFn: func(in *codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 			repo := aws.ToString(in.Repository)
 			// Probes for the deleted version's home repo and any downstream
 			// copy report Published; every other repo says "not found".
@@ -53,14 +55,14 @@ func publishedCA(deleted *int, allRepos, downstreamRepos []string) *fakeCA {
 			}
 			return nil, &catypes.ResourceNotFoundException{}
 		},
-		listReposFn: func(*codeartifact.ListRepositoriesInDomainInput) (*codeartifact.ListRepositoriesInDomainOutput, error) {
+		ListReposFn: func(*codeartifact.ListRepositoriesInDomainInput) (*codeartifact.ListRepositoriesInDomainOutput, error) {
 			repos := make([]catypes.RepositorySummary, 0, len(allRepos))
 			for _, r := range allRepos {
 				repos = append(repos, catypes.RepositorySummary{Name: aws.String(r)})
 			}
 			return &codeartifact.ListRepositoriesInDomainOutput{Repositories: repos}, nil
 		},
-		deleteFn: func(*codeartifact.DeletePackageVersionsInput) (*codeartifact.DeletePackageVersionsOutput, error) {
+		DeleteFn: func(*codeartifact.DeletePackageVersionsInput) (*codeartifact.DeletePackageVersionsOutput, error) {
 			if deleted != nil {
 				*deleted++
 			}
@@ -72,7 +74,7 @@ func publishedCA(deleted *int, allRepos, downstreamRepos []string) *fakeCA {
 func TestRunRmUnfinishedDefault(t *testing.T) {
 	ctx := context.Background()
 	var deleted int
-	cfg, _, _ := useFake(t, unfinishedCA(&deleted))
+	cfg, _, _ := clitest.UseFake(t, unfinishedCA(&deleted))
 	// Default (no flags) deletes an Unfinished version with confirm bypassed.
 	if err := runRm(ctx, cfg, "acme/dev/tools/app@2.1.0-rc1", false, false, true); err != nil {
 		t.Fatalf("rm Unfinished: %v", err)
@@ -84,41 +86,41 @@ func TestRunRmUnfinishedDefault(t *testing.T) {
 
 func TestRunRmPublishedRefusedWithoutForce(t *testing.T) {
 	ctx := context.Background()
-	cfg, _, _ := useFake(t, publishedCA(nil, []string{"dev"}, nil))
+	cfg, _, _ := clitest.UseFake(t, publishedCA(nil, []string{"dev"}, nil))
 	err := runRm(ctx, cfg, "acme/dev/tools/app@2.1.0", false, false, true)
-	wantExit(t, err, cob.ExitConflict)
+	clitest.WantExit(t, err, cob.ExitConflict)
 }
 
 func TestRunRmRefusesAtLatest(t *testing.T) {
 	ctx := context.Background()
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	err := runRm(ctx, cfg, "acme/dev/tools/app@latest", true, false, true)
-	wantExit(t, err, cob.ExitError)
+	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunRmRequiresVersion(t *testing.T) {
 	ctx := context.Background()
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	// No @version segment — partial coords.
 	err := runRm(ctx, cfg, "acme/dev/tools/app", true, false, true)
-	wantExit(t, err, cob.ExitError)
+	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunRmEverywhereWithoutForce(t *testing.T) {
 	ctx := context.Background()
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	err := runRm(ctx, cfg, "acme/dev/tools/app@2.1.0", false, true, true)
-	wantExit(t, err, cob.ExitError)
+	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunRmForceRefusedWithDownstream(t *testing.T) {
 	ctx := context.Background()
 	var deleted int
 	// Source repo "dev" + downstream copies in "staging" and "prod".
-	cfg, _, stderr := useFake(t, publishedCA(&deleted,
+	cfg, _, stderr := clitest.UseFake(t, publishedCA(&deleted,
 		[]string{"dev", "staging", "prod"}, []string{"staging", "prod"}))
 	err := runRm(ctx, cfg, "acme/dev/tools/app@2.1.0", true, false, true)
-	wantExit(t, err, cob.ExitConflict)
+	clitest.WantExit(t, err, cob.ExitConflict)
 	if deleted != 0 {
 		t.Errorf("DeleteVersion should not run when downstream copies block: ran %d times", deleted)
 	}
@@ -133,7 +135,7 @@ func TestRunRmForceRefusedWithDownstream(t *testing.T) {
 func TestRunRmForceEverywhereDeletesAnyway(t *testing.T) {
 	ctx := context.Background()
 	var deleted int
-	cfg, _, _ := useFake(t, publishedCA(&deleted,
+	cfg, _, _ := clitest.UseFake(t, publishedCA(&deleted,
 		[]string{"dev", "staging", "prod"}, []string{"staging", "prod"}))
 	if err := runRm(ctx, cfg, "acme/dev/tools/app@2.1.0", true, true, true); err != nil {
 		t.Fatalf("--force --everywhere should proceed: %v", err)
@@ -149,7 +151,7 @@ func TestRunRmForceDeletesLonePublished(t *testing.T) {
 	// downstream copies.
 	ctx := context.Background()
 	var deleted int
-	cfg, _, _ := useFake(t, publishedCA(&deleted, []string{"dev", "staging"}, nil))
+	cfg, _, _ := clitest.UseFake(t, publishedCA(&deleted, []string{"dev", "staging"}, nil))
 	if err := runRm(ctx, cfg, "acme/dev/tools/app@2.1.0", true, false, true); err != nil {
 		t.Fatalf("--force on a lone Published version should proceed: %v", err)
 	}
@@ -162,11 +164,11 @@ func TestRunRmMissingVersion(t *testing.T) {
 	// The version genuinely doesn't exist (no Describe response). The
 	// not-found path is distinct from the immutability gate.
 	ctx := context.Background()
-	cfg, _, _ := useFake(t, &fakeCA{
-		describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{
+		DescribeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 			return nil, &catypes.ResourceNotFoundException{}
 		},
 	})
 	err := runRm(ctx, cfg, "acme/dev/tools/app@9.9.9", false, false, true)
-	wantExit(t, err, cob.ExitNotFound)
+	clitest.WantExit(t, err, cob.ExitNotFound)
 }

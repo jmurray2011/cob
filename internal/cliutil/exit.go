@@ -1,4 +1,4 @@
-package cli
+package cliutil
 
 import (
 	"fmt"
@@ -17,18 +17,19 @@ type ExitError struct{ Code int }
 
 func (e *ExitError) Error() string { return fmt.Sprintf("exit status %d", e.Code) }
 
-// fail emits the error (stderr, and a minimal JSON CommandResult under --json)
-// and returns an ExitError carrying code. It replaces the old
-// `out.ErrorResult(cmd, msg); os.Exit(code)` pair.
-func fail(out *output.Writer, command string, code int, format string, args ...any) error {
+// Fail emits the error (stderr, and a minimal JSON CommandResult under --json)
+// and returns an ExitError carrying code. Used by every run* on the
+// command-level error paths so the user sees the message exactly once and
+// main translates the code to a process exit status.
+func Fail(out *output.Writer, command string, code int, format string, args ...any) error {
 	out.ErrorResult(command, fmt.Sprintf(format, args...))
 	return &ExitError{Code: code}
 }
 
-// codeFor maps an error to an exit code: ExitNotFound when it represents a
+// CodeFor maps an error to an exit code: ExitNotFound when it represents a
 // missing package/version/asset, ExitError otherwise — so a network/throttle
 // failure isn't misreported to CI as "not found".
-func codeFor(err error) int {
+func CodeFor(err error) int {
 	if cob.IsNotFound(err) {
 		return cob.ExitNotFound
 	}

@@ -8,6 +8,8 @@ import (
 
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/concurrency"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
 // compareConcurrency bounds parallel source resolution in
@@ -51,7 +53,7 @@ type assetCompare struct {
 // SHA precedence: a known checksum (no transfer) → a --deep download+hash →
 // the recorded provenance value. The provenance asset itself is never
 // treated as a manifest source or an "extra" published asset.
-func compareManifestToPublished(ctx context.Context, sources []NamedSource, reg *cob.Registry, coords *cob.PackageCoordinates, deep bool, prov *cob.Provenance) ([]assetCompare, error) {
+func compareManifestToPublished(ctx context.Context, sources []cliutil.NamedSource, reg *cob.Registry, coords *cob.PackageCoordinates, deep bool, prov *cob.Provenance) ([]assetCompare, error) {
 	pub, err := reg.ListAssets(ctx, coords)
 	if err != nil {
 		return nil, err
@@ -71,7 +73,7 @@ func compareManifestToPublished(ctx context.Context, sources []NamedSource, reg 
 	// makes 1–3 network calls. ForEach preserves input order, so the
 	// resulting slice keeps the manifest's source ordering (important for
 	// stable diff output across re-runs).
-	cmps := concurrency.ForEach(ctx, sources, compareConcurrency, func(ctx context.Context, _ int, ns NamedSource) assetCompare {
+	cmps := concurrency.ForEach(ctx, sources, compareConcurrency, func(ctx context.Context, _ int, ns cliutil.NamedSource) assetCompare {
 		name := ns.Source.Filename()
 		c := assetCompare{Name: name, Key: ns.Name, Source: ns.Source.URI(), InManifest: true}
 

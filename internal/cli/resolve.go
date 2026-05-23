@@ -9,9 +9,11 @@ import (
 
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newResolveCmd(cfg *Config) *cobra.Command {
+func newResolveCmd(cfg *cliutil.Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resolve <coordinates>",
 		Short: "Resolve the latest version of a package",
@@ -26,33 +28,33 @@ func newResolveCmd(cfg *Config) *cobra.Command {
 	return cmd
 }
 
-func runResolve(ctx context.Context, cfg *Config, target string) error {
-	out := newWriter(cfg)
+func runResolve(ctx context.Context, cfg *cliutil.Config, target string) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
-		return fail(out, "resolve", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "resolve", cob.ExitError, "%s", err)
 	}
 	if coords.Namespace == "" || coords.Package == "" {
-		return fail(out, "resolve", cob.ExitError, "full coordinates required (domain/repo/namespace/package)")
+		return cliutil.Fail(out, "resolve", cob.ExitError, "full coordinates required (domain/repo/namespace/package)")
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "resolve", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "resolve", cob.ExitError, "%s", err)
 	}
 
 	registry := cob.NewRegistry(client)
 
 	// Strip @latest if provided -- resolve always means latest.
 	if coords.Version != "" && coords.Version != "latest" {
-		return fail(out, "resolve", cob.ExitError, "resolve always returns the latest version; got @%s", coords.Version)
+		return cliutil.Fail(out, "resolve", cob.ExitError, "resolve always returns the latest version; got @%s", coords.Version)
 	}
 
 	version, err := registry.ResolveLatest(ctx, coords)
 	if err != nil {
-		return fail(out, "resolve", codeFor(err), "%s", err)
+		return cliutil.Fail(out, "resolve", cliutil.CodeFor(err), "%s", err)
 	}
 
 	if cfg.JSON {

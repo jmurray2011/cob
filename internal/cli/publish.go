@@ -10,9 +10,11 @@ import (
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/internal/output"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newPublishCmd(cfg *Config) *cobra.Command {
+func newPublishCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagVersion     string
 		flagForce       bool
@@ -45,34 +47,34 @@ func newPublishCmd(cfg *Config) *cobra.Command {
 	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Verify sources exist, show plan, don't publish")
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Skip confirmation")
 	cmd.Flags().BoolVar(&flagResume, "resume", false, "Continue an unfinished publish: upload only the missing assets")
-	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential; clamped to [1,32] to avoid CodeArtifact throttling — a warning prints if a passed value was changed)")
+	cmd.Flags().IntVar(&flagConcurrency, "concurrency", cliutil.DefaultConcurrency, "Max assets transferred in parallel (1 = sequential; clamped to [1,32] to avoid CodeArtifact throttling — a warning prints if a passed value was changed)")
 
 	return cmd
 }
 
-func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag string, force, dryRun, yes, resume bool, concurrency int) error {
-	out := newWriter(cfg)
+func runPublish(ctx context.Context, cfg *cliutil.Config, manifestPath, versionFlag string, force, dryRun, yes, resume bool, concurrency int) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
-	ctx, cancel := interruptable(ctx, cfg, out)
+	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
 
 	if resume && force {
-		return fail(out, "publish", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")
+		return cliutil.Fail(out, "publish", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")
 	}
 
-	version, err := resolveVersion(versionFlag)
+	version, err := cliutil.ResolveVersion(versionFlag)
 	if err != nil {
-		return fail(out, "publish", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "publish", cob.ExitError, "%s", err)
 	}
 	if version == "latest" {
-		return fail(out, "publish", cob.ExitError, "cannot publish to @latest, provide an explicit version")
+		return cliutil.Fail(out, "publish", cob.ExitError, "cannot publish to @latest, provide an explicit version")
 	}
 
 	m, err := manifest.Load(manifestPath)
 	if err != nil {
-		return fail(out, "publish", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "publish", cob.ExitError, "%s", err)
 	}
-	warnManifestOverrides(m, out)
+	cliutil.WarnManifestOverrides(m, out)
 	// Implicit pre-flight lint — same checks `cob diff <manifest>`
 	// exposes user-side. Bails before any AWS work if the manifest is
 	// broken (bad URI, missing local file, reserved asset name, basename
@@ -80,12 +82,12 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 	// guard ensures every manifest-based command refuses a bad manifest
 	// in the same way; there's no longer a "ran lint, didn't run lint"
 	// distinction to remember.
-	if err := validateManifest(m, version); err != nil {
-		return fail(out, "publish", cob.ExitError, "%s", err)
+	if err := cliutil.ValidateManifest(m, version); err != nil {
+		return cliutil.Fail(out, "publish", cob.ExitError, "%s", err)
 	}
 
 	if err := m.ResolveVariables(version); err != nil {
-		return fail(out, "publish", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "publish", cob.ExitError, "%s", err)
 	}
 
 	coords := &cob.PackageCoordinates{
@@ -96,9 +98,9 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 		Version:    version,
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "publish", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "publish", cob.ExitError, "%s", err)
 	}
 
 	publisher := cob.NewPublisher(client)
@@ -113,12 +115,12 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 	// must work whatever state the version is in.
 	status, exists, err := registry.VersionStatus(ctx, coords)
 	if err != nil {
-		return fail(out, "publish", cob.ExitError, "checking version: %s", err)
+		return cliutil.Fail(out, "publish", cob.ExitError, "checking version: %s", err)
 	}
 
-	sources, err := buildSources(m, client)
+	sources, err := cliutil.BuildSources(m, client)
 	if err != nil {
-		return fail(out, "publish", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "publish", cob.ExitError, "%s", err)
 	}
 	// Tell the live renderer how many rows to expect; bytes are 0
 	// because sources resolve lazily and we don't know sizes until they
@@ -132,7 +134,7 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 
 	present, code, gerr := gatePublish(ctx, registry, coords, status, exists, resume, force)
 	if gerr != nil {
-		return fail(out, "publish", code, "%s", gerr)
+		return cliutil.Fail(out, "publish", code, "%s", gerr)
 	}
 
 	// todo is how many sources still need uploading; the rest of `present`
@@ -151,9 +153,9 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 	}
 	out.Header("%s %s/%s@%s -> %s/%s", verb, m.Namespace, m.Package, version, m.Domain, m.Repository)
 
-	proceed, err := confirmAction(ctx, yes, prompt)
+	proceed, err := cliutil.ConfirmAction(ctx, yes, prompt)
 	if err != nil {
-		return fail(out, "publish", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "publish", cob.ExitError, "%s", err)
 	}
 	if !proceed {
 		out.Aborted("publish")
@@ -164,7 +166,7 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 	if exists && force {
 		if err := publisher.DeleteVersion(ctx, coords); err != nil {
 			out.Error("deleting existing version: %s", err)
-			return &ExitError{Code: cob.ExitError}
+			return &cliutil.ExitError{Code: cob.ExitError}
 		}
 	}
 
@@ -175,7 +177,7 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 		Repository: fmt.Sprintf("%s/%s", m.Domain, m.Repository),
 		Status:     "ok",
 	}
-	fillClientMeta(ctx, client, result)
+	cliutil.FillClientMeta(ctx, client, result)
 
 	// Real sources publish concurrently as Unfinished; the provenance
 	// document is published last with unfinished=false, which both records
@@ -225,8 +227,8 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 	}
 
 	if ok && len(todos) > 0 {
-		concurrency = resolveConcurrency(concurrency, out)
-		rest, restOk := runConcurrent(ctx, len(todos), concurrency, func(ctx context.Context, j int) (*cob.AssetResult, error) {
+		concurrency = cliutil.ResolveConcurrency(concurrency, out)
+		rest, restOk := cliutil.RunConcurrent(ctx, len(todos), concurrency, func(ctx context.Context, j int) (*cob.AssetResult, error) {
 			return uploadOne(ctx, todos[j])
 		})
 		for j, r := range rest {
@@ -265,18 +267,18 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 			out.Error("Interrupted.\n  %d of %d assets in place. Version is unfinished — re-run with --resume to continue.",
 				uploaded+skipped, len(sources))
 			out.CommandResult(result)
-			return &ExitError{Code: cob.ExitInterrupted}
+			return &cliutil.ExitError{Code: cob.ExitInterrupted}
 		}
 		result.Status = "error"
 		result.Error = firstResultError(results)
 		out.Error("%s\n  %d of %d assets in place. Version is unfinished — re-run with --resume to continue.",
 			result.Error, uploaded+skipped, len(sources))
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitError}
+		return &cliutil.ExitError{Code: cob.ExitError}
 	}
 
 	prov := buildPublishProvenance(ctx, m, version, sources, results, client, cfg.Version)
-	if err := finalizeProvenance(ctx, publisher, coords, prov, out, result, start,
+	if err := cliutil.FinalizeProvenance(ctx, publisher, coords, prov, out, result, start,
 		"Assets published but provenance/finalize failed. Version is unfinished — re-run with --resume to finalize it."); err != nil {
 		return err
 	}
@@ -302,14 +304,14 @@ func firstResultError(results []*cob.AssetResult) string {
 	return "asset transfer failed"
 }
 
-func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []NamedSource, client *cob.Client, out *output.Writer) error {
+func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []cliutil.NamedSource, client *cob.Client, out *output.Writer) error {
 	result := &cob.CommandResult{
 		Command:    "publish",
 		Package:    fmt.Sprintf("%s/%s@%s", coords.Namespace, coords.Package, coords.Version),
 		Repository: fmt.Sprintf("%s/%s", coords.Domain, coords.Repository),
 		Status:     "ok",
 	}
-	fillClientMeta(ctx, client, result)
+	cliutil.FillClientMeta(ctx, client, result)
 
 	var failures int
 	for _, ns := range sources {
@@ -340,7 +342,7 @@ func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []Na
 		result.Error = fmt.Sprintf("%d of %d sources failed verification", failures, len(sources))
 		out.Summary("Dry run complete. %d of %d sources verified, %d failed.", verified, len(sources), failures)
 		out.CommandResult(result)
-		return &ExitError{Code: cob.ExitError}
+		return &cliutil.ExitError{Code: cob.ExitError}
 	}
 	out.Summary("Dry run complete. All %d sources verified.", len(sources))
 	return out.CommandResult(result)
@@ -388,7 +390,7 @@ func gatePublish(ctx context.Context, registry *cob.Registry, coords *cob.Packag
 // from. Origin is omitted for an asset that was skipped on --resume — its
 // upload-time source state is not knowable at resume time.
 func buildPublishProvenance(ctx context.Context, m *manifest.Manifest, version string,
-	sources []NamedSource, results []*cob.AssetResult, client *cob.Client, cobVersion string) *cob.Provenance {
+	sources []cliutil.NamedSource, results []*cob.AssetResult, client *cob.Client, cobVersion string) *cob.Provenance {
 
 	prov := &cob.Provenance{Package: fmt.Sprintf("%s/%s", m.Namespace, m.Package)}
 	for i, ns := range sources {

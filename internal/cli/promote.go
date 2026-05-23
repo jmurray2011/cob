@@ -10,9 +10,11 @@ import (
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/internal/output"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newPromoteCmd(cfg *Config) *cobra.Command {
+func newPromoteCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagVersion     string
 		flagTo          string
@@ -47,52 +49,52 @@ func newPromoteCmd(cfg *Config) *cobra.Command {
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Skip confirmation")
 	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Show what would be promoted, copy nothing")
 	cmd.Flags().BoolVar(&flagResume, "resume", false, "Continue an unfinished promote: copy only the missing assets")
-	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential; clamped to [1,32] to avoid CodeArtifact throttling — a warning prints if a passed value was changed)")
+	cmd.Flags().IntVar(&flagConcurrency, "concurrency", cliutil.DefaultConcurrency, "Max assets transferred in parallel (1 = sequential; clamped to [1,32] to avoid CodeArtifact throttling — a warning prints if a passed value was changed)")
 	cmd.MarkFlagRequired("to")
 
 	return cmd
 }
 
-func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo string, force, yes, dryRun, resume bool, concurrency int) error {
-	out := newWriter(cfg)
+func runPromote(ctx context.Context, cfg *cliutil.Config, target, versionFlag, toRepo string, force, yes, dryRun, resume bool, concurrency int) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
-	ctx, cancel := interruptable(ctx, cfg, out)
+	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
 
 	if resume && force {
-		return fail(out, "promote", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")
+		return cliutil.Fail(out, "promote", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "promote", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "promote", cob.ExitError, "%s", err)
 	}
 
 	var coords *cob.PackageCoordinates
 	var srcRepo string
 
-	if isManifestPath(target) {
-		version, err := resolveVersion(versionFlag)
+	if cliutil.IsManifestPath(target) {
+		version, err := cliutil.ResolveVersion(versionFlag)
 		if err != nil {
-			return fail(out, "promote", cob.ExitError, "%s", err)
+			return cliutil.Fail(out, "promote", cob.ExitError, "%s", err)
 		}
 
 		m, err := manifest.Load(target)
 		if err != nil {
-			return fail(out, "promote", cob.ExitError, "%s", err)
+			return cliutil.Fail(out, "promote", cob.ExitError, "%s", err)
 		}
-		warnManifestOverrides(m, out)
+		cliutil.WarnManifestOverrides(m, out)
 		// Implicit pre-flight lint — see runPublish for rationale. The
 		// manifest is the source of truth for the source repo, so a
 		// broken one shouldn't even reach promote stage inference.
-		if err := validateManifest(m, version); err != nil {
-			return fail(out, "promote", cob.ExitError, "%s", err)
+		if err := cliutil.ValidateManifest(m, version); err != nil {
+			return cliutil.Fail(out, "promote", cob.ExitError, "%s", err)
 		}
 
 		// Infer source repo from promote stages.
 		srcRepo, err = m.InferPromoteSource(toRepo)
 		if err != nil {
-			return fail(out, "promote", cob.ExitError, "%s", err)
+			return cliutil.Fail(out, "promote", cob.ExitError, "%s", err)
 		}
 
 		coords = &cob.PackageCoordinates{
@@ -104,10 +106,10 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 	} else {
 		coords, err = manifest.ParseCoordinates(target)
 		if err != nil {
-			return fail(out, "promote", cob.ExitError, "%s", err)
+			return cliutil.Fail(out, "promote", cob.ExitError, "%s", err)
 		}
 		if coords.Version == "" {
-			return fail(out, "promote", cob.ExitError, "version is required for promote (use domain/repo/ns/pkg@version or @latest)")
+			return cliutil.Fail(out, "promote", cob.ExitError, "version is required for promote (use domain/repo/ns/pkg@version or @latest)")
 		}
 		srcRepo = coords.Repository
 	}
@@ -116,8 +118,8 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 
 	// Resolve @latest from the source repo.
 	coords.Repository = srcRepo
-	if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-		return fail(out, "promote", codeFor(err), "%s", err)
+	if err := cliutil.ResolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
+		return cliutil.Fail(out, "promote", cliutil.CodeFor(err), "%s", err)
 	}
 
 	// Check if version exists in destination.
@@ -130,7 +132,7 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 	}
 	status, exists, err := registry.VersionStatus(ctx, destCoords)
 	if err != nil {
-		return fail(out, "promote", cob.ExitError, "checking destination: %s", err)
+		return cliutil.Fail(out, "promote", cob.ExitError, "checking destination: %s", err)
 	}
 
 	// Dry-run before the conflict/resume gate: a preview mutates nothing and
@@ -141,7 +143,7 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 
 	present, code, gerr := gatePromote(ctx, registry, destCoords, toRepo, status, exists, resume, force)
 	if gerr != nil {
-		return fail(out, "promote", code, "%s", gerr)
+		return cliutil.Fail(out, "promote", code, "%s", gerr)
 	}
 
 	verb := "Promoting"
@@ -153,9 +155,9 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 	out.Header("%s %s/%s@%s: %s -> %s",
 		verb, coords.Namespace, coords.Package, coords.Version, srcRepo, toRepo)
 
-	proceed, err := confirmAction(ctx, yes, prompt)
+	proceed, err := cliutil.ConfirmAction(ctx, yes, prompt)
 	if err != nil {
-		return fail(out, "promote", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "promote", cob.ExitError, "%s", err)
 	}
 	if !proceed {
 		out.Aborted("promote")
@@ -165,14 +167,14 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 	if exists && force {
 		publisher := cob.NewPublisher(client)
 		if err := publisher.DeleteVersion(ctx, destCoords); err != nil {
-			return fail(out, "promote", cob.ExitError, "deleting existing version in destination: %s", err)
+			return cliutil.Fail(out, "promote", cob.ExitError, "deleting existing version in destination: %s", err)
 		}
 	}
 
 	promoter := cob.NewPromoter(client)
 	assetNames, err := promoter.ListAssetsToPromote(ctx, coords, srcRepo)
 	if err != nil {
-		return fail(out, "promote", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "promote", cob.ExitError, "%s", err)
 	}
 
 	// Promote doesn't know asset sizes up front; each row sizes itself
@@ -186,7 +188,7 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 		Repository: fmt.Sprintf("%s -> %s", srcRepo, toRepo),
 		Status:     "ok",
 	}
-	fillClientMeta(ctx, client, cmdResult)
+	cliutil.FillClientMeta(ctx, client, cmdResult)
 
 	// The provenance asset is not copied verbatim — it is read, a promote
 	// link is appended, and the updated document is written to the
@@ -240,8 +242,8 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 	}
 
 	if ok && len(todos) > 0 {
-		concurrency = resolveConcurrency(concurrency, out)
-		rest, restOk := runConcurrent(ctx, len(todos), concurrency, func(ctx context.Context, j int) (*cob.AssetResult, error) {
+		concurrency = cliutil.ResolveConcurrency(concurrency, out)
+		rest, restOk := cliutil.RunConcurrent(ctx, len(todos), concurrency, func(ctx context.Context, j int) (*cob.AssetResult, error) {
 			return promoteOne(ctx, todos[j])
 		})
 		for j, r := range rest {
@@ -277,22 +279,22 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 			out.Error("Interrupted.\n  %d of %d assets in place in %s. Version is unfinished — re-run with --resume to continue.",
 				copied+skipped, len(realNames), toRepo)
 			out.CommandResult(cmdResult)
-			return &ExitError{Code: cob.ExitInterrupted}
+			return &cliutil.ExitError{Code: cob.ExitInterrupted}
 		}
 		cmdResult.Status = "error"
 		cmdResult.Error = firstResultError(results)
 		out.Error("%s\n  %d of %d assets in place in %s. Version is unfinished — re-run with --resume to continue.",
 			cmdResult.Error, copied+skipped, len(realNames), toRepo)
 		out.CommandResult(cmdResult)
-		return &ExitError{Code: cob.ExitError}
+		return &cliutil.ExitError{Code: cob.ExitError}
 	}
 
 	prov, err := carryForwardProvenance(ctx, client, coords, srcRepo, toRepo, realNames, results, cfg.Version)
 	if err != nil {
-		return fail(out, "promote", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "promote", cob.ExitError, "%s", err)
 	}
 
-	if err := finalizeProvenance(ctx, cob.NewPublisher(client), destCoords, prov, out, cmdResult, start,
+	if err := cliutil.FinalizeProvenance(ctx, cob.NewPublisher(client), destCoords, prov, out, cmdResult, start,
 		"Assets promoted but provenance/finalize failed. Version is unfinished — re-run with --resume to finalize it."); err != nil {
 		return err
 	}
@@ -317,7 +319,7 @@ func runPromoteDryRun(ctx context.Context, client *cob.Client, promoter *cob.Pro
 
 	assetNames, err := promoter.ListAssetsToPromote(ctx, coords, srcRepo)
 	if err != nil {
-		return fail(out, "promote", codeFor(err), "%s", err)
+		return cliutil.Fail(out, "promote", cliutil.CodeFor(err), "%s", err)
 	}
 
 	result := &cob.CommandResult{
@@ -326,7 +328,7 @@ func runPromoteDryRun(ctx context.Context, client *cob.Client, promoter *cob.Pro
 		Repository: fmt.Sprintf("%s -> %s", srcRepo, toRepo),
 		Status:     "ok",
 	}
-	fillClientMeta(ctx, client, result)
+	cliutil.FillClientMeta(ctx, client, result)
 	for _, name := range assetNames {
 		if name == cob.ProvenanceFile {
 			continue // regenerated at promote time, not copied verbatim

@@ -11,6 +11,8 @@ import (
 
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/output"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
 func b(v bool) *bool { return &v }
@@ -18,29 +20,29 @@ func b(v bool) *bool { return &v }
 func TestClassifyURI(t *testing.T) {
 	cases := []struct {
 		uri     string
-		kind    uriKind
+		kind    cliutil.URIKind
 		wantErr bool
 	}{
-		{"s3://bucket/key", uriS3, false},
-		{"ca://dom/repo/ns/pkg@1.0.0/asset.jar", uriCA, false},
-		{"./local.txt", uriFile, false},
-		{"/abs/local.txt", uriFile, false},
-		{"bare.txt", uriFile, false},
+		{"s3://bucket/key", cliutil.URIS3, false},
+		{"ca://dom/repo/ns/pkg@1.0.0/asset.jar", cliutil.URICA, false},
+		{"./local.txt", cliutil.URIFile, false},
+		{"/abs/local.txt", cliutil.URIFile, false},
+		{"bare.txt", cliutil.URIFile, false},
 		// An unrecognised scheme is rejected, never silently treated as a
 		// file path — publish and validate must agree on this.
 		{"gs://bucket/key", 0, true},
 		{"https://example.com/x", 0, true},
 	}
 	for _, c := range cases {
-		kind, _, err := classifyURI(c.uri, "/manifest/dir")
+		kind, _, err := cliutil.ClassifyURI(c.uri, "/manifest/dir")
 		if c.wantErr {
 			if err == nil {
-				t.Errorf("classifyURI(%q) should reject an unknown scheme", c.uri)
+				t.Errorf("cliutil.ClassifyURI(%q) should reject an unknown scheme", c.uri)
 			}
 			continue
 		}
 		if err != nil || kind != c.kind {
-			t.Errorf("classifyURI(%q) = (%d, %v), want kind %d", c.uri, kind, err, c.kind)
+			t.Errorf("cliutil.ClassifyURI(%q) = (%d, %v), want kind %d", c.uri, kind, err, c.kind)
 		}
 	}
 }
@@ -81,14 +83,14 @@ func TestSafeJoin(t *testing.T) {
 		{"/etc/passwd", "/out/etc/passwd"}, // absolute-looking name stays under root
 	}
 	for _, c := range ok {
-		got, err := safeJoin(root, c.name)
+		got, err := cliutil.SafeJoin(root, c.name)
 		if err != nil || got != c.wantSuffix {
-			t.Errorf("safeJoin(%q,%q) = (%q,%v), want (%q,nil)", root, c.name, got, err, c.wantSuffix)
+			t.Errorf("cliutil.SafeJoin(%q,%q) = (%q,%v), want (%q,nil)", root, c.name, got, err, c.wantSuffix)
 		}
 	}
 	for _, bad := range []string{"../../etc/passwd", "..", "sub/../../escape", "../sibling"} {
-		if _, err := safeJoin(root, bad); err == nil {
-			t.Errorf("safeJoin(%q,%q) should reject traversal", root, bad)
+		if _, err := cliutil.SafeJoin(root, bad); err == nil {
+			t.Errorf("cliutil.SafeJoin(%q,%q) should reject traversal", root, bad)
 		}
 	}
 }
@@ -102,16 +104,16 @@ func TestSafeJoinRejectsSymlinkEscape(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "evil")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, err := safeJoin(root, "evil/x.bin"); err == nil {
-		t.Error("safeJoin must reject a path that escapes via a symlinked subdirectory")
+	if _, err := cliutil.SafeJoin(root, "evil/x.bin"); err == nil {
+		t.Error("cliutil.SafeJoin must reject a path that escapes via a symlinked subdirectory")
 	}
 
 	// A real (non-symlinked) subdirectory is still fine.
 	if err := os.Mkdir(filepath.Join(root, "real"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := safeJoin(root, "real/x.bin"); err != nil {
-		t.Errorf("safeJoin rejected a legitimate subdirectory: %v", err)
+	if _, err := cliutil.SafeJoin(root, "real/x.bin"); err != nil {
+		t.Errorf("cliutil.SafeJoin rejected a legitimate subdirectory: %v", err)
 	}
 }
 
@@ -121,9 +123,9 @@ func TestSafeJoinRejectsSymlinkEscape(t *testing.T) {
 // context.DeadlineExceeded so a CI pipeline doesn't sit on a stalled
 // AWS call forever.
 func TestInterruptableAppliesTimeout(t *testing.T) {
-	cfg := &Config{Timeout: 5 * time.Millisecond}
+	cfg := &cliutil.Config{Timeout: 5 * time.Millisecond}
 	w := output.NewWithWriters(&dummyBuf{}, &dummyBuf{}, output.Mode{})
-	ctx, cancel := interruptable(context.Background(), cfg, w)
+	ctx, cancel := cliutil.Interruptable(context.Background(), cfg, w)
 	defer cancel()
 	select {
 	case <-ctx.Done():
@@ -139,9 +141,9 @@ func TestInterruptableAppliesTimeout(t *testing.T) {
 // without a deadline (operators on local dev runs should never be
 // surprised by a clock they didn't set).
 func TestInterruptableNoTimeoutByDefault(t *testing.T) {
-	cfg := &Config{} // Timeout: 0 — no deadline
+	cfg := &cliutil.Config{} // Timeout: 0 — no deadline
 	w := output.NewWithWriters(&dummyBuf{}, &dummyBuf{}, output.Mode{})
-	ctx, cancel := interruptable(context.Background(), cfg, w)
+	ctx, cancel := cliutil.Interruptable(context.Background(), cfg, w)
 	defer cancel()
 	if _, ok := ctx.Deadline(); ok {
 		t.Error("ctx should have no deadline when cfg.Timeout == 0")
@@ -150,7 +152,7 @@ func TestInterruptableNoTimeoutByDefault(t *testing.T) {
 
 // dummyBuf is a minimal io.Writer that discards everything — output.Writer
 // only needs somewhere to send bytes, and the tests above only care about
-// the ctx side of interruptable, not the renderer.
+// the ctx side of cliutil.Interruptable, not the renderer.
 type dummyBuf struct{}
 
 func (dummyBuf) Write(p []byte) (int, error) { return len(p), nil }

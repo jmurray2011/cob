@@ -11,9 +11,11 @@ import (
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/concurrency"
 	"github.com/jmurray2011/cob/internal/manifest"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newRmCmd(cfg *Config) *cobra.Command {
+func newRmCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagForce      bool
 		flagEverywhere bool
@@ -53,42 +55,42 @@ func newRmCmd(cfg *Config) *cobra.Command {
 	return cmd
 }
 
-func runRm(ctx context.Context, cfg *Config, target string, force, everywhere, yes bool) error {
-	out := newWriter(cfg)
+func runRm(ctx context.Context, cfg *cliutil.Config, target string, force, everywhere, yes bool) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
-		return fail(out, "rm", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "rm", cob.ExitError, "%s", err)
 	}
 	if coords.Namespace == "" || coords.Package == "" {
-		return fail(out, "rm", cob.ExitError, "full coordinates required (domain/repo/namespace/package@version)")
+		return cliutil.Fail(out, "rm", cob.ExitError, "full coordinates required (domain/repo/namespace/package@version)")
 	}
 	if coords.Version == "" {
-		return fail(out, "rm", cob.ExitError, "version is required for rm")
+		return cliutil.Fail(out, "rm", cob.ExitError, "version is required for rm")
 	}
 	// Refusing @latest is a deliberate typo-shield: every other command
 	// resolves @latest, but the only destructive verb forces the operator
 	// to name the bytes they intend to destroy.
 	if coords.Version == "latest" {
-		return fail(out, "rm", cob.ExitError, "rm refuses @latest — name the version explicitly")
+		return cliutil.Fail(out, "rm", cob.ExitError, "rm refuses @latest — name the version explicitly")
 	}
 	if everywhere && !force {
-		return fail(out, "rm", cob.ExitError, "--everywhere requires --force")
+		return cliutil.Fail(out, "rm", cob.ExitError, "--everywhere requires --force")
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "rm", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "rm", cob.ExitError, "%s", err)
 	}
 
 	registry := cob.NewRegistry(client)
 	status, exists, err := registry.VersionStatus(ctx, coords)
 	if err != nil {
-		return fail(out, "rm", cob.ExitError, "checking version: %s", err)
+		return cliutil.Fail(out, "rm", cob.ExitError, "checking version: %s", err)
 	}
 	if !exists {
-		return fail(out, "rm", cob.ExitNotFound, "no version %s of %s/%s in %s/%s",
+		return cliutil.Fail(out, "rm", cob.ExitNotFound, "no version %s of %s/%s in %s/%s",
 			coords.Version, coords.Namespace, coords.Package, coords.Domain, coords.Repository)
 	}
 
@@ -101,7 +103,7 @@ func runRm(ctx context.Context, cfg *Config, target string, force, everywhere, y
 	//   downstream copies; the destination chains will dangle.
 	isPublished := status != "Unfinished"
 	if isPublished && !force {
-		return fail(out, "rm", cob.ExitConflict,
+		return cliutil.Fail(out, "rm", cob.ExitConflict,
 			"version %s is %s (cob treats Published as immutable). Use --force to delete a real release.",
 			coords.Version, status)
 	}
@@ -109,10 +111,10 @@ func runRm(ctx context.Context, cfg *Config, target string, force, everywhere, y
 	if isPublished && force {
 		downstream, err = findDownstreamCopies(ctx, registry, coords)
 		if err != nil {
-			return fail(out, "rm", cob.ExitError, "checking downstream copies: %s", err)
+			return cliutil.Fail(out, "rm", cob.ExitError, "checking downstream copies: %s", err)
 		}
 		if len(downstream) > 0 && !everywhere {
-			return fail(out, "rm", cob.ExitConflict,
+			return cliutil.Fail(out, "rm", cob.ExitConflict,
 				"version %s is also published in %s/{%s} — their chain-of-evidence references this source. "+
 					"Use --force --everywhere to delete anyway, or delete those copies first.",
 				coords.Version, coords.Domain, strings.Join(downstream, ","))
@@ -124,9 +126,9 @@ func runRm(ctx context.Context, cfg *Config, target string, force, everywhere, y
 		coords.Domain, coords.Repository, status)
 
 	prompt := buildRmPrompt(coords, status, downstream)
-	proceed, err := confirmAction(ctx, yes, prompt)
+	proceed, err := cliutil.ConfirmAction(ctx, yes, prompt)
 	if err != nil {
-		return fail(out, "rm", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "rm", cob.ExitError, "%s", err)
 	}
 	if !proceed {
 		out.Aborted("rm")
@@ -135,7 +137,7 @@ func runRm(ctx context.Context, cfg *Config, target string, force, everywhere, y
 
 	publisher := cob.NewPublisher(client)
 	if err := publisher.DeleteVersion(ctx, coords); err != nil {
-		return fail(out, "rm", codeFor(err), "%s", err)
+		return cliutil.Fail(out, "rm", cliutil.CodeFor(err), "%s", err)
 	}
 
 	result := &cob.CommandResult{
@@ -144,7 +146,7 @@ func runRm(ctx context.Context, cfg *Config, target string, force, everywhere, y
 		Repository: fmt.Sprintf("%s/%s", coords.Domain, coords.Repository),
 		Status:     "ok",
 	}
-	fillClientMeta(ctx, client, result)
+	cliutil.FillClientMeta(ctx, client, result)
 	out.Summary("Deleted %s/%s@%s from %s/%s",
 		coords.Namespace, coords.Package, coords.Version,
 		coords.Domain, coords.Repository)

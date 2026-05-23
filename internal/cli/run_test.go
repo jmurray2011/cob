@@ -13,28 +13,30 @@ import (
 	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 
 	"github.com/jmurray2011/cob/internal/cob"
+
+	"github.com/jmurray2011/cob/internal/cliutil/clitest"
 )
 
 func TestRunResolve(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("partial coordinates rejected", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{})
-		wantExit(t, runResolve(ctx, cfg, "dom/repo"), cob.ExitError)
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
+		clitest.WantExit(t, runResolve(ctx, cfg, "dom/repo"), cob.ExitError)
 	})
 
 	t.Run("no published versions -> not found", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{}) // ListPackageVersions default: empty
-		wantExit(t, runResolve(ctx, cfg, "dom/repo/ns/pkg"), cob.ExitNotFound)
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{}) // ListPackageVersions default: empty
+		clitest.WantExit(t, runResolve(ctx, cfg, "dom/repo/ns/pkg"), cob.ExitNotFound)
 	})
 
 	t.Run("success prints the resolved version", func(t *testing.T) {
-		ca := &fakeCA{listVersionsFn: func(*codeartifact.ListPackageVersionsInput) (*codeartifact.ListPackageVersionsOutput, error) {
+		ca := &clitest.FakeCA{ListVersionsFn: func(*codeartifact.ListPackageVersionsInput) (*codeartifact.ListPackageVersionsOutput, error) {
 			return &codeartifact.ListPackageVersionsOutput{
 				Versions: []catypes.PackageVersionSummary{{Version: aws.String("2.1.0")}},
 			}, nil
 		}}
-		cfg, stdout, _ := useFake(t, ca)
+		cfg, stdout, _ := clitest.UseFake(t, ca)
 		if err := runResolve(ctx, cfg, "dom/repo/ns/pkg"); err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
@@ -45,13 +47,13 @@ func TestRunResolve(t *testing.T) {
 }
 
 func TestRunManifest(t *testing.T) {
-	ca := &fakeCA{
-		getAssetFn: func(*codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
+	ca := &clitest.FakeCA{
+		GetAssetFn: func(*codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
 			return nil, &catypes.ResourceNotFoundException{} // no cob-provenance.json
 		},
-		listAssetsFn: oneAsset("app.bin", 7),
+		ListAssetsFn: oneAsset("app.bin", 7),
 	}
-	cfg, stdout, _ := useFake(t, ca)
+	cfg, stdout, _ := clitest.UseFake(t, ca)
 	if err := runManifest(context.Background(), cfg, "dom/repo/ns/pkg@1.0.0", ""); err != nil {
 		t.Fatalf("manifest: %v", err)
 	}
@@ -70,12 +72,12 @@ func TestRunLs(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("lists domains", func(t *testing.T) {
-		ca := &fakeCA{listDomainsFn: func(*codeartifact.ListDomainsInput) (*codeartifact.ListDomainsOutput, error) {
+		ca := &clitest.FakeCA{ListDomainsFn: func(*codeartifact.ListDomainsInput) (*codeartifact.ListDomainsOutput, error) {
 			return &codeartifact.ListDomainsOutput{Domains: []catypes.DomainSummary{
 				{Name: aws.String("acme"), Status: catypes.DomainStatusActive},
 			}}, nil
 		}}
-		cfg, stdout, _ := useFake(t, ca)
+		cfg, stdout, _ := clitest.UseFake(t, ca)
 		if err := runLs(ctx, cfg, ""); err != nil {
 			t.Fatalf("ls: %v", err)
 		}
@@ -85,19 +87,19 @@ func TestRunLs(t *testing.T) {
 	})
 
 	t.Run("no domains -> not found", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{})
-		wantExit(t, runLs(ctx, cfg, ""), cob.ExitNotFound)
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
+		clitest.WantExit(t, runLs(ctx, cfg, ""), cob.ExitNotFound)
 	})
 
 	t.Run("no assets -> not found", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{}) // ListPackageVersionAssets default: empty
-		wantExit(t, runLs(ctx, cfg, "dom/repo/ns/pkg@1.0.0"), cob.ExitNotFound)
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{}) // ListPackageVersionAssets default: empty
+		clitest.WantExit(t, runLs(ctx, cfg, "dom/repo/ns/pkg@1.0.0"), cob.ExitNotFound)
 	})
 
 	t.Run("--json not-found emits an empty array, not an object", func(t *testing.T) {
-		cfg, stdout, _ := useFake(t, &fakeCA{})
+		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		cfg.JSON = true
-		wantExit(t, runLs(ctx, cfg, "dom/repo"), cob.ExitNotFound)
+		clitest.WantExit(t, runLs(ctx, cfg, "dom/repo"), cob.ExitNotFound)
 		if got := strings.TrimSpace(stdout.String()); got != "[]" {
 			t.Errorf("ls --json not-found stdout = %q, want []", got)
 		}
@@ -108,29 +110,29 @@ func TestRunPull(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("version not found", func(t *testing.T) {
-		ca := &fakeCA{listAssetsFn: func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
+		ca := &clitest.FakeCA{ListAssetsFn: func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
 			return nil, &catypes.ResourceNotFoundException{}
 		}}
-		cfg, _, _ := useFake(t, ca)
+		cfg, _, _ := clitest.UseFake(t, ca)
 		err := runPull(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "", t.TempDir(), "", "", 4)
-		wantExit(t, err, cob.ExitNotFound)
+		clitest.WantExit(t, err, cob.ExitNotFound)
 	})
 
 	t.Run("requested asset not in version", func(t *testing.T) {
-		ca := &fakeCA{listAssetsFn: oneAsset("real.bin", 3)}
-		cfg, _, _ := useFake(t, ca)
+		ca := &clitest.FakeCA{ListAssetsFn: oneAsset("real.bin", 3)}
+		cfg, _, _ := clitest.UseFake(t, ca)
 		err := runPull(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "missing.bin", t.TempDir(), "", "missing.bin", 4)
-		wantExit(t, err, cob.ExitNotFound)
+		clitest.WantExit(t, err, cob.ExitNotFound)
 	})
 
 	t.Run("single asset downloaded", func(t *testing.T) {
-		ca := &fakeCA{
-			listAssetsFn: oneAsset("a.bin", 5),
-			getAssetFn: func(*codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
+		ca := &clitest.FakeCA{
+			ListAssetsFn: oneAsset("a.bin", 5),
+			GetAssetFn: func(*codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
 				return &codeartifact.GetPackageVersionAssetOutput{Asset: io.NopCloser(strings.NewReader("hello"))}, nil
 			},
 		}
-		cfg, _, _ := useFake(t, ca)
+		cfg, _, _ := clitest.UseFake(t, ca)
 		dst := filepath.Join(t.TempDir(), "out.bin")
 		if err := runPull(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "a.bin", dst, "", "a.bin", 4); err != nil {
 			t.Fatalf("pull: %v", err)
@@ -147,16 +149,16 @@ func TestRunPublish(t *testing.T) {
 
 	t.Run("conflict when version already exists", func(t *testing.T) {
 		// Default DescribePackageVersion reports the version as existing.
-		cfg, _, _ := useFake(t, &fakeCA{})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		mf := writeManifest(t)
 		err := runPublish(ctx, cfg, mf, "1.0.0", false, false, true, false, 4)
-		wantExit(t, err, cob.ExitConflict)
+		clitest.WantExit(t, err, cob.ExitConflict)
 	})
 
 	t.Run("dry-run works even when the version already exists", func(t *testing.T) {
 		// Default DescribePackageVersion reports the version as existing; a
 		// dry run must still preview rather than exit with a conflict.
-		cfg, _, _ := useFake(t, &fakeCA{})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		mf := writeManifest(t)
 		if err := runPublish(ctx, cfg, mf, "1.0.0", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run with existing version must not error, got %v", err)
@@ -165,16 +167,16 @@ func TestRunPublish(t *testing.T) {
 
 	t.Run("success publishes assets plus provenance", func(t *testing.T) {
 		var published int
-		ca := &fakeCA{
-			describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+		ca := &clitest.FakeCA{
+			DescribeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 				return nil, &catypes.ResourceNotFoundException{} // version does not exist yet
 			},
-			publishFn: func(*codeartifact.PublishPackageVersionInput) (*codeartifact.PublishPackageVersionOutput, error) {
+			PublishFn: func(*codeartifact.PublishPackageVersionInput) (*codeartifact.PublishPackageVersionOutput, error) {
 				published++
 				return &codeartifact.PublishPackageVersionOutput{}, nil
 			},
 		}
-		cfg, _, _ := useFake(t, ca)
+		cfg, _, _ := clitest.UseFake(t, ca)
 		mf := writeManifest(t)
 		if err := runPublish(ctx, cfg, mf, "1.0.0", false, false, true, false, 4); err != nil {
 			t.Fatalf("publish: %v", err)
@@ -187,19 +189,19 @@ func TestRunPublish(t *testing.T) {
 
 	t.Run("resume uploads only the missing assets", func(t *testing.T) {
 		var published int
-		ca := &fakeCA{
-			describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+		ca := &clitest.FakeCA{
+			DescribeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 				return &codeartifact.DescribePackageVersionOutput{
 					PackageVersion: &catypes.PackageVersionDescription{Status: catypes.PackageVersionStatusUnfinished},
 				}, nil
 			},
-			listAssetsFn: oneAsset("payload.txt", 13), // the manifest's lone asset is already present
-			publishFn: func(*codeartifact.PublishPackageVersionInput) (*codeartifact.PublishPackageVersionOutput, error) {
+			ListAssetsFn: oneAsset("payload.txt", 13), // the manifest's lone asset is already present
+			PublishFn: func(*codeartifact.PublishPackageVersionInput) (*codeartifact.PublishPackageVersionOutput, error) {
 				published++
 				return &codeartifact.PublishPackageVersionOutput{}, nil
 			},
 		}
-		cfg, _, _ := useFake(t, ca)
+		cfg, _, _ := clitest.UseFake(t, ca)
 		mf := writeManifest(t)
 		if err := runPublish(ctx, cfg, mf, "1.0.0", false, false, true, true, 4); err != nil {
 			t.Fatalf("resume: %v", err)
@@ -211,56 +213,56 @@ func TestRunPublish(t *testing.T) {
 	})
 
 	t.Run("resume with no unfinished version is an error", func(t *testing.T) {
-		ca := &fakeCA{describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+		ca := &clitest.FakeCA{DescribeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 			return nil, &catypes.ResourceNotFoundException{}
 		}}
-		cfg, _, _ := useFake(t, ca)
-		wantExit(t, runPublish(ctx, cfg, writeManifest(t), "1.0.0", false, false, true, true, 4), cob.ExitError)
+		cfg, _, _ := clitest.UseFake(t, ca)
+		clitest.WantExit(t, runPublish(ctx, cfg, writeManifest(t), "1.0.0", false, false, true, true, 4), cob.ExitError)
 	})
 
 	t.Run("resume and force are mutually exclusive", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{})
-		wantExit(t, runPublish(ctx, cfg, writeManifest(t), "1.0.0", true, false, true, true, 4), cob.ExitError)
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
+		clitest.WantExit(t, runPublish(ctx, cfg, writeManifest(t), "1.0.0", true, false, true, true, 4), cob.ExitError)
 	})
 }
 
 func TestGatePublish(t *testing.T) {
 	ctx := context.Background()
 	coords := &cob.PackageCoordinates{Domain: "d", Repository: "r", Namespace: "n", Package: "p", Version: "1.0.0"}
-	reg := func(ca *fakeCA) *cob.Registry { return cob.NewRegistry(&cob.Client{CodeArtifact: ca}) }
+	reg := func(ca *clitest.FakeCA) *cob.Registry { return cob.NewRegistry(&cob.Client{CodeArtifact: ca}) }
 
 	t.Run("fresh version: no gate fires", func(t *testing.T) {
-		present, code, err := gatePublish(ctx, reg(&fakeCA{}), coords, "", false, false, false)
+		present, code, err := gatePublish(ctx, reg(&clitest.FakeCA{}), coords, "", false, false, false)
 		if err != nil || code != cob.ExitOK || present != nil {
 			t.Fatalf("got present=%v code=%d err=%v, want nil/0/nil", present, code, err)
 		}
 	})
 	t.Run("existing version without --force is a conflict", func(t *testing.T) {
-		_, code, err := gatePublish(ctx, reg(&fakeCA{}), coords, "Published", true, false, false)
+		_, code, err := gatePublish(ctx, reg(&clitest.FakeCA{}), coords, "Published", true, false, false)
 		if code != cob.ExitConflict || err == nil {
 			t.Fatalf("got code=%d err=%v, want ExitConflict + error", code, err)
 		}
 	})
 	t.Run("existing version with --force is allowed (caller deletes)", func(t *testing.T) {
-		_, code, err := gatePublish(ctx, reg(&fakeCA{}), coords, "Published", true, false, true)
+		_, code, err := gatePublish(ctx, reg(&clitest.FakeCA{}), coords, "Published", true, false, true)
 		if err != nil || code != cob.ExitOK {
 			t.Fatalf("got code=%d err=%v, want ok", code, err)
 		}
 	})
 	t.Run("--resume on missing version errors", func(t *testing.T) {
-		_, code, err := gatePublish(ctx, reg(&fakeCA{}), coords, "", false, true, false)
+		_, code, err := gatePublish(ctx, reg(&clitest.FakeCA{}), coords, "", false, true, false)
 		if code != cob.ExitError || err == nil {
 			t.Fatalf("got code=%d err=%v", code, err)
 		}
 	})
 	t.Run("--resume on Published (not Unfinished) errors", func(t *testing.T) {
-		_, code, err := gatePublish(ctx, reg(&fakeCA{}), coords, "Published", true, true, false)
+		_, code, err := gatePublish(ctx, reg(&clitest.FakeCA{}), coords, "Published", true, true, false)
 		if code != cob.ExitError || err == nil {
 			t.Fatalf("got code=%d err=%v", code, err)
 		}
 	})
 	t.Run("--resume on Unfinished returns the present map", func(t *testing.T) {
-		present, code, err := gatePublish(ctx, reg(&fakeCA{listAssetsFn: oneAsset("a.bin", 5)}),
+		present, code, err := gatePublish(ctx, reg(&clitest.FakeCA{ListAssetsFn: oneAsset("a.bin", 5)}),
 			coords, "Unfinished", true, true, false)
 		if err != nil || code != cob.ExitOK {
 			t.Fatalf("got code=%d err=%v", code, err)
@@ -274,40 +276,40 @@ func TestGatePublish(t *testing.T) {
 func TestGatePromote(t *testing.T) {
 	ctx := context.Background()
 	dest := &cob.PackageCoordinates{Domain: "d", Repository: "prod", Namespace: "n", Package: "p", Version: "1.0.0"}
-	reg := func(ca *fakeCA) *cob.Registry { return cob.NewRegistry(&cob.Client{CodeArtifact: ca}) }
+	reg := func(ca *clitest.FakeCA) *cob.Registry { return cob.NewRegistry(&cob.Client{CodeArtifact: ca}) }
 
 	t.Run("fresh destination: no gate fires", func(t *testing.T) {
-		present, code, err := gatePromote(ctx, reg(&fakeCA{}), dest, "prod", "", false, false, false)
+		present, code, err := gatePromote(ctx, reg(&clitest.FakeCA{}), dest, "prod", "", false, false, false)
 		if err != nil || code != cob.ExitOK || present != nil {
 			t.Fatalf("got present=%v code=%d err=%v", present, code, err)
 		}
 	})
 	t.Run("existing dest without --force is a conflict", func(t *testing.T) {
-		_, code, err := gatePromote(ctx, reg(&fakeCA{}), dest, "prod", "Published", true, false, false)
+		_, code, err := gatePromote(ctx, reg(&clitest.FakeCA{}), dest, "prod", "Published", true, false, false)
 		if code != cob.ExitConflict || err == nil {
 			t.Fatalf("got code=%d err=%v", code, err)
 		}
 	})
 	t.Run("existing dest with --force is allowed", func(t *testing.T) {
-		_, code, err := gatePromote(ctx, reg(&fakeCA{}), dest, "prod", "Published", true, false, true)
+		_, code, err := gatePromote(ctx, reg(&clitest.FakeCA{}), dest, "prod", "Published", true, false, true)
 		if err != nil || code != cob.ExitOK {
 			t.Fatalf("got code=%d err=%v", code, err)
 		}
 	})
 	t.Run("--resume with no dest errors", func(t *testing.T) {
-		_, code, err := gatePromote(ctx, reg(&fakeCA{}), dest, "prod", "", false, true, false)
+		_, code, err := gatePromote(ctx, reg(&clitest.FakeCA{}), dest, "prod", "", false, true, false)
 		if code != cob.ExitError || err == nil {
 			t.Fatalf("got code=%d err=%v", code, err)
 		}
 	})
 	t.Run("--resume on Published (not Unfinished) errors", func(t *testing.T) {
-		_, code, err := gatePromote(ctx, reg(&fakeCA{}), dest, "prod", "Published", true, true, false)
+		_, code, err := gatePromote(ctx, reg(&clitest.FakeCA{}), dest, "prod", "Published", true, true, false)
 		if code != cob.ExitError || err == nil {
 			t.Fatalf("got code=%d err=%v", code, err)
 		}
 	})
 	t.Run("--resume on Unfinished returns the present map", func(t *testing.T) {
-		present, code, err := gatePromote(ctx, reg(&fakeCA{listAssetsFn: oneAsset("app.bin", 9)}),
+		present, code, err := gatePromote(ctx, reg(&clitest.FakeCA{ListAssetsFn: oneAsset("app.bin", 9)}),
 			dest, "prod", "Unfinished", true, true, false)
 		if err != nil || code != cob.ExitOK {
 			t.Fatalf("got code=%d err=%v", code, err)
@@ -323,22 +325,22 @@ func TestRunPromote(t *testing.T) {
 
 	t.Run("conflict when destination version exists", func(t *testing.T) {
 		// Default DescribePackageVersion reports the dest version as existing.
-		cfg, _, _ := useFake(t, &fakeCA{})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, false, 4)
-		wantExit(t, err, cob.ExitConflict)
+		clitest.WantExit(t, err, cob.ExitConflict)
 	})
 
 	t.Run("@latest with no source versions -> not found", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{}) // ListPackageVersions default: empty
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{}) // ListPackageVersions default: empty
 		err := runPromote(ctx, cfg, "dom/dev/ns/pkg@latest", "", "prod", false, true, false, false, 4)
-		wantExit(t, err, cob.ExitNotFound)
+		clitest.WantExit(t, err, cob.ExitNotFound)
 	})
 
 	t.Run("dry-run works even when the destination version exists", func(t *testing.T) {
 		// Default DescribePackageVersion reports the dest version as
 		// existing; --dry-run must preview, not exit with a conflict.
-		ca := &fakeCA{listAssetsFn: oneAsset("app.bin", 9)}
-		cfg, stdout, _ := useFake(t, ca)
+		ca := &clitest.FakeCA{ListAssetsFn: oneAsset("app.bin", 9)}
+		cfg, stdout, _ := clitest.UseFake(t, ca)
 		if err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run with existing dest must not error, got %v", err)
 		}
@@ -349,19 +351,19 @@ func TestRunPromote(t *testing.T) {
 
 	t.Run("resume copies only the missing assets", func(t *testing.T) {
 		var copied int
-		ca := &fakeCA{
-			describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+		ca := &clitest.FakeCA{
+			DescribeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 				return &codeartifact.DescribePackageVersionOutput{
 					PackageVersion: &catypes.PackageVersionDescription{Status: catypes.PackageVersionStatusUnfinished},
 				}, nil
 			},
-			listAssetsFn: oneAsset("app.bin", 9), // already in dest
-			publishFn: func(*codeartifact.PublishPackageVersionInput) (*codeartifact.PublishPackageVersionOutput, error) {
+			ListAssetsFn: oneAsset("app.bin", 9), // already in dest
+			PublishFn: func(*codeartifact.PublishPackageVersionInput) (*codeartifact.PublishPackageVersionOutput, error) {
 				copied++
 				return &codeartifact.PublishPackageVersionOutput{}, nil
 			},
 		}
-		cfg, _, _ := useFake(t, ca)
+		cfg, _, _ := clitest.UseFake(t, ca)
 		if err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4); err != nil {
 			t.Fatalf("resume: %v", err)
 		}
@@ -372,31 +374,31 @@ func TestRunPromote(t *testing.T) {
 	})
 
 	t.Run("resume with no unfinished dest version errors", func(t *testing.T) {
-		ca := &fakeCA{describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+		ca := &clitest.FakeCA{DescribeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 			return nil, &catypes.ResourceNotFoundException{}
 		}}
-		cfg, _, _ := useFake(t, ca)
-		wantExit(t, runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4), cob.ExitError)
+		cfg, _, _ := clitest.UseFake(t, ca)
+		clitest.WantExit(t, runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4), cob.ExitError)
 	})
 
 	t.Run("resume and force are mutually exclusive", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{})
-		wantExit(t, runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", true, true, false, true, 4), cob.ExitError)
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
+		clitest.WantExit(t, runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", true, true, false, true, 4), cob.ExitError)
 	})
 
 	t.Run("dry-run lists assets and promotes nothing", func(t *testing.T) {
 		var published int
-		ca := &fakeCA{
-			describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+		ca := &clitest.FakeCA{
+			DescribeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 				return nil, &catypes.ResourceNotFoundException{} // dest version absent
 			},
-			listAssetsFn: oneAsset("app.bin", 9),
-			publishFn: func(*codeartifact.PublishPackageVersionInput) (*codeartifact.PublishPackageVersionOutput, error) {
+			ListAssetsFn: oneAsset("app.bin", 9),
+			PublishFn: func(*codeartifact.PublishPackageVersionInput) (*codeartifact.PublishPackageVersionOutput, error) {
 				published++
 				return &codeartifact.PublishPackageVersionOutput{}, nil
 			},
 		}
-		cfg, stdout, _ := useFake(t, ca)
+		cfg, stdout, _ := clitest.UseFake(t, ca)
 		if err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run: %v", err)
 		}
@@ -413,16 +415,16 @@ func TestRunPromote(t *testing.T) {
 // `cob validate`. Same per-source checks (schema, URI syntax, local
 // existence) but exposed via `cob diff <manifest>` with no --version.
 // Implicit validation in publish/pull/promote uses the same code path
-// (validateManifest in validation.go), so these tests double-cover the
+// (cliutil.ValidateManifest in validation.go), so these tests double-cover the
 // pre-flight guard those commands now perform.
 func TestRunDiffLint(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("local manifest renders file existence + size", func(t *testing.T) {
-		cfg, stdout, _ := useFake(t, &fakeCA{})
+		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		dir := t.TempDir()
-		writeFile(t, dir, "x.txt", "data") // 4 bytes
-		mf := writeFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x.txt\n")
+		clitest.WriteFile(t, dir, "x.txt", "data") // 4 bytes
+		mf := clitest.WriteFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x.txt\n")
 		if err := runDiff(ctx, cfg, []string{mf}, "", false, false, false); err != nil {
 			t.Fatalf("diff lint: %v", err)
 		}
@@ -436,9 +438,9 @@ func TestRunDiffLint(t *testing.T) {
 	})
 
 	t.Run("remote-only manifest renders syntax-only and explains the gap", func(t *testing.T) {
-		cfg, stdout, _ := useFake(t, &fakeCA{})
+		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		dir := t.TempDir()
-		mf := writeFile(t, dir, "m.yaml",
+		mf := clitest.WriteFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  app: s3://bucket/app.bin\n")
 		if err := runDiff(ctx, cfg, []string{mf}, "", false, false, false); err != nil {
 			t.Fatalf("diff lint remote: %v", err)
@@ -459,41 +461,41 @@ func TestRunDiffLint(t *testing.T) {
 	})
 
 	t.Run("missing local file is flagged", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		dir := t.TempDir()
-		mf := writeFile(t, dir, "m.yaml",
+		mf := clitest.WriteFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./missing.txt\n")
 		err := runDiff(ctx, cfg, []string{mf}, "", false, false, false)
-		wantExit(t, err, cob.ExitError)
+		clitest.WantExit(t, err, cob.ExitError)
 	})
 
 	t.Run("reserved asset name cob-provenance.json rejected", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		dir := t.TempDir()
-		writeFile(t, dir, "cob-provenance.json", "{}")
-		mf := writeFile(t, dir, "m.yaml",
+		clitest.WriteFile(t, dir, "cob-provenance.json", "{}")
+		mf := clitest.WriteFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  shadow: ./cob-provenance.json\n")
-		wantExit(t, runDiff(ctx, cfg, []string{mf}, "", false, false, false), cob.ExitError)
+		clitest.WantExit(t, runDiff(ctx, cfg, []string{mf}, "", false, false, false), cob.ExitError)
 	})
 
 	t.Run("duplicate basename rejected", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		dir := t.TempDir()
-		writeFile(t, dir, "x.txt", "data")
-		mf := writeFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x.txt\n  b: x.txt\n")
-		wantExit(t, runDiff(ctx, cfg, []string{mf}, "", false, false, false), cob.ExitError)
+		clitest.WriteFile(t, dir, "x.txt", "data")
+		mf := clitest.WriteFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x.txt\n  b: x.txt\n")
+		clitest.WantExit(t, runDiff(ctx, cfg, []string{mf}, "", false, false, false), cob.ExitError)
 	})
 
 	t.Run("publish refuses a manifest the lint would reject", func(t *testing.T) {
-		// Implicit validateManifest at the top of runPublish should
-		// short-circuit before any AWS work, exiting with ExitError —
+		// Implicit cliutil.ValidateManifest at the top of runPublish should
+		// short-circuit before any AWS work, exiting with cliutil.ExitError —
 		// same code path as `cob diff <manifest>` exposes.
-		cfg, _, _ := useFake(t, &fakeCA{})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		dir := t.TempDir()
-		mf := writeFile(t, dir, "m.yaml",
+		mf := clitest.WriteFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./never-existed.txt\n")
 		err := runPublish(ctx, cfg, mf, "1.0.0", false, false, true, false, 4)
-		wantExit(t, err, cob.ExitError)
+		clitest.WantExit(t, err, cob.ExitError)
 	})
 }
 
@@ -573,7 +575,7 @@ func TestReconcilePromotedAssets(t *testing.T) {
 // manifest whose local source is the literal "hello".
 const helloSHA = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 
-// publishedAsset returns a listAssetsFn that reports a single named asset
+// publishedAsset returns a ListAssetsFn that reports a single named asset
 // with the given size and SHA-256 (e.g. what compareManifestToPublished
 // reads back from CodeArtifact).
 func publishedAsset(name string, size int64, sha string) func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
@@ -593,8 +595,8 @@ func publishedAsset(name string, size int64, sha string) func(*codeartifact.List
 func writeHelloManifest(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	writeFile(t, dir, "payload.txt", "hello")
-	return writeFile(t, dir, "m.yaml",
+	clitest.WriteFile(t, dir, "payload.txt", "hello")
+	return clitest.WriteFile(t, dir, "m.yaml",
 		"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  payload: ./payload.txt\n")
 }
 
@@ -608,7 +610,7 @@ func TestRunDiff(t *testing.T) {
 	// --- Manifest mode (one arg + --version) ----------------------------------
 
 	t.Run("manifest: clean match -> exit 0", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
 		if err := runDiff(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true, false, false); err != nil {
 			t.Fatalf("diff manifest clean: %v", err)
 		}
@@ -618,42 +620,42 @@ func TestRunDiff(t *testing.T) {
 		// hex SHA-256 is case-insensitive; different sources return
 		// upper vs lower. A case-sensitive compare here would be a
 		// spurious mismatch on bytes that are actually identical.
-		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, strings.ToUpper(helloSHA))})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5, strings.ToUpper(helloSHA))})
 		if err := runDiff(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true, false, false); err != nil {
 			t.Fatalf("uppercase-hex must still match the lowercase source hash: %v", err)
 		}
 	})
 
 	t.Run("manifest: SHA mismatch -> exit 4 (ExitMismatch)", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5,
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5,
 			"deadbeef0000000000000000000000000000000000000000000000000000beef")})
-		wantExit(t, runDiff(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true, false, false), cob.ExitMismatch)
+		clitest.WantExit(t, runDiff(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true, false, false), cob.ExitMismatch)
 	})
 
 	t.Run("manifest: missing local source bails at implicit validation, not at compare", func(t *testing.T) {
-		// validateManifest at the top of runDiffManifest catches this
+		// cliutil.ValidateManifest at the top of runDiffManifest catches this
 		// before any AWS work — used to be an "op error during diff"
 		// path, now it's a clean pre-flight failure.
-		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("missing.txt", 5, helloSHA)})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("missing.txt", 5, helloSHA)})
 		dir := t.TempDir()
-		mf := writeFile(t, dir, "m.yaml",
+		mf := clitest.WriteFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  payload: ./missing.txt\n")
-		wantExit(t, runDiff(ctx, cfg, []string{mf}, "1.0.0", true, false, false), cob.ExitError)
+		clitest.WantExit(t, runDiff(ctx, cfg, []string{mf}, "1.0.0", true, false, false), cob.ExitError)
 	})
 
 	// --- Self-check mode (one arg, coords with version) -----------------------
 
 	t.Run("self-check: @latest with no published versions -> exit 2", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{}) // ListPackageVersions default: empty
-		wantExit(t, runDiff(ctx, cfg, []string{"dom/repo/ns/pkg@latest"}, "", false, false, false), cob.ExitNotFound)
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{}) // ListPackageVersions default: empty
+		clitest.WantExit(t, runDiff(ctx, cfg, []string{"dom/repo/ns/pkg@latest"}, "", false, false, false), cob.ExitNotFound)
 	})
 
 	// --- Dir mode (two args, first is a directory) ----------------------------
 
 	t.Run("dir: terse default — match row carries size, no SHA in scan path", func(t *testing.T) {
 		dir := t.TempDir()
-		writeFile(t, dir, "payload.txt", "hello")
-		cfg, stdout, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
+		clitest.WriteFile(t, dir, "payload.txt", "hello")
+		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
 		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
 		if err != nil {
 			t.Fatalf("diff dir (clean): %v", err)
@@ -672,8 +674,8 @@ func TestRunDiff(t *testing.T) {
 
 	t.Run("dir: --verbose adds full SHA + path as continuation lines", func(t *testing.T) {
 		dir := t.TempDir()
-		writeFile(t, dir, "payload.txt", "hello")
-		cfg, stdout, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
+		clitest.WriteFile(t, dir, "payload.txt", "hello")
+		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
 		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, true, false)
 		if err != nil {
 			t.Fatalf("diff dir --verbose: %v", err)
@@ -689,11 +691,11 @@ func TestRunDiff(t *testing.T) {
 
 	t.Run("dir: mismatch -> exit 4 with both hashes labeled", func(t *testing.T) {
 		dir := t.TempDir()
-		writeFile(t, dir, "payload.txt", "hello")
+		clitest.WriteFile(t, dir, "payload.txt", "hello")
 		other := "deadbeef0000000000000000000000000000000000000000000000000000beef"
-		cfg, stdout, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, other)})
+		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 5, other)})
 		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
-		wantExit(t, err, cob.ExitMismatch)
+		clitest.WantExit(t, err, cob.ExitMismatch)
 		out := stdout.String()
 		for _, want := range []string{"mismatch", "local", "published", helloSHA, other} {
 			if !strings.Contains(out, want) {
@@ -704,9 +706,9 @@ func TestRunDiff(t *testing.T) {
 
 	t.Run("dir: missing local file -> exit 4 with 'missing locally' + published size", func(t *testing.T) {
 		dir := t.TempDir() // empty
-		cfg, stdout, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 4242, helloSHA)})
+		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{ListAssetsFn: publishedAsset("payload.txt", 4242, helloSHA)})
 		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
-		wantExit(t, err, cob.ExitMismatch)
+		clitest.WantExit(t, err, cob.ExitMismatch)
 		out := stdout.String()
 		if !strings.Contains(out, "missing locally") {
 			t.Errorf("expected 'missing locally' for absent file:\n%s", out)
@@ -720,25 +722,25 @@ func TestRunDiff(t *testing.T) {
 		// `cob diff some.yaml other.thing` is a typo, not a real
 		// invocation. The dispatcher rejects "two args, first is a
 		// file" rather than silently misrouting.
-		cfg, _, _ := useFake(t, &fakeCA{})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		dir := t.TempDir()
-		mf := writeFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x\n")
+		mf := clitest.WriteFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x\n")
 		err := runDiff(ctx, cfg, []string{mf, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
-		wantExit(t, err, cob.ExitError)
+		clitest.WantExit(t, err, cob.ExitError)
 	})
 
 	t.Run("dir: coordinates without a version → routed-error", func(t *testing.T) {
 		dir := t.TempDir()
-		cfg, _, _ := useFake(t, &fakeCA{})
+		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg"}, "", false, false, false)
-		wantExit(t, err, cob.ExitError)
+		clitest.WantExit(t, err, cob.ExitError)
 	})
 
 	t.Run("dir: single-dir-arg case gets a shape hint", func(t *testing.T) {
 		dir := t.TempDir()
-		cfg, _, stderr := useFake(t, &fakeCA{})
+		cfg, _, stderr := clitest.UseFake(t, &clitest.FakeCA{})
 		err := runDiff(ctx, cfg, []string{dir}, "", false, false, false)
-		wantExit(t, err, cob.ExitError)
+		clitest.WantExit(t, err, cob.ExitError)
 		if !strings.Contains(stderr.String(), "is a directory") {
 			t.Errorf("error should call out the directory-without-coords case:\n%s", stderr.String())
 		}
@@ -746,25 +748,25 @@ func TestRunDiff(t *testing.T) {
 
 	t.Run("dir: server-supplied traversal-shaped asset name is rejected, never hashed", func(t *testing.T) {
 		// CodeArtifact asset names are path-like and server-controlled. A
-		// "../../etc/passwd"-style name must be rejected by safeJoin
+		// "../../etc/passwd"-style name must be rejected by cliutil.SafeJoin
 		// rather than stat'd/hashed under the user-chosen directory. Stage
 		// a real file outside the dir at exactly the path the traversal
 		// would resolve to, so a regression (raw filepath.Join) would
 		// actually succeed at hashing it — the test then fails because
 		// the row should be an op-error, not a match.
 		outsideDir := t.TempDir()
-		writeFile(t, outsideDir, "secret.bin", "leaked")
+		clitest.WriteFile(t, outsideDir, "secret.bin", "leaked")
 		dir := filepath.Join(outsideDir, "scope")
 		if err := os.Mkdir(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		traversalName := "../secret.bin"
-		cfg, stdout, _ := useFake(t, &fakeCA{
-			listAssetsFn: publishedAsset(traversalName, 6, helloSHA),
+		cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{
+			ListAssetsFn: publishedAsset(traversalName, 6, helloSHA),
 		})
 		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false, false)
-		// op-error path: exit 1 (not 0/4) and the row carries the safeJoin reason.
-		wantExit(t, err, cob.ExitError)
+		// op-error path: exit 1 (not 0/4) and the row carries the cliutil.SafeJoin reason.
+		clitest.WantExit(t, err, cob.ExitError)
 		out := stdout.String()
 		if !strings.Contains(out, "unsafe asset name") {
 			t.Errorf("expected diff to reject the traversal-shaped name:\n%s", out)
@@ -777,7 +779,7 @@ func TestRunDiff(t *testing.T) {
 	})
 }
 
-// oneAsset returns a listAssetsFn that reports a single named asset with the
+// oneAsset returns a ListAssetsFn that reports a single named asset with the
 // given size and no recorded hash.
 func oneAsset(name string, size int64) func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
 	return func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
@@ -792,7 +794,7 @@ func oneAsset(name string, size int64) func(*codeartifact.ListPackageVersionAsse
 func writeManifest(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	writeFile(t, dir, "payload.txt", "payload-bytes")
-	return writeFile(t, dir, "m.yaml",
+	clitest.WriteFile(t, dir, "payload.txt", "payload-bytes")
+	return clitest.WriteFile(t, dir, "m.yaml",
 		"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  payload: ./payload.txt\n")
 }

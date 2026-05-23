@@ -1,4 +1,4 @@
-package cli
+package cliutil
 
 import (
 	"context"
@@ -9,32 +9,33 @@ import (
 )
 
 const (
-	defaultConcurrency = 4
-	maxConcurrency     = 32 // ceiling: more just invites API throttling
+	DefaultConcurrency = 4
+	MaxConcurrency     = 32 // ceiling: more just invites API throttling
 )
 
-func clampConcurrency(n int) int {
+// ClampConcurrency forces n into [1, MaxConcurrency].
+func ClampConcurrency(n int) int {
 	if n < 1 {
 		return 1
 	}
-	if n > maxConcurrency {
-		return maxConcurrency
+	if n > MaxConcurrency {
+		return MaxConcurrency
 	}
 	return n
 }
 
-// resolveConcurrency clamps a user-supplied --concurrency value to the
+// ResolveConcurrency clamps a user-supplied --concurrency value to the
 // supported range and warns if it had to change, so a typo'd or unreasonable
 // number is not silently coerced.
-func resolveConcurrency(requested int, out *output.Writer) int {
-	c := clampConcurrency(requested)
+func ResolveConcurrency(requested int, out *output.Writer) int {
+	c := ClampConcurrency(requested)
 	if c != requested {
-		out.Warn("--concurrency %d out of range [1,%d], using %d", requested, maxConcurrency, c)
+		out.Warn("--concurrency %d out of range [1,%d], using %d", requested, MaxConcurrency, c)
 	}
 	return c
 }
 
-// runConcurrent runs task for indices [0,n) with at most `limit` in flight,
+// RunConcurrent runs task for indices [0,n) with at most `limit` in flight,
 // returning results in index order. ctx is wrapped with a cancel that
 // fires on the first error so in-flight tasks see the cancellation and
 // can shortcut (AWS SDK calls abort, io.Copy bails) rather than running
@@ -44,14 +45,14 @@ func resolveConcurrency(requested int, out *output.Writer) int {
 //
 // On the first error it stops scheduling new tasks (already-running
 // ones finish) and reports ok=false. limit is clamped to
-// [1,maxConcurrency]; a clamped value of 1 runs strictly sequentially,
+// [1,MaxConcurrency]; a clamped value of 1 runs strictly sequentially,
 // the exact pre-concurrency behaviour.
-func runConcurrent(ctx context.Context, n, limit int, task func(ctx context.Context, i int) (*cob.AssetResult, error)) (results []*cob.AssetResult, ok bool) {
+func RunConcurrent(ctx context.Context, n, limit int, task func(ctx context.Context, i int) (*cob.AssetResult, error)) (results []*cob.AssetResult, ok bool) {
 	results = make([]*cob.AssetResult, n)
 	if n == 0 {
 		return results, true
 	}
-	limit = clampConcurrency(limit)
+	limit = ClampConcurrency(limit)
 	if limit == 1 {
 		for i := 0; i < n; i++ {
 			if ctx.Err() != nil {

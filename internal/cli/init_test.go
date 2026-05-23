@@ -8,6 +8,10 @@ import (
 
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
+
+	"github.com/jmurray2011/cob/internal/cliutil/clitest"
 )
 
 // initDir builds a temp directory pre-populated with a set of files
@@ -44,7 +48,7 @@ func TestRunInitFromDirGeneratesSourcesForEachFile(t *testing.T) {
 		"config.yaml": "key: value",
 		"README.md":   "hi",
 	})
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	if err := runInit(cfg, dir, "", "", false, false); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -91,7 +95,7 @@ func TestRunInitSkipsCobAndHiddenAndDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	// Use -o to a separate file so init doesn't refuse-overwrite on
 	// the cob-manifest.yaml the test fixture seeded.
 	outPath := filepath.Join(t.TempDir(), "out.yaml")
@@ -122,7 +126,7 @@ func TestRunInitSkipsCobAndHiddenAndDirs(t *testing.T) {
 
 func TestRunInitForPreFillsCoords(t *testing.T) {
 	dir := initDir(t, map[string]string{"app.bin": "x"})
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	if err := runInit(cfg, dir, "acme/dev/tools/my-app", "", false, false); err != nil {
 		t.Fatalf("init --for: %v", err)
 	}
@@ -143,16 +147,16 @@ func TestRunInitForRejectsVersion(t *testing.T) {
 	// --for is for coords only — the version lives on `cob publish`,
 	// not in the manifest. Putting @X on --for is a usage error.
 	dir := initDir(t, map[string]string{"app.bin": "x"})
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	err := runInit(cfg, dir, "acme/dev/tools/my-app@1.0.0", "", false, false)
-	wantExit(t, err, cob.ExitError)
+	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunInitRefusesEmptyDir(t *testing.T) {
 	dir := t.TempDir() // no eligible files
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	err := runInit(cfg, dir, "", "", false, false)
-	wantExit(t, err, cob.ExitError)
+	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunInitRefusesNonDir(t *testing.T) {
@@ -164,9 +168,9 @@ func TestRunInitRefusesNonDir(t *testing.T) {
 	if err := os.WriteFile(filePath, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	err := runInit(cfg, filePath, "", "", false, false)
-	wantExit(t, err, cob.ExitError)
+	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunInitRefusesExistingManifestWithoutForce(t *testing.T) {
@@ -178,9 +182,9 @@ func TestRunInitRefusesExistingManifestWithoutForce(t *testing.T) {
 		"app.bin":           "real",
 		"cob-manifest.yaml": "domain: x\nrepository: y\nnamespace: z\npackage: w\n",
 	})
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	err := runInit(cfg, dir, "", "", false, false)
-	wantExit(t, err, cob.ExitConflict)
+	clitest.WantExit(t, err, cob.ExitConflict)
 	// And the existing manifest should be untouched (still the seed).
 	got, err := os.ReadFile(filepath.Join(dir, "cob-manifest.yaml"))
 	if err != nil {
@@ -196,7 +200,7 @@ func TestRunInitForceOverwrites(t *testing.T) {
 		"app.bin":           "real",
 		"cob-manifest.yaml": "stale: yes\n",
 	})
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	if err := runInit(cfg, dir, "", "", true, false); err != nil {
 		t.Fatalf("init --force: %v", err)
 	}
@@ -210,11 +214,11 @@ func TestRunInitForceOverwrites(t *testing.T) {
 }
 
 func TestRunInitStdoutLeavesNoFile(t *testing.T) {
-	// -o - writes the manifest to stdout (consumed by useFake's
+	// -o - writes the manifest to stdout (consumed by clitest.UseFake's
 	// buffer). The directory should still NOT have a cob-manifest.yaml
 	// — that's the whole point of -o -.
 	dir := initDir(t, map[string]string{"app.bin": "x"})
-	cfg, stdout, _ := useFake(t, &fakeCA{})
+	cfg, stdout, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	if err := runInit(cfg, dir, "", "-", false, false); err != nil {
 		t.Fatalf("init -o -: %v", err)
 	}
@@ -228,7 +232,7 @@ func TestRunInitStdoutLeavesNoFile(t *testing.T) {
 
 func TestRunInitMinimalOmitsCommentsAndPromote(t *testing.T) {
 	dir := initDir(t, map[string]string{"app.bin": "x"})
-	cfg, _, _ := useFake(t, &fakeCA{})
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 	if err := runInit(cfg, dir, "acme/dev/tools/my-app", "", false, true); err != nil {
 		t.Fatalf("init --minimal: %v", err)
 	}
@@ -246,7 +250,7 @@ func TestRunInitMinimalOmitsCommentsAndPromote(t *testing.T) {
 
 // TestInitOutputLoadsAndLints is the contract: whatever `cob init`
 // writes must (1) parse via manifest.Load and (2) pass the same
-// validateManifest pre-flight that publish/promote/pull/diff use. A
+// cliutil.ValidateManifest pre-flight that publish/promote/pull/diff use. A
 // regression in the template that produced invalid YAML, missing
 // local files, or basename collisions would land here before biting
 // a first-run user.
@@ -267,7 +271,7 @@ func TestInitOutputLoadsAndLints(t *testing.T) {
 				"b.txt":    "2",
 				"sub.yaml": "key: val", // a legitimate yaml asset (not cob-manifest)
 			})
-			cfg, _, _ := useFake(t, &fakeCA{})
+			cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 			if err := runInit(cfg, dir, c.coords, "", false, c.minimal); err != nil {
 				t.Fatalf("init: %v", err)
 			}
@@ -276,8 +280,8 @@ func TestInitOutputLoadsAndLints(t *testing.T) {
 			if err != nil {
 				t.Fatalf("manifest.Load: %v", err)
 			}
-			if err := validateManifest(m, ""); err != nil {
-				t.Fatalf("validateManifest on generated manifest: %v", err)
+			if err := cliutil.ValidateManifest(m, ""); err != nil {
+				t.Fatalf("cliutil.ValidateManifest on generated manifest: %v", err)
 			}
 		})
 	}

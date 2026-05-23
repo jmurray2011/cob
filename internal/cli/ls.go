@@ -10,13 +10,15 @@ import (
 	"github.com/jmurray2011/cob/internal/concurrency"
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/internal/output"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
 // promotionStatusConcurrency bounds the parallel per-repo VersionStatus calls
 // in `ls dom/*/ns/pkg@v` (mirrors registry.versionMetaConcurrency).
 const promotionStatusConcurrency = 8
 
-func newLsCmd(cfg *Config) *cobra.Command {
+func newLsCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagRecursive bool
 		flagDepth     string
@@ -60,20 +62,20 @@ func newLsCmd(cfg *Config) *cobra.Command {
 // fully-qualified coordinate. JSON mode emits the same leaves as an array
 // (not the tree — that's what `cob tree --json` is for); text mode emits
 // one path per line, suitable for piping.
-func runLsRecursive(ctx context.Context, cfg *Config, cmd *cobra.Command, target, depthFlag string) error {
-	out := newWriter(cfg)
+func runLsRecursive(ctx context.Context, cfg *cliutil.Config, cmd *cobra.Command, target, depthFlag string) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 
 	depth, err := parseTreeDepth(depthFlag)
 	if err != nil {
-		return fail(out, "ls", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	var start *cob.PackageCoordinates
 	if target != "" {
 		start, err = manifest.ParseCoordinates(target)
 		if err != nil {
-			return fail(out, "ls", cob.ExitError, "%s", err)
+			return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 		}
 	}
 	// Mirror tree's "descend one level into a targeted node" default.
@@ -86,15 +88,15 @@ func runLsRecursive(ctx context.Context, cfg *Config, cmd *cobra.Command, target
 	if start != nil && cmd.Flags().Changed("depth") {
 		startKind := startDepthOf(start)
 		if depth < startKind {
-			return fail(out, "ls", cob.ExitError,
+			return cliutil.Fail(out, "ls", cob.ExitError,
 				"--depth %s is shallower than the target (level %s); pick a deeper depth or drop the target",
 				depthName(depth), depthName(startKind))
 		}
 	}
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "ls", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 	}
 	registry := cob.NewRegistry(client)
 
@@ -171,13 +173,13 @@ func classifyLs(coords *cob.PackageCoordinates, target string) (lsKind, string) 
 	return lsKindAssets, ""
 }
 
-func runLs(ctx context.Context, cfg *Config, target string) error {
-	out := newWriter(cfg)
+func runLs(ctx context.Context, cfg *cliutil.Config, target string) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 
-	client, err := dialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {
-		return fail(out, "ls", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 	}
 	registry := cob.NewRegistry(client)
 
@@ -185,13 +187,13 @@ func runLs(ctx context.Context, cfg *Config, target string) error {
 	if target != "" {
 		coords, err = manifest.ParseCoordinates(target)
 		if err != nil {
-			return fail(out, "ls", cob.ExitError, "%s", err)
+			return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 		}
 	}
 
 	kind, invalid := classifyLs(coords, target)
 	if invalid != "" {
-		return fail(out, "ls", cob.ExitError, "%s", invalid)
+		return cliutil.Fail(out, "ls", cob.ExitError, "%s", invalid)
 	}
 
 	switch kind {
@@ -210,8 +212,8 @@ func runLs(ctx context.Context, cfg *Config, target string) error {
 		return runLsVersions(ctx, registry, coords, out)
 	default: // lsKindAssets
 		if coords.Version == "latest" {
-			if err := resolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
-				return fail(out, "ls", cob.ExitNotFound, "%s", err)
+			if err := cliutil.ResolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
+				return cliutil.Fail(out, "ls", cob.ExitNotFound, "%s", err)
 			}
 		}
 		return runLsAssets(ctx, registry, coords, out)
@@ -228,7 +230,7 @@ func resolvePromotionLatest(ctx context.Context, registry *cob.Registry, coords 
 	}
 	repos, err := registry.ListRepositories(ctx, coords.Domain)
 	if err != nil || len(repos) == 0 {
-		return fail(out, "ls", cob.ExitNotFound, "cannot resolve @latest: no repositories found in %s", coords.Domain)
+		return cliutil.Fail(out, "ls", cob.ExitNotFound, "cannot resolve @latest: no repositories found in %s", coords.Domain)
 	}
 	for _, repo := range repos {
 		probe := *coords
@@ -239,7 +241,7 @@ func resolvePromotionLatest(ctx context.Context, registry *cob.Registry, coords 
 			return nil
 		}
 	}
-	return fail(out, "ls", cob.ExitNotFound, "no published versions of %s/%s found in any repository in %s",
+	return cliutil.Fail(out, "ls", cob.ExitNotFound, "no published versions of %s/%s found in any repository in %s",
 		coords.Namespace, coords.Package, coords.Domain)
 }
 
@@ -247,20 +249,20 @@ func resolvePromotionLatest(ctx context.Context, registry *cob.Registry, coords 
 // emits an empty array of the documented element type — so a consumer always
 // gets a parseable array, never an error object — and writes the message to
 // stderr; the exit code (2) already signals not-found. Non-JSON behaves like
-// fail. Whether output is JSON is read off the Writer itself (out.JSON
-// returns true if it emitted), so this function needs no Config dependency.
+// cliutil.Fail. Whether output is JSON is read off the Writer itself (out.JSON
+// returns true if it emitted), so this function needs no cliutil.Config dependency.
 func failEmptyList(out *output.Writer, emptyList any, format string, args ...any) error {
 	if out.JSON(emptyList) {
 		out.Error(format, args...)
-		return &ExitError{Code: cob.ExitNotFound}
+		return &cliutil.ExitError{Code: cob.ExitNotFound}
 	}
-	return fail(out, "ls", cob.ExitNotFound, format, args...)
+	return cliutil.Fail(out, "ls", cob.ExitNotFound, format, args...)
 }
 
 func runLsPackages(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {
 	packages, err := registry.ListPackages(ctx, coords.Domain, coords.Repository)
 	if err != nil {
-		return fail(out, "ls", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	if len(packages) == 0 {
@@ -283,7 +285,7 @@ func runLsPackages(ctx context.Context, registry *cob.Registry, coords *cob.Pack
 func runLsVersions(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {
 	versions, err := registry.ListVersions(ctx, coords)
 	if err != nil {
-		return fail(out, "ls", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	if len(versions) == 0 {
@@ -311,7 +313,7 @@ func runLsVersions(ctx context.Context, registry *cob.Registry, coords *cob.Pack
 func runLsAssets(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {
 	assets, err := registry.ListAssets(ctx, coords)
 	if err != nil {
-		return fail(out, "ls", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	if len(assets) == 0 {
@@ -339,7 +341,7 @@ func runLsAssets(ctx context.Context, registry *cob.Registry, coords *cob.Packag
 func runLsDomains(ctx context.Context, registry *cob.Registry, out *output.Writer) error {
 	domains, err := registry.ListDomains(ctx)
 	if err != nil {
-		return fail(out, "ls", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	if len(domains) == 0 {
@@ -362,7 +364,7 @@ func runLsDomains(ctx context.Context, registry *cob.Registry, out *output.Write
 func runLsRepos(ctx context.Context, registry *cob.Registry, domain string, out *output.Writer) error {
 	repos, err := registry.ListRepositories(ctx, domain)
 	if err != nil {
-		return fail(out, "ls", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	if len(repos) == 0 {
@@ -385,7 +387,7 @@ func runLsRepos(ctx context.Context, registry *cob.Registry, domain string, out 
 func runLsPromotionStatus(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {
 	repos, err := registry.ListRepositories(ctx, coords.Domain)
 	if err != nil {
-		return fail(out, "ls", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 	}
 
 	// Probe each repo's VersionStatus in parallel — a domain with many

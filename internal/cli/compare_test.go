@@ -13,6 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 	"github.com/jmurray2011/cob/internal/cob"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
 // caStub implements cob.CodeArtifactAPI; only ListPackageVersionAssets matters
@@ -83,7 +85,7 @@ func TestCompareSHAPrecedence(t *testing.T) {
 	reg := cob.NewRegistry(&cob.Client{CodeArtifact: ca})
 	coords := &cob.PackageCoordinates{Domain: "d", Repository: "r", Namespace: "n", Package: "p", Version: "1"}
 
-	sources := []NamedSource{
+	sources := []cliutil.NamedSource{
 		{Name: "k", Source: stubSrc{uri: "s3://b/known.bin", name: "known.bin", sha: "KNOWNSHA"}},
 		{Name: "d", Source: stubSrc{uri: "s3://b/deep.bin", name: "deep.bin", body: body}},
 		{Name: "pv", Source: stubSrc{uri: "s3://b/prov.bin", name: "prov.bin"}},
@@ -153,7 +155,7 @@ func TestCompareOriginDrift(t *testing.T) {
 		{Asset: "drift.bin", SHA256: "PSHA", Origin: &cob.Origin{Type: "s3", ETag: "old"}},
 		{Asset: "stable.bin", SHA256: "PSHA2", Origin: &cob.Origin{Type: "s3", ETag: "same"}},
 	}}
-	sources := []NamedSource{
+	sources := []cliutil.NamedSource{
 		// no content checksum (sha:"") -> falls to recorded-origin drift check
 		{Name: "d", Source: stubSrc{name: "drift.bin", origin: &cob.Origin{Type: "s3", ETag: "NEW"}}},
 		{Name: "s", Source: stubSrc{name: "stable.bin", origin: &cob.Origin{Type: "s3", ETag: "same"}}},
@@ -183,7 +185,7 @@ func TestCompareOriginUnreadableIsDrift(t *testing.T) {
 	prov := &cob.Provenance{Assets: []cob.ProvenanceEntry{
 		{Asset: "x.bin", SHA256: "PSHA", Origin: &cob.Origin{Type: "s3", ETag: "old"}},
 	}}
-	sources := []NamedSource{
+	sources := []cliutil.NamedSource{
 		{Name: "x", Source: stubSrc{name: "x.bin", originErr: errors.New("NoSuchKey")}},
 	}
 	cmps, _ := compareManifestToPublished(ctx, sources, reg, coords, false, prov)

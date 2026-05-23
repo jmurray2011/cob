@@ -12,9 +12,11 @@ import (
 
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newInitCmd(cfg *Config) *cobra.Command {
+func newInitCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagForCoords string
 		flagForce     bool
@@ -67,24 +69,24 @@ func newInitCmd(cfg *Config) *cobra.Command {
 	return cmd
 }
 
-func runInit(cfg *Config, dirArg, coordsArg, outputPath string, force, minimal bool) error {
-	out := newWriter(cfg)
+func runInit(cfg *cliutil.Config, dirArg, coordsArg, outputPath string, force, minimal bool) error {
+	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 
 	info, err := os.Stat(dirArg)
 	if err != nil {
-		return fail(out, "init", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "init", cob.ExitError, "%s", err)
 	}
 	if !info.IsDir() {
-		return fail(out, "init", cob.ExitError, "%s is not a directory", dirArg)
+		return cliutil.Fail(out, "init", cob.ExitError, "%s is not a directory", dirArg)
 	}
 
 	files, skipped, err := scanInitDir(dirArg)
 	if err != nil {
-		return fail(out, "init", cob.ExitError, "%s", err)
+		return cliutil.Fail(out, "init", cob.ExitError, "%s", err)
 	}
 	if len(files) == 0 {
-		return fail(out, "init", cob.ExitError,
+		return cliutil.Fail(out, "init", cob.ExitError,
 			"no eligible files in %s — init generates a manifest from a directory of files (it skips hidden files, sub-dirs, and cob-{manifest.yaml,provenance.json})",
 			dirArg)
 	}
@@ -101,12 +103,12 @@ func runInit(cfg *Config, dirArg, coordsArg, outputPath string, force, minimal b
 	if coordsArg != "" {
 		parsed, err := manifest.ParseCoordinates(coordsArg)
 		if err != nil {
-			return fail(out, "init", cob.ExitError, "--for: %s", err)
+			return cliutil.Fail(out, "init", cob.ExitError, "--for: %s", err)
 		}
 		// @version on --for is a usage error — the version belongs to
 		// the publish call, not the manifest.
 		if parsed.Version != "" {
-			return fail(out, "init", cob.ExitError,
+			return cliutil.Fail(out, "init", cob.ExitError,
 				"--for does not accept an @version segment — the version is supplied at publish time")
 		}
 		if parsed.Domain != "" {
@@ -139,12 +141,12 @@ func runInit(cfg *Config, dirArg, coordsArg, outputPath string, force, minimal b
 	}
 	if outputFile != "" {
 		if _, err := os.Stat(outputFile); err == nil && !force {
-			return fail(out, "init", cob.ExitConflict,
+			return cliutil.Fail(out, "init", cob.ExitConflict,
 				"%s already exists; --force to overwrite", outputFile)
 		}
 		f, err := os.Create(outputFile)
 		if err != nil {
-			return fail(out, "init", cob.ExitError, "%s", err)
+			return cliutil.Fail(out, "init", cob.ExitError, "%s", err)
 		}
 		defer f.Close()
 		w = f
@@ -176,7 +178,7 @@ func runInit(cfg *Config, dirArg, coordsArg, outputPath string, force, minimal b
 //     someone who ran init expecting build artifacts)
 //   - cob-manifest.yaml / cob-provenance.json (so a re-run on a pulled
 //     directory doesn't recurse on its own metadata)
-//   - non-regular files (symlinks, FIFOs, etc. — would fail at
+//   - non-regular files (symlinks, FIFOs, etc. — would cliutil.Fail at
 //     publish time anyway)
 //
 // Returns the eligible file names (sorted) and a skipped-count for

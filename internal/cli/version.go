@@ -5,42 +5,11 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-// BuildInfo carries the version metadata cob can determine from the
-// build: the version string (from -ldflags or VCS), the VCS revision
-// and timestamp when available, plus runtime details (Go toolchain,
-// OS/arch). Surfaced both as the cobra --version line and as
-// `cob version --json` for CI consumers that want to pin or detect
-// upgrades programmatically.
-type BuildInfo struct {
-	Version string `json:"version"`
-	Commit  string `json:"commit,omitempty"`
-	Time    string `json:"time,omitempty"`
-	Go      string `json:"go"`
-	OS      string `json:"os"`
-	Arch    string `json:"arch"`
-}
-
-// HumanString renders the same parenthesized "version (commit, go, time)"
-// shape resolveBuildVersion historically produced for cobra's --version
-// line. Kept in this package so the version subcommand and the cobra
-// flag stay in lockstep.
-func (b BuildInfo) HumanString() string {
-	extra := b.Go
-	if b.Commit != "" {
-		extra = b.Commit + ", " + extra
-	}
-	if b.Time != "" {
-		extra += ", " + b.Time
-	}
-	if extra != "" {
-		return b.Version + " (" + extra + ")"
-	}
-	return b.Version
-}
-
-func newVersionCmd(cfg *Config) *cobra.Command {
+func newVersionCmd(cfg *cliutil.Config) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print cob's build version",
@@ -51,11 +20,12 @@ func newVersionCmd(cfg *Config) *cobra.Command {
 			"with other cobra-based tools.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			out := newWriter(cfg)
+			out := cliutil.NewWriter(cfg)
 			defer out.Close()
 			// Fill the runtime fields lazily: they don't change per build,
-			// but keeping them out of cfg.Build means tests can construct a
-			// pinned BuildInfo without needing to spoof runtime.GOOS too.
+			// but keeping them out of cfg.Build means tests can construct
+			// a pinned cliutil.BuildInfo without needing to spoof
+			// runtime.GOOS too.
 			bi := cfg.Build
 			if bi.Go == "" {
 				bi.Go = runtime.Version()

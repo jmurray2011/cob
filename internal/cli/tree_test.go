@@ -12,6 +12,8 @@ import (
 
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/output"
+
+	"github.com/jmurray2011/cob/internal/cliutil/clitest"
 )
 
 func TestParseTreeDepth(t *testing.T) {
@@ -153,40 +155,40 @@ func TestCountErrors(t *testing.T) {
 	}
 }
 
-// treeFake builds a fakeCA wired to return a small fixed namespace:
+// treeFake builds a clitest.FakeCA wired to return a small fixed namespace:
 //
 //	acme/dev/tools/app  (one version 1.0.0)
 //
 // Each command goes through this against a hand-built fake, so the walker
 // is exercised end-to-end without mocking the registry.
-func treeFake() *fakeCA {
-	return &fakeCA{
-		listDomainsFn: func(*codeartifact.ListDomainsInput) (*codeartifact.ListDomainsOutput, error) {
+func treeFake() *clitest.FakeCA {
+	return &clitest.FakeCA{
+		ListDomainsFn: func(*codeartifact.ListDomainsInput) (*codeartifact.ListDomainsOutput, error) {
 			return &codeartifact.ListDomainsOutput{Domains: []catypes.DomainSummary{
 				{Name: aws.String("acme"), Status: catypes.DomainStatusActive},
 			}}, nil
 		},
-		listReposFn: func(*codeartifact.ListRepositoriesInDomainInput) (*codeartifact.ListRepositoriesInDomainOutput, error) {
+		ListReposFn: func(*codeartifact.ListRepositoriesInDomainInput) (*codeartifact.ListRepositoriesInDomainOutput, error) {
 			return &codeartifact.ListRepositoriesInDomainOutput{Repositories: []catypes.RepositorySummary{
 				{Name: aws.String("dev")},
 			}}, nil
 		},
-		listPackagesFn: func(*codeartifact.ListPackagesInput) (*codeartifact.ListPackagesOutput, error) {
+		ListPackagesFn: func(*codeartifact.ListPackagesInput) (*codeartifact.ListPackagesOutput, error) {
 			return &codeartifact.ListPackagesOutput{Packages: []catypes.PackageSummary{
 				{Namespace: aws.String("tools"), Package: aws.String("app")},
 			}}, nil
 		},
-		listVersionsFn: func(*codeartifact.ListPackageVersionsInput) (*codeartifact.ListPackageVersionsOutput, error) {
+		ListVersionsFn: func(*codeartifact.ListPackageVersionsInput) (*codeartifact.ListPackageVersionsOutput, error) {
 			return &codeartifact.ListPackageVersionsOutput{
 				Versions: []catypes.PackageVersionSummary{{Version: aws.String("1.0.0")}},
 			}, nil
 		},
-		listAssetsFn: oneAsset("app.bin", 5),
+		ListAssetsFn: oneAsset("app.bin", 5),
 	}
 }
 
 func TestRunTreeDefault(t *testing.T) {
-	cfg, stdout, _ := useFake(t, treeFake())
+	cfg, stdout, _ := clitest.UseFake(t, treeFake())
 	root := newTreeCmd(cfg)
 	root.SetArgs([]string{})
 	if err := root.Execute(); err != nil {
@@ -211,7 +213,7 @@ func TestRunTreeDefaultBumpsBelowTarget(t *testing.T) {
 	// Targeting a package with no explicit --depth should descend into
 	// versions — otherwise the result is one node with no children, which
 	// is useless and was the gotcha the bump exists to avoid.
-	cfg, stdout, _ := useFake(t, treeFake())
+	cfg, stdout, _ := clitest.UseFake(t, treeFake())
 	root := newTreeCmd(cfg)
 	root.SetArgs([]string{"acme/dev/tools/app"})
 	if err := root.Execute(); err != nil {
@@ -224,17 +226,17 @@ func TestRunTreeDefaultBumpsBelowTarget(t *testing.T) {
 }
 
 func TestRunTreeRejectsShallowerDepth(t *testing.T) {
-	cfg, _, _ := useFake(t, treeFake())
+	cfg, _, _ := clitest.UseFake(t, treeFake())
 	root := newTreeCmd(cfg)
 	// Explicit shallower --depth contradicts the target; tree refuses
 	// rather than silently producing nothing.
 	root.SetArgs([]string{"acme/dev", "--depth", "domains"})
 	err := root.Execute()
-	wantExit(t, err, cob.ExitError)
+	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunTreeJSON(t *testing.T) {
-	cfg, stdout, _ := useFake(t, treeFake())
+	cfg, stdout, _ := clitest.UseFake(t, treeFake())
 	cfg.JSON = true
 	root := newTreeCmd(cfg)
 	root.SetArgs([]string{})
@@ -297,7 +299,7 @@ func TestFlattenForJSONOrderAndContent(t *testing.T) {
 }
 
 func TestRunLsRecursiveFlat(t *testing.T) {
-	cfg, stdout, _ := useFake(t, treeFake())
+	cfg, stdout, _ := clitest.UseFake(t, treeFake())
 	root := newLsCmd(cfg)
 	root.SetArgs([]string{"-R"})
 	if err := root.Execute(); err != nil {
@@ -310,7 +312,7 @@ func TestRunLsRecursiveFlat(t *testing.T) {
 }
 
 func TestRunLsRecursiveDepthVersions(t *testing.T) {
-	cfg, stdout, _ := useFake(t, treeFake())
+	cfg, stdout, _ := clitest.UseFake(t, treeFake())
 	root := newLsCmd(cfg)
 	root.SetArgs([]string{"-R", "--depth", "versions"})
 	if err := root.Execute(); err != nil {
@@ -324,7 +326,7 @@ func TestRunLsRecursiveDepthVersions(t *testing.T) {
 }
 
 func TestRunLsRecursiveJSON(t *testing.T) {
-	cfg, stdout, _ := useFake(t, treeFake())
+	cfg, stdout, _ := clitest.UseFake(t, treeFake())
 	cfg.JSON = true
 	root := newLsCmd(cfg)
 	root.SetArgs([]string{"-R"})
@@ -343,28 +345,28 @@ func TestRunLsRecursiveJSON(t *testing.T) {
 func TestRunLsRecursiveEmptyIsNotFound(t *testing.T) {
 	// No domains -> nothing to walk -> ExitNotFound + (in JSON mode) an
 	// empty array, matching the rest of ls.
-	cfg, _, _ := useFake(t, &fakeCA{}) // defaults: every list returns empty
+	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{}) // defaults: every list returns empty
 	root := newLsCmd(cfg)
 	root.SetArgs([]string{"-R"})
-	wantExit(t, root.Execute(), cob.ExitNotFound)
+	clitest.WantExit(t, root.Execute(), cob.ExitNotFound)
 }
 
 func TestWalkRecordsPerBranchErrors(t *testing.T) {
 	// One repo's ListPackages errors; the rest of the tree should still
 	// resolve and the failure should be visible on its node, not fatal.
-	ca := &fakeCA{
-		listDomainsFn: func(*codeartifact.ListDomainsInput) (*codeartifact.ListDomainsOutput, error) {
+	ca := &clitest.FakeCA{
+		ListDomainsFn: func(*codeartifact.ListDomainsInput) (*codeartifact.ListDomainsOutput, error) {
 			return &codeartifact.ListDomainsOutput{Domains: []catypes.DomainSummary{
 				{Name: aws.String("acme")},
 			}}, nil
 		},
-		listReposFn: func(*codeartifact.ListRepositoriesInDomainInput) (*codeartifact.ListRepositoriesInDomainOutput, error) {
+		ListReposFn: func(*codeartifact.ListRepositoriesInDomainInput) (*codeartifact.ListRepositoriesInDomainOutput, error) {
 			return &codeartifact.ListRepositoriesInDomainOutput{Repositories: []catypes.RepositorySummary{
 				{Name: aws.String("good")},
 				{Name: aws.String("bad")},
 			}}, nil
 		},
-		listPackagesFn: func(in *codeartifact.ListPackagesInput) (*codeartifact.ListPackagesOutput, error) {
+		ListPackagesFn: func(in *codeartifact.ListPackagesInput) (*codeartifact.ListPackagesOutput, error) {
 			if aws.ToString(in.Repository) == "bad" {
 				return nil, &catypes.AccessDeniedException{Message: aws.String("nope")}
 			}
@@ -372,13 +374,13 @@ func TestWalkRecordsPerBranchErrors(t *testing.T) {
 				{Namespace: aws.String("ns"), Package: aws.String("good-pkg")},
 			}}, nil
 		},
-		listVersionsFn: func(*codeartifact.ListPackageVersionsInput) (*codeartifact.ListPackageVersionsOutput, error) {
+		ListVersionsFn: func(*codeartifact.ListPackageVersionsInput) (*codeartifact.ListPackageVersionsOutput, error) {
 			return &codeartifact.ListPackageVersionsOutput{
 				Versions: []catypes.PackageVersionSummary{{Version: aws.String("1")}},
 			}, nil
 		},
 	}
-	cfg, stdout, stderr := useFake(t, ca)
+	cfg, stdout, stderr := clitest.UseFake(t, ca)
 	root := newTreeCmd(cfg)
 	root.SetArgs([]string{})
 	if err := root.Execute(); err != nil {

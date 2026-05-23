@@ -9,17 +9,19 @@ import (
 
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/output"
+
+	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
 func TestFailJSONMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	w := output.NewWithWriters(&stdout, &stderr, output.Mode{JSON: true})
 
-	err := fail(w, "publish", cob.ExitConflict, "version %s already exists", "1.0.0")
+	err := cliutil.Fail(w, "publish", cob.ExitConflict, "version %s already exists", "1.0.0")
 
-	var ee *ExitError
+	var ee *cliutil.ExitError
 	if !errors.As(err, &ee) {
-		t.Fatalf("fail should return *ExitError, got %T", err)
+		t.Fatalf("cliutil.Fail should return *cliutil.ExitError, got %T", err)
 	}
 	if ee.Code != cob.ExitConflict {
 		t.Errorf("Code = %d, want %d", ee.Code, cob.ExitConflict)
@@ -42,7 +44,7 @@ func TestFailHumanMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	w := output.NewWithWriters(&stdout, &stderr, output.Mode{})
 
-	_ = fail(w, "pull", cob.ExitNotFound, "nope")
+	_ = cliutil.Fail(w, "pull", cob.ExitNotFound, "nope")
 
 	if stdout.Len() != 0 {
 		t.Errorf("human mode must not write JSON to stdout, got %q", stdout.String())
@@ -53,8 +55,8 @@ func TestFailHumanMode(t *testing.T) {
 }
 
 func TestExitErrorMessage(t *testing.T) {
-	e := &ExitError{Code: 3}
+	e := &cliutil.ExitError{Code: 3}
 	if e.Error() == "" {
-		t.Error("ExitError.Error() should be non-empty")
+		t.Error("cliutil.ExitError.Error() should be non-empty")
 	}
 }
