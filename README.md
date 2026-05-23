@@ -248,27 +248,42 @@ Resolution is by publication timestamp, not semver.
 
 ### init
 
-Prints a starter manifest to stdout — placeholders that pass `cob diff`
-lint out of the box, plus inline examples for each source type. The optional
-coordinates argument fills in any subset of domain/repository/namespace/
-package; the rest stay as placeholders so you can fill them in as you
-iterate. No AWS calls.
+Generates a manifest from a directory of files. Scans `<dir>` (default
+`.`) for top-level regular files and writes a manifest with each file
+as a local `./<filename>` source. Coordinates are placeholders unless
+you pass `--for`. By default the manifest is written to
+`<dir>/cob-manifest.yaml` so the `./<filename>` source paths resolve
+without editing.
 
 ```bash
-# generic template
-cob init > my-package.yaml
+# Scaffold from the current directory's files
+cob init
 
-# fill in identifiers up front
-cob init acme/dev/tools/my-app > my-package.yaml
+# Scaffold from a specific directory
+cob init ~/build-output
 
-# partial: only the domain
-cob init acme > my-package.yaml
+# Pre-fill coordinates so you don't have to edit them after
+cob init ~/build-output --for acme/dev/tools/my-app
 
-# bare schema — no comments, no promote stages
-cob init acme/dev/tools/my-app --minimal > my-package.yaml
+# Print to stdout instead of writing a file
+cob init . -o -
+
+# Bare schema (no comments, no promote stages)
+cob init . --minimal
 ```
 
-Flags: `--minimal`
+Skips hidden files, sub-directories, and the cob-generated `cob-manifest.yaml`
+and `cob-provenance.json`, so re-running on a pulled directory doesn't
+recurse on its own metadata. Refuses to overwrite an existing
+`cob-manifest.yaml` unless you pass `--force` (common case: you pulled
+something into `.` and then absent-mindedly ran `cob init` — you
+probably want to look at the file you'd clobber first).
+
+The generated manifest is guaranteed to pass `cob diff <manifest>` lint
+(schema + URI syntax + local-file existence) — same pre-flight that
+publish/promote/pull run implicitly.
+
+Flags: `--for <coords>`, `--force`, `-o <path>` (`-` for stdout), `--minimal`
 
 ### log
 
