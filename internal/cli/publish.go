@@ -45,7 +45,7 @@ func newPublishCmd(cfg *Config) *cobra.Command {
 	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Verify sources exist, show plan, don't publish")
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Skip confirmation")
 	cmd.Flags().BoolVar(&flagResume, "resume", false, "Continue an unfinished publish: upload only the missing assets")
-	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential)")
+	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential; clamped to [1,32] to avoid CodeArtifact throttling — a warning prints if a passed value was changed)")
 
 	return cmd
 }

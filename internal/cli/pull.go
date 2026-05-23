@@ -45,7 +45,7 @@ func newPullCmd(cfg *Config) *cobra.Command {
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Specific version (required with manifest)")
 	cmd.Flags().StringVarP(&flagOutput, "output", "o", "", "Output path (directory or filename)")
 	cmd.Flags().StringVar(&flagAssets, "assets", "", "Pull specific assets only (comma-separated)")
-	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets downloaded in parallel (1 = sequential)")
+	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets downloaded in parallel (1 = sequential; clamped to [1,32] to avoid CodeArtifact throttling — a warning prints if a passed value was changed)")
 
 	return cmd
 }

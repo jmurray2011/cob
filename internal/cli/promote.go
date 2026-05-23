@@ -47,7 +47,7 @@ func newPromoteCmd(cfg *Config) *cobra.Command {
 	cmd.Flags().BoolVarP(&flagYes, "yes", "y", false, "Skip confirmation")
 	cmd.Flags().BoolVar(&flagDryRun, "dry-run", false, "Show what would be promoted, copy nothing")
 	cmd.Flags().BoolVar(&flagResume, "resume", false, "Continue an unfinished promote: copy only the missing assets")
-	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential)")
+	cmd.Flags().IntVar(&flagConcurrency, "concurrency", defaultConcurrency, "Max assets transferred in parallel (1 = sequential; clamped to [1,32] to avoid CodeArtifact throttling — a warning prints if a passed value was changed)")
 	cmd.MarkFlagRequired("to")
 
 	return cmd

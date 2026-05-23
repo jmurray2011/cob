@@ -6,6 +6,8 @@ cob reads a YAML manifest that declares what goes into a package by pointing at 
 
 ## Install
 
+**Requirements:** Go **1.25 or newer** (chosen so a build picks up the latest standard-library security patches, which `govulncheck` enforces in CI). On an older toolchain, `go install` fails with a "module requires Go 1.25" error — install a newer Go via [go.dev/dl](https://go.dev/dl/) or the [Go toolchain auto-download](https://go.dev/doc/toolchain) before retrying.
+
 ```bash
 go install github.com/jmurray2011/cob/cmd/cob@latest
 ```
@@ -16,9 +18,7 @@ Or build from source:
 go build -o cob ./cmd/cob
 ```
 
-`go install` needs a Go toolchain at the version in [go.mod](go.mod) or newer
-(currently Go 1.25 -- chosen so a build picks up the latest standard-library
-security patches, which `govulncheck` enforces in CI).
+Prebuilt binaries for Linux / macOS / Windows are attached to each [GitHub release](https://github.com/jmurray2011/cob/releases) (no Go toolchain required); see [Verifying release binaries](#verifying-release-binaries) below for the cosign verification step.
 
 ### Verifying release binaries
 
