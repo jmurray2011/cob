@@ -53,6 +53,8 @@ func newPublishCmd(cfg *Config) *cobra.Command {
 func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag string, force, dryRun, yes, resume bool, concurrency int) error {
 	out := newWriter(cfg)
 	defer out.Close()
+	ctx, cancel := interruptable(ctx, out)
+	defer cancel()
 
 	if resume && force {
 		return fail(out, "publish", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")

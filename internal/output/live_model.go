@@ -3,6 +3,7 @@ package output
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -117,6 +118,12 @@ func (r *rate) advance() {
 }
 
 // liveModel is the bubbletea program state for cob's transfer view.
+//
+// interrupted and onInterrupt make Ctrl-C work. Bubbletea's raw mode
+// (ISIG off) swallows the kernel's translation of Ctrl-C into SIGINT,
+// so the OS-level signal.NotifyContext in main never fires while the
+// TUI is up. Catching the KeyMsg here is the only mechanism that
+// reaches the in-flight pull/publish/promote goroutines.
 type liveModel struct {
 	rows          []*assetRow
 	byName        map[string]*assetRow
@@ -127,14 +134,26 @@ type liveModel struct {
 	startTime     time.Time
 	width         int
 	style         liveStyle
+
+	// interrupted is set by Update when Ctrl-C arrives; the renderer
+	// reads it after Run() exits to decide whether the quit was "user
+	// asked out" vs "command finished normally".
+	interrupted *atomic.Bool
+	// onInterrupt fires inside Update on Ctrl-C, before tea.Quit
+	// propagates — that way the operation's context is canceled
+	// immediately and any in-flight AWS calls start aborting while
+	// bubbletea is still tearing down the terminal.
+	onInterrupt func()
 }
 
-func newLiveModel() liveModel {
+func newLiveModel(interrupted *atomic.Bool, onInterrupt func()) liveModel {
 	return liveModel{
-		byName:    make(map[string]*assetRow),
-		startTime: time.Now(),
-		width:     80,
-		style:     newLiveStyle(),
+		byName:      make(map[string]*assetRow),
+		startTime:   time.Now(),
+		width:       80,
+		style:       newLiveStyle(),
+		interrupted: interrupted,
+		onInterrupt: onInterrupt,
 	}
 }
 
@@ -151,6 +170,23 @@ func tickEvery(d time.Duration) tea.Cmd {
 
 func (m liveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+
+	case tea.KeyMsg:
+		// Ctrl-C: mark interrupted, fire the registered cancel
+		// callback so the runXxx's context cancels NOW (the in-flight
+		// AWS calls start tearing down before bubbletea even finishes
+		// its own teardown), then ask bubbletea to quit. Other keys
+		// are ignored — cob's TUI is non-interactive.
+		if msg.Type == tea.KeyCtrlC {
+			if m.interrupted != nil {
+				m.interrupted.Store(true)
+			}
+			if m.onInterrupt != nil {
+				m.onInterrupt()
+			}
+			return m, tea.Quit
+		}
+		return m, nil
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width

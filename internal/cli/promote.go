@@ -56,6 +56,8 @@ func newPromoteCmd(cfg *Config) *cobra.Command {
 func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo string, force, yes, dryRun, resume bool, concurrency int) error {
 	out := newWriter(cfg)
 	defer out.Close()
+	ctx, cancel := interruptable(ctx, out)
+	defer cancel()
 
 	if resume && force {
 		return fail(out, "promote", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")

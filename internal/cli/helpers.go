@@ -13,6 +13,19 @@ import (
 	"github.com/jmurray2011/cob/internal/output"
 )
 
+// interruptable wraps ctx with a cancel func, registers that cancel as
+// the writer's Ctrl-C handler, and returns the new ctx. The caller
+// keeps the cancel func via defer cancel() (or just relies on the
+// runXxx returning to clean up via the parent ctx). Used by every
+// command that engages the live renderer's asset stream so a TTY
+// Ctrl-C reaches in-flight AWS calls — bubbletea's raw mode otherwise
+// swallows the signal and main's signal.NotifyContext never fires.
+func interruptable(ctx context.Context, out *output.Writer) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	out.SetInterrupt(cancel)
+	return ctx, cancel
+}
+
 // fillClientMeta records the executing principal and region onto a
 // CommandResult so audit pipelines can answer "which account/role ran
 // this, in which region?" without grepping per-asset Origin or the

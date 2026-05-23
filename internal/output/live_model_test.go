@@ -3,6 +3,7 @@ package output
 import (
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,7 +15,7 @@ import (
 // around Update; testing Update in isolation gives most of the coverage
 // at a fraction of the complexity.
 func TestLiveModelUpdateProducesRowsForEachEvent(t *testing.T) {
-	m := newLiveModel()
+	m := newLiveModel(nil, nil)
 	var im tea.Model = m
 
 	send := func(msg tea.Msg) {
@@ -56,7 +57,7 @@ func TestLiveModelUpdateProducesRowsForEachEvent(t *testing.T) {
 // asserts the rendered string includes a recognizable marker for each.
 // Box-drawing / alignment regressions surface here.
 func TestLiveModelViewRendersTerminalStates(t *testing.T) {
-	m := newLiveModel()
+	m := newLiveModel(nil, nil)
 	m.width = 100
 	var im tea.Model = m
 	send := func(msg tea.Msg) { im, _ = im.Update(msg) }
@@ -86,6 +87,60 @@ func TestLiveModelViewRendersTerminalStates(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("View missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+// TestLiveModelCtrlCFiresInterruptAndQuits is the regression for the
+// stuck-during-pull bug: bubbletea puts the terminal in raw mode (ISIG
+// off), so the kernel never translates Ctrl-C into SIGINT. The model
+// has to catch the KeyMsg, set the shared interrupted flag (so the
+// renderer's post-Run path knows what happened), fire the registered
+// cancel callback (so in-flight AWS calls abort immediately), and
+// return tea.Quit (so bubbletea tears down the TUI). Skipping any of
+// those leaves the user stuck.
+func TestLiveModelCtrlCFiresInterruptAndQuits(t *testing.T) {
+	interrupted := &atomic.Bool{}
+	var canceled atomic.Bool
+	m := newLiveModel(interrupted, func() { canceled.Store(true) })
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	if !interrupted.Load() {
+		t.Error("interrupted flag must be set on Ctrl-C")
+	}
+	if !canceled.Load() {
+		t.Error("onInterrupt callback must fire on Ctrl-C")
+	}
+	if cmd == nil {
+		t.Fatal("Ctrl-C must return tea.Quit")
+	}
+	// tea.Quit is a function; calling it returns a tea.QuitMsg.
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("expected tea.QuitMsg, got %T", cmd())
+	}
+}
+
+// TestLiveModelOtherKeysIgnored confirms that the TUI is
+// non-interactive — random keypresses do nothing. Without this guard a
+// stray 'q' could quit a long-running pull mid-transfer.
+func TestLiveModelOtherKeysIgnored(t *testing.T) {
+	interrupted := &atomic.Bool{}
+	var canceled atomic.Bool
+	m := newLiveModel(interrupted, func() { canceled.Store(true) })
+
+	for _, key := range []tea.KeyType{tea.KeyEsc, tea.KeyEnter, tea.KeySpace} {
+		_, cmd := m.Update(tea.KeyMsg{Type: key})
+		if cmd != nil {
+			t.Errorf("key %v should be a no-op, got cmd %v", key, cmd)
+		}
+	}
+	// And a regular rune.
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd != nil {
+		t.Error("'q' should be a no-op (the TUI is non-interactive)")
+	}
+	if interrupted.Load() || canceled.Load() {
+		t.Error("non-Ctrl-C keys must not trip the interrupt path")
 	}
 }
 

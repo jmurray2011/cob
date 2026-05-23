@@ -86,6 +86,31 @@ func (w *Writer) Close() {
 	})
 }
 
+// SetInterrupt registers a callback fired when the user hits Ctrl-C
+// inside the live TUI. Bubbletea's raw mode swallows the kernel's
+// translation of Ctrl-C into SIGINT, so the OS-level signal.NotifyContext
+// in main never fires while the TUI is up — this is the only mechanism
+// that reaches in-flight pull/publish/promote goroutines. Wire it to
+// your context's cancel func before kicking off transfers.
+//
+// No-op on non-live renderers (silent / stream) — they don't need the
+// rescue plumbing because they don't put the terminal in raw mode.
+func (w *Writer) SetInterrupt(fn func()) {
+	if l, ok := w.renderer.(*liveRenderer); ok {
+		l.SetInterrupt(fn)
+	}
+}
+
+// Interrupted reports whether the user hit Ctrl-C inside the live TUI.
+// Only meaningful in live mode; returns false otherwise. Call after
+// Close to decide whether to surface a distinct exit status or footer.
+func (w *Writer) Interrupted() bool {
+	if l, ok := w.renderer.(*liveRenderer); ok {
+		return l.Interrupted()
+	}
+	return false
+}
+
 // Stdout returns the writer's stdout sink, for command output that is
 // neither an asset line, a table, nor a CommandResult — resolve's bare
 // version string and manifest's YAML document. Routing through here (rather

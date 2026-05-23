@@ -53,6 +53,8 @@ func runVerify(ctx context.Context, cfg *Config, target, versionFlag string, dee
 func runVerifyManifest(ctx context.Context, cfg *Config, manifestPath, versionFlag string, deep bool) error {
 	out := newWriter(cfg)
 	defer out.Close()
+	ctx, cancel := interruptable(ctx, out)
+	defer cancel()
 
 	version, err := resolveVersion(versionFlag)
 	if err != nil {
@@ -187,6 +189,8 @@ func runVerifyManifest(ctx context.Context, cfg *Config, manifestPath, versionFl
 func runVerifyCoords(ctx context.Context, cfg *Config, target, versionFlag string) error {
 	out := newWriter(cfg)
 	defer out.Close()
+	ctx, cancel := interruptable(ctx, out)
+	defer cancel()
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
