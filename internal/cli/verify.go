@@ -21,6 +21,7 @@ func newVerifyCmd(cfg *Config) *cobra.Command {
 	var (
 		flagVersion string
 		flagDeep    bool
+		flagVerbose bool
 	)
 
 	cmd := &cobra.Command{
@@ -51,11 +52,12 @@ func newVerifyCmd(cfg *Config) *cobra.Command {
   cob verify ~/pulled-dir acme/dev/tools/my-app@2.1.0`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runVerify(cmd.Context(), cfg, args, flagVersion, flagDeep)
+			return runVerify(cmd.Context(), cfg, args, flagVersion, flagDeep, flagVerbose)
 		},
 	}
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Package version (manifest mode: required, or set COB_VERSION; coordinates/dir modes use @version)")
 	cmd.Flags().BoolVar(&flagDeep, "deep", false, "Manifest mode: download and hash sources lacking a checksum")
+	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "Show the source URI and full SHA-256 on every row (default: only on mismatches)")
 	return cmd
 }
 
@@ -66,7 +68,7 @@ func newVerifyCmd(cfg *Config) *cobra.Command {
 //	1 arg, directory  → error (directory mode requires coords as arg 2)
 //	1 arg, otherwise  → coordinates mode (self-verify)
 //	2 args            → directory + coordinates mode (first must be a dir)
-func runVerify(ctx context.Context, cfg *Config, args []string, versionFlag string, deep bool) error {
+func runVerify(ctx context.Context, cfg *Config, args []string, versionFlag string, deep, verbose bool) error {
 	if len(args) == 2 {
 		out := newWriter(cfg)
 		defer out.Close()
@@ -81,11 +83,11 @@ func runVerify(ctx context.Context, cfg *Config, args []string, versionFlag stri
 		if !info.IsDir() {
 			return fail(out, "verify", cob.ExitError, "first argument must be a directory when two args are given; got file %s", args[0])
 		}
-		return runVerifyDir(ctx, cfg, out, args[0], args[1])
+		return runVerifyDir(ctx, cfg, out, args[0], args[1], verbose)
 	}
 	target := args[0]
 	if isManifestPath(target) {
-		return runVerifyManifest(ctx, cfg, target, versionFlag, deep)
+		return runVerifyManifest(ctx, cfg, target, versionFlag, deep, verbose)
 	}
 	// Catch the obvious mistake: `cob verify /some/dir` without coords.
 	if info, err := os.Stat(target); err == nil && info.IsDir() {
@@ -95,7 +97,7 @@ func runVerify(ctx context.Context, cfg *Config, args []string, versionFlag stri
 			"%s is a directory — to verify its files against a published version, give the coordinates as a second argument:\n  cob verify %s <domain>/<repo>/<ns>/<pkg>@<version>",
 			target, target)
 	}
-	return runVerifyCoords(ctx, cfg, target, versionFlag)
+	return runVerifyCoords(ctx, cfg, target, versionFlag, verbose)
 }
 
 // runVerifyDir hashes every file in <dir> whose name matches a published
@@ -104,7 +106,7 @@ func runVerify(ctx context.Context, cfg *Config, args []string, versionFlag stri
 // might be a README, source files, etc.). Published assets without a
 // local file are reported as "missing locally". The cob-provenance.json
 // asset is excluded — it's audit metadata, not a package file.
-func runVerifyDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath, coordsArg string) error {
+func runVerifyDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath, coordsArg string, verbose bool) error {
 	ctx, cancel := interruptable(ctx, out)
 	defer cancel()
 
@@ -207,9 +209,8 @@ func runVerifyDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath,
 		if strings.EqualFold(localHash, a.SHA256) {
 			matched++
 			ar.Method = "match"
-			renderVerifyMatch(out, a.Name, localPath,
-				fmt.Sprintf("%s   match", rightPadSize(info.Size(), 10)),
-				localHash, nameWidth, termWidth)
+			renderVerifyMatch(out, a.Name, localPath, "match", localHash,
+				info.Size(), nameWidth, termWidth, verbose)
 		} else {
 			mismatch++
 			ar.Method = "mismatch"
@@ -244,7 +245,7 @@ func runVerifyDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath,
 	return out.CommandResult(result)
 }
 
-func runVerifyManifest(ctx context.Context, cfg *Config, manifestPath, versionFlag string, deep bool) error {
+func runVerifyManifest(ctx context.Context, cfg *Config, manifestPath, versionFlag string, deep, verbose bool) error {
 	out := newWriter(cfg)
 	defer out.Close()
 	ctx, cancel := interruptable(ctx, out)
@@ -370,7 +371,8 @@ func runVerifyManifest(ctx context.Context, cfg *Config, manifestPath, versionFl
 			// mismatch.
 			ar.Method = "match(" + c.SrcFrom + ")"
 			renderVerifyMatch(out, c.Name, c.Source,
-				fmt.Sprintf("match(%s)", c.SrcFrom), c.SrcSHA, nameWidth, termWidth)
+				fmt.Sprintf("match(%s)", c.SrcFrom), c.SrcSHA,
+				pubSize[c.Name], nameWidth, termWidth, verbose)
 		default:
 			failures++
 			ar.Method = "mismatch"
@@ -417,7 +419,7 @@ func runVerifyManifest(ctx context.Context, cfg *Config, manifestPath, versionFl
 // cob-provenance.json — no manifest, no source access. Every recorded asset
 // must still hash to what provenance recorded, and the chain of evidence is
 // printed.
-func runVerifyCoords(ctx context.Context, cfg *Config, target, versionFlag string) error {
+func runVerifyCoords(ctx context.Context, cfg *Config, target, versionFlag string, verbose bool) error {
 	out := newWriter(cfg)
 	defer out.Close()
 	ctx, cancel := interruptable(ctx, out)
@@ -507,9 +509,8 @@ func runVerifyCoords(ctx context.Context, cfg *Config, target, versionFlag strin
 		case strings.EqualFold(cur, e.SHA256):
 			// hex SHA-256 case-insensitive — see compareManifestToPublished.
 			ar.Method = "match(provenance)"
-			renderVerifyMatch(out, e.Asset, "",
-				fmt.Sprintf("%s   match(provenance)", rightPadSize(e.Size, 10)),
-				e.SHA256, nameWidth, termWidth)
+			renderVerifyMatch(out, e.Asset, "", "match(provenance)", e.SHA256,
+				e.Size, nameWidth, termWidth, verbose)
 		default:
 			failures++
 			ar.Method = "altered"
@@ -596,26 +597,35 @@ type verifySide struct {
 // path) line up to. Wide enough for "published" without truncating.
 const verifyLabelWidth = 10
 
-// renderVerifyMatch prints a "✓ matched" row. If the compact one-line
-// form would fit in the current terminal, use it; otherwise drop the
-// URI to its own detail line so wrapping doesn't fragment the row
-// into a soup of half-words. The full SHA-256 always gets its own
-// line so an operator can string-compare against `sha256sum` output.
-func renderVerifyMatch(out *output.Writer, name, uri, status, hash string, nameWidth, termWidth int) {
-	compact := fmt.Sprintf("  ✓ %s  %s   %s", padRight(name, nameWidth), uri, status)
-	if uri == "" || len(compact) <= termWidth {
-		// Compact form fits (or there's no URI to bother with) — use it.
-		out.Plain("%s", compact)
-		if hash != "" {
-			out.Plain("      %-*s %s", verifyLabelWidth, "sha256", hash)
-		}
+// renderVerifyMatch prints a "✓ matched" row.
+//
+// Default (terse): one line, glyph + name + size + method. Audit info
+// (URI, full SHA-256) is omitted — matches don't need it for the
+// "did anything change?" question that verify mostly answers. For 15
+// assets where 12 match, dumping 12 SHAs buries the 3 that didn't.
+//
+// --verbose adds the source URI and the full SHA-256 as continuation
+// lines under each match. URI drops to its own labeled line on narrow
+// terminals so wrapping doesn't fragment the row.
+//
+// Mismatch rows always get the full detail (renderVerifyMismatch) —
+// that's where the hash actually matters.
+func renderVerifyMatch(out *output.Writer, name, uri, status, hash string, size int64, nameWidth, termWidth int, verbose bool) {
+	// Terse default: name + size + method. Size confirms the row is
+	// describing a real file of expected dimensions; method tells you
+	// how cob arrived at the match (source/origin/provenance/deep).
+	out.Plain("  ✓ %s  %s   %s",
+		padRight(name, nameWidth), rightPadSize(size, 10), status)
+	if !verbose {
 		return
 	}
-	// Expanded form: status stays on the header, URI drops to its own
-	// labeled line. Reading top-to-bottom remains "this asset → these
-	// facts about it."
-	out.Plain("  ✓ %s  %s", padRight(name, nameWidth), status)
-	out.Plain("      %-*s %s", verifyLabelWidth, "source", uri)
+	// Verbose: add the source URI and full hash as continuation lines.
+	// Compact-inline URI on the header is deliberately NOT done here —
+	// the terse path covers that case, and verbose always wants the
+	// labeled-line layout for predictable visual scanning.
+	if uri != "" {
+		out.Plain("      %-*s %s", verifyLabelWidth, "source", uri)
+	}
 	if hash != "" {
 		out.Plain("      %-*s %s", verifyLabelWidth, "sha256", hash)
 	}

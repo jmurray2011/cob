@@ -296,9 +296,13 @@ Flags: `--version` (optional)
 
 Checks that bytes match published. Three modes, picked from the
 positional argument(s); none mutate; exit code is non-zero on any
-mismatch. Every row carries the real size, the full SHA-256, and the
-URI/path that was actually hashed -- no `0 B 0ms` stubs, no opaque
-"source 1c9376b8" abbreviations.
+mismatch.
+
+**Default output is terse for matches, full-detail for mismatches.** Each
+match is one line — glyph, name, size, method. Each mismatch expands to
+the full audit form (URI, size, full SHA-256 for both sides), because
+that's where the detail actually matters. Pass `-v` / `--verbose` to put
+the URI and full hash on every match row as well.
 
 **Coordinates (one arg)** -- self-verifies a published version against
 its own recorded `cob-provenance.json`. The chain of evidence (who
@@ -358,7 +362,7 @@ A typical mismatch row looks like:
 `sha256sum` the local file and you can string-compare the full hash --
 no need to mentally truncate.
 
-Flags: `--version` (manifest mode; or `COB_VERSION`), `--deep` (manifest mode only)
+Flags: `--version` (manifest mode; or `COB_VERSION`), `--deep` (manifest mode only), `-v`/`--verbose`
 
 ### log
 

@@ -8,47 +8,53 @@ import (
 	"github.com/jmurray2011/cob/internal/output"
 )
 
-// TestRenderVerifyMatchCompactWhenItFits is the regression for the
-// "lines spill into next-line continuations" complaint: when the
-// terminal is wide enough, the match row stays on one line +
-// sha-continuation; when it's not, the URI drops to its own labeled
-// line so wrapping never fragments mid-field.
-func TestRenderVerifyMatchCompactWhenItFits(t *testing.T) {
+// TestRenderVerifyMatchTerseDefault locks the contract that motivated
+// switching the default: a routine match emits one line — glyph,
+// name, size, method — and nothing else. No URI, no SHA. 12 such
+// rows next to 3 mismatches should leave the failures unmissable
+// instead of buried in audit detail nobody asked for.
+func TestRenderVerifyMatchTerseDefault(t *testing.T) {
 	var buf bytes.Buffer
 	w := output.NewWithWriters(&buf, &buf, output.Mode{})
 	uri := "s3://b/short.bin"
 	hash := strings.Repeat("a", 64)
-	renderVerifyMatch(w, "short.bin", uri, "match(source)", hash, 12, 200)
+	renderVerifyMatch(w, "short.bin", uri, "match(source)", hash, 1024, 12, 200, false)
 
-	out := buf.String()
-	// One-liner: name + URI + status on the header line.
-	if !strings.Contains(out, "short.bin") || !strings.Contains(out, uri) || !strings.Contains(out, "match(source)") {
-		t.Errorf("compact form should put name+uri+status on one line:\n%s", out)
+	out := strings.TrimSpace(buf.String())
+	lines := strings.Split(out, "\n")
+	if len(lines) != 1 {
+		t.Fatalf("terse match should be exactly one line; got %d:\n%s", len(lines), out)
 	}
-	// And the sha-continuation line follows.
-	if !strings.Contains(out, "sha256") || !strings.Contains(out, hash) {
-		t.Errorf("compact form should still include sha256 on its own line:\n%s", out)
+	if !strings.Contains(out, "short.bin") || !strings.Contains(out, "1.0 KB") || !strings.Contains(out, "match(source)") {
+		t.Errorf("terse match should carry name + size + method:\n%s", out)
+	}
+	// URI and hash are deliberately absent on the terse path.
+	if strings.Contains(out, uri) {
+		t.Errorf("terse match must NOT include the URI (use --verbose):\n%s", out)
+	}
+	if strings.Contains(out, hash) {
+		t.Errorf("terse match must NOT include the full hash (use --verbose):\n%s", out)
 	}
 }
 
-func TestRenderVerifyMatchExpandsWhenItDoesNotFit(t *testing.T) {
+// TestRenderVerifyMatchVerboseAddsAuditLines confirms --verbose
+// puts the URI and full SHA-256 back as labeled continuation lines.
+func TestRenderVerifyMatchVerboseAddsAuditLines(t *testing.T) {
 	var buf bytes.Buffer
 	w := output.NewWithWriters(&buf, &buf, output.Mode{})
-	// Long URI that would push the compact form past the terminal.
-	longURI := "ca://" + strings.Repeat("x/", 60) + "asset.bin"
-	renderVerifyMatch(w, "asset.bin", longURI, "match(source)", strings.Repeat("a", 64), 12, 80)
+	uri := "s3://b/short.bin"
+	hash := strings.Repeat("a", 64)
+	renderVerifyMatch(w, "short.bin", uri, "match(source)", hash, 1024, 12, 200, true)
 
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if len(lines) < 3 {
-		t.Fatalf("expanded form should be header + source + sha256 = 3 lines, got %d:\n%s", len(lines), buf.String())
+	out := buf.String()
+	for _, want := range []string{"short.bin", "1.0 KB", "match(source)", "source", uri, "sha256", hash} {
+		if !strings.Contains(out, want) {
+			t.Errorf("verbose match should include %q:\n%s", want, out)
+		}
 	}
-	if strings.Contains(lines[0], longURI) {
-		t.Errorf("header line should NOT carry the long URI on a narrow terminal; got %q", lines[0])
-	}
-	// Each detail line names its field — operators reading the row
-	// shouldn't have to guess what a bare URI or bare hash represents.
-	if !strings.Contains(buf.String(), "source") || !strings.Contains(buf.String(), "sha256") {
-		t.Errorf("expanded form should label both detail lines:\n%s", buf.String())
+	// Three lines exactly: header + source + sha256.
+	if n := strings.Count(strings.TrimSpace(out), "\n") + 1; n != 3 {
+		t.Errorf("verbose match should be 3 lines; got %d:\n%s", n, out)
 	}
 }
 
