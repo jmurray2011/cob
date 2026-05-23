@@ -68,6 +68,7 @@ func (c *CASource) Filename() string { return c.asset }
 
 func (c *CASource) Resolve(ctx context.Context) (*AssetMetadata, error) {
 	var nextToken *string
+	pages := 0
 	for {
 		out, err := c.client.ListPackageVersionAssets(ctx, &codeartifact.ListPackageVersionAssetsInput{
 			Domain:         aws.String(c.domain),
@@ -97,6 +98,10 @@ func (c *CASource) Resolve(ctx context.Context) (*AssetMetadata, error) {
 
 		if out.NextToken == nil {
 			break
+		}
+		pages++
+		if pages >= maxPaginationIterations {
+			return nil, fmt.Errorf("listing assets for %s: hit pagination safety cap of %d pages", c.uri, maxPaginationIterations)
 		}
 		nextToken = out.NextToken
 	}

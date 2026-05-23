@@ -7,7 +7,15 @@ import (
 	"io"
 
 	"github.com/jmurray2011/cob/internal/cob"
+	"github.com/jmurray2011/cob/internal/concurrency"
 )
+
+// compareConcurrency bounds parallel source resolution in
+// compareManifestToPublished. Each source costs 1–3 network calls
+// (Resolve, optional Origin head, optional --deep download); a 50-source
+// manifest was minutes of sequential work pre-fanout, well into "diff
+// too slow to use as a CI gate" territory.
+const compareConcurrency = 8
 
 // assetCompare is one asset's manifest-vs-published comparison, shared by
 // `verify` and `diff`.
@@ -59,19 +67,18 @@ func compareManifestToPublished(ctx context.Context, sources []NamedSource, reg 
 		provOrigin = prov.OriginByAsset()
 	}
 
-	seen := make(map[string]bool, len(sources))
-	var cmps []assetCompare
-
-	for _, ns := range sources {
+	// Resolve every source in parallel: each iteration is independent and
+	// makes 1–3 network calls. ForEach preserves input order, so the
+	// resulting slice keeps the manifest's source ordering (important for
+	// stable diff output across re-runs).
+	cmps := concurrency.ForEach(ctx, sources, compareConcurrency, func(ctx context.Context, _ int, ns NamedSource) assetCompare {
 		name := ns.Source.Filename()
-		seen[name] = true
 		c := assetCompare{Name: name, Key: ns.Name, Source: ns.Source.URI(), InManifest: true}
 
 		meta, rerr := ns.Source.Resolve(ctx)
 		if rerr != nil {
 			c.Err = rerr
-			cmps = append(cmps, c)
-			continue
+			return c
 		}
 		switch {
 		case meta.SHA256 != "":
@@ -80,8 +87,7 @@ func compareManifestToPublished(ctx context.Context, sources []NamedSource, reg 
 			h, herr := hashSource(ctx, ns.Source)
 			if herr != nil {
 				c.Err = herr
-				cmps = append(cmps, c)
-				continue
+				return c
 			}
 			c.SrcSHA, c.SrcFrom = h, "deep"
 		default:
@@ -104,9 +110,15 @@ func compareManifestToPublished(ctx context.Context, sources []NamedSource, reg 
 			c.InPublished = true
 			c.PubSHA = pa.SHA256
 		}
-		cmps = append(cmps, c)
-	}
+		return c
+	})
 
+	// Index manifest-derived rows by stored asset name so the
+	// published-only pass can skip them in O(1).
+	seen := make(map[string]bool, len(cmps))
+	for _, c := range cmps {
+		seen[c.Name] = true
+	}
 	// Published assets with no manifest source. The provenance asset is
 	// cob's own and is never a manifest source, so don't report it.
 	for _, a := range pub {

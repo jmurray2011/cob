@@ -3,6 +3,7 @@ package cob
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -246,5 +247,34 @@ func TestListVersionsFanOut(t *testing.T) {
 		if !got[i].Published.Equal(times[v]) {
 			t.Errorf("%s: Published = %v, want %v", v, got[i].Published, times[v])
 		}
+	}
+}
+
+// TestListAssetsPaginationSafetyCap exercises the belt-and-braces page
+// cap that protects every CodeArtifact paginator from a misbehaving SDK
+// or proxy that returns a non-nil NextToken forever. The fake hands back
+// a NextToken on every page; the call must error rather than loop or
+// OOM. Asserts on ListAssets but covers the shared maxPaginationIterations
+// guard wired into all 8 paginators.
+func TestListAssetsPaginationSafetyCap(t *testing.T) {
+	var calls int
+	ca := &fakeCA{listAssetsFn: func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
+		calls++
+		return &codeartifact.ListPackageVersionAssetsOutput{
+			Assets:    []catypes.AssetSummary{{Name: aws.String("a")}},
+			NextToken: aws.String("forever"),
+		}, nil
+	}}
+	_, err := NewRegistry(newTestClient(ca)).ListAssets(context.Background(), coords())
+	if err == nil {
+		t.Fatal("expected pagination safety cap to error out")
+	}
+	if !strings.Contains(err.Error(), "pagination safety cap") {
+		t.Errorf("error should mention the cap, got %v", err)
+	}
+	// One page over the cap (the +1 attempt that triggers the guard) is
+	// fine; way over means the guard didn't actually engage.
+	if calls > maxPaginationIterations+1 {
+		t.Errorf("paginator made %d calls, expected at most %d (cap + 1)", calls, maxPaginationIterations+1)
 	}
 }
