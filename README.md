@@ -147,6 +147,34 @@ Flags: `--to` (required), `--version`, `--force`, `--resume`, `--yes`, `--dry-ru
 
 `--resume` works the same way as on `publish`: it requires the destination version to be **Unfinished** (left behind by a partial promote), copies only assets not already present, then writes the finalizer. Mutually exclusive with `--force`.
 
+### rm
+
+Deletes a package version. cob treats published versions as immutable, so
+the command is gated in three tiers:
+
+```bash
+# Tier 1 (default): clean up a failed/abandoned publish
+cob rm my-domain/dev/my-namespace/my-package@2.1.0-rc1
+
+# Tier 2 (--force): delete a real Published version with no downstream copies
+cob rm my-domain/dev/my-namespace/my-package@2.1.0 --force
+
+# Tier 3 (--force --everywhere): delete even when other repos have promoted from this version
+cob rm my-domain/dev/my-namespace/my-package@2.1.0 --force --everywhere
+```
+
+`rm` refuses `@latest` as a typo-shield — the only destructive verb makes
+you name the bytes explicitly. With `--force` on a Published version, cob
+probes every other repo in the same domain; if any holds the same version
+(meaning a `promote` once recorded `from: <this-repo>`), the deletion
+refuses and lists those repos. `--force --everywhere` overrides; the
+confirm prompt then names the chains that will dangle.
+
+Deletion destroys the `cob-provenance.json` along with the assets;
+there is no soft-delete or archive.
+
+Flags: `--force`, `--everywhere`, `--yes`
+
 ### ls
 
 Drill into CodeArtifact at any level:
