@@ -5,6 +5,19 @@ import (
 	"github.com/jmurray2011/cob/internal/output"
 )
 
+// chainRefStatus is the result of probing whether a chain event's
+// referenced repository still holds this version. The zero value means
+// "not checked" — renderChain treats a nil map and the zero value
+// identically, so an unannotated render is the default.
+type chainRefStatus int
+
+const (
+	chainRefUnchecked chainRefStatus = iota // zero value — nothing rendered
+	chainRefOK                              // version still present
+	chainRefMissing                         // probe returned "not found"
+	chainRefUnknown                         // probe errored (auth/network)
+)
+
 // actorStr renders an Actor compactly, preferring the most identifying
 // field that's present.
 func actorStr(a cob.Actor) string {
@@ -22,7 +35,10 @@ func actorStr(a cob.Actor) string {
 
 // renderChain prints the append-only evidence log: who published/promoted
 // the version, where, and when. No-op in JSON mode (out.Plain is silent).
-func renderChain(out *output.Writer, p *cob.Provenance) {
+// refs, if non-nil, annotates each repository reference (publish.Repository,
+// promote.From/To) with whether the referenced version still exists — see
+// chainRefStatus. Pass nil to render unannotated (verify mode).
+func renderChain(out *output.Writer, p *cob.Provenance, refs map[string]chainRefStatus) {
 	out.Plain("chain of evidence:")
 	if len(p.Chain) == 0 {
 		out.Plain("  (none recorded)")
@@ -31,16 +47,37 @@ func renderChain(out *output.Writer, p *cob.Provenance) {
 	for i, e := range p.Chain {
 		switch e.Event {
 		case "publish":
-			out.Plain("  %d. publish  %s@%s  %s  by %s", i+1, e.Repository, e.Version, e.Time, actorStr(e.Actor))
+			out.Plain("  %d. publish  %s@%s%s  %s  by %s",
+				i+1, e.Repository, e.Version, refTag(refs, e.Repository),
+				e.Time, actorStr(e.Actor))
 			if e.ManifestSHA256 != "" {
 				out.Plain("       manifest %s  cob %s  %s", short(e.ManifestSHA256), e.CobVersion, e.Region)
 			}
 		case "promote":
-			out.Plain("  %d. promote  %s → %s  %s  by %s", i+1, e.From, e.To, e.Time, actorStr(e.Actor))
+			out.Plain("  %d. promote  %s%s → %s%s  %s  by %s",
+				i+1, e.From, refTag(refs, e.From), e.To, refTag(refs, e.To),
+				e.Time, actorStr(e.Actor))
 		default:
 			out.Plain("  %d. %s  %s", i+1, e.Event, e.Time)
 		}
 	}
+}
+
+// refTag returns the inline annotation for a repository reference: nothing
+// when the ref wasn't checked or still resolves, "(deleted)" when the
+// referenced version is gone, "(?)" when the probe itself couldn't run.
+// Designed to be silent on the common case so the chain stays readable.
+func refTag(refs map[string]chainRefStatus, ref string) string {
+	if refs == nil || ref == "" {
+		return ""
+	}
+	switch refs[ref] {
+	case chainRefMissing:
+		return " (deleted)"
+	case chainRefUnknown:
+		return " (?)"
+	}
+	return ""
 }
 
 // renderOrigins prints where each file came from, recursing into embedded

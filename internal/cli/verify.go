@@ -231,7 +231,7 @@ func runVerifyCoords(ctx context.Context, cfg *Config, target, versionFlag strin
 
 	out.Header("Self-verifying %s/%s@%s in %s/%s against recorded provenance",
 		coords.Namespace, coords.Package, coords.Version, coords.Domain, coords.Repository)
-	renderChain(out, prov)
+	renderChain(out, prov, nil)
 	renderOrigins(out, prov, "")
 
 	result := &cob.CommandResult{

@@ -38,7 +38,7 @@ func TestRenderChainAndOrigins(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := output.NewWithWriters(&buf, &buf, false)
-	renderChain(w, p)
+	renderChain(w, p, nil)
 	renderOrigins(w, p, "")
 	s := buf.String()
 

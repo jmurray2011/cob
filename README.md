@@ -339,12 +339,38 @@ cob log my-domain/dev/my-namespace/my-package@latest
 
 # Machine-readable: emits the full Provenance struct as JSON
 cob log my-domain/dev/my-namespace/my-package@2.1.0 --json
+
+# Surface chain references that point at deleted versions
+cob log my-domain/staging/my-namespace/my-package@2.1.0 --check-references
 ```
+
+`--check-references` probes each chain event's referenced repository
+(`publish.repository`, `promote.from`/`promote.to`) once and annotates
+inline:
+
+- `(deleted)` — the referenced version no longer exists in that repo
+  (e.g. it was removed by `cob rm --force --everywhere`)
+- `(?)` — the probe itself failed (auth, throttle, network); distinct
+  from `(deleted)` so you don't mistake "couldn't check" for "definitely
+  gone"
+
+Adds one `VersionStatus` call per **unique** referenced repository (the
+probe set dedupes), so a long chain that bounces between two repos still
+costs only two probes. Text-mode only — a JSON consumer can run their
+own loop over `prov.chain[]`.
 
 Exits with an error if the version has no `cob-provenance.json` (a non-cob
 publisher or pre-provenance version). For those, `cob verify <coords>`
 still works against CodeArtifact's recorded asset hashes, but there's no
 chain to print.
+
+A note on the dangling-chain situation `--check-references` surfaces: the
+destination's provenance is **self-contained** (`promote` carries the
+source's chain forward and appends its own event, and `reconcilePromotedAssets`
+preserves each asset's original Source URI and S3 Origin record). So a
+deleted upstream affects only the ability to follow a `from:` link by
+hand — it does not affect `cob verify`, `cob diff`, or `--deep` rehash,
+all of which work entirely from the destination's own records.
 
 ### diff
 
