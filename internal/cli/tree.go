@@ -99,7 +99,10 @@ func runTree(ctx context.Context, cfg *Config, cmd *cobra.Command, target, depth
 	registry := cob.NewRegistry(client)
 
 	root := walkHierarchy(ctx, registry, start, depth)
-	if out.JSON(root) {
+	// JSON shape is a flat array of typed records (one per node, walk
+	// order), not the internal tree — see FlatNode. jq consumers filter
+	// with `.[] | select(.kind == "package")` rather than recursing.
+	if out.JSON(flattenForJSON(root)) {
 		return nil
 	}
 	renderTreeText(out, root)
@@ -149,13 +152,16 @@ func renderSubtree(out *output.Writer, n *TreeNode, prefix string, isLast bool) 
 }
 
 // treeLabel formats a node's display string: name, optional meta in
-// parentheses, optional inline error.
+// parentheses, optional inline error. The meta string is derived on the
+// fly from the same typed fields the JSON output emits — there is no
+// stored "meta" anywhere, so text and JSON can't drift apart.
 func treeLabel(n *TreeNode) string {
 	if n.Error != "" {
 		return fmt.Sprintf("%s  ! %s", n.Name, n.Error)
 	}
-	if n.Meta == "" {
+	meta := labelMeta(n)
+	if meta == "" {
 		return n.Name
 	}
-	return fmt.Sprintf("%s  (%s)", n.Name, n.Meta)
+	return fmt.Sprintf("%s  (%s)", n.Name, meta)
 }

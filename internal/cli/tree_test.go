@@ -61,15 +61,19 @@ func TestStartDepthOf(t *testing.T) {
 }
 
 func TestTreeLabel(t *testing.T) {
+	// Labels are derived from typed fields; meta is computed by labelMeta.
+	// A leaf node (no Children populated) shows just the name; a node that
+	// was expanded carries its child count as meta.
 	cases := []struct {
 		n    *TreeNode
 		want string
 	}{
-		{&TreeNode{Name: "acme"}, "acme"},
-		{&TreeNode{Name: "acme", Meta: "2 repos"}, "acme  (2 repos)"},
-		{&TreeNode{Name: "acme", Error: "boom"}, "acme  ! boom"},
+		{&TreeNode{Name: "acme", Kind: "domain"}, "acme"},
+		{&TreeNode{Name: "acme", Kind: "domain", RepoCount: 2, Children: []*TreeNode{{}, {}}}, "acme  (2 repos)"},
+		{&TreeNode{Name: "tools/api", Kind: "package", VersionCount: 3, LatestVersion: "2.1.0"}, "tools/api  (3 versions, latest 2.1.0)"},
+		{&TreeNode{Name: "acme", Kind: "domain", Error: "boom"}, "acme  ! boom"},
 		// Error wins over meta — the failure is the most important fact.
-		{&TreeNode{Name: "acme", Meta: "2 repos", Error: "boom"}, "acme  ! boom"},
+		{&TreeNode{Name: "acme", Kind: "domain", RepoCount: 2, Children: []*TreeNode{{}, {}}, Error: "boom"}, "acme  ! boom"},
 	}
 	for _, c := range cases {
 		if got := treeLabel(c.n); got != c.want {
@@ -82,12 +86,15 @@ func TestRenderSubtreeBoxDrawing(t *testing.T) {
 	// A small two-deep tree exercises both connectors (├──, └──) and both
 	// child prefixes (│  , spaces). A regression in either would corrupt
 	// every other tree this command prints.
-	root := &TreeNode{Name: "acme", Kind: "domain", Meta: "2 repos", Children: []*TreeNode{
-		{Name: "dev", Kind: "repo", Meta: "1 package", Children: []*TreeNode{
-			{Name: "tools/my-app", Kind: "package", Meta: "1 version, latest 2.1.0"},
-		}},
-		{Name: "prod", Kind: "repo", Meta: "0 packages"},
-	}}
+	root := &TreeNode{
+		Name: "acme", Kind: "domain", RepoCount: 2,
+		Children: []*TreeNode{
+			{Name: "dev", Kind: "repo", PackageCount: 1, Children: []*TreeNode{
+				{Name: "tools/my-app", Kind: "package", VersionCount: 1, LatestVersion: "2.1.0"},
+			}},
+			{Name: "prod", Kind: "repo", PackageCount: 0, Children: []*TreeNode{}},
+		},
+	}
 	var buf bytes.Buffer
 	w := output.NewWithWriters(&buf, &buf, false)
 	renderTreeText(w, root)
@@ -234,15 +241,58 @@ func TestRunTreeJSON(t *testing.T) {
 	if err := root.Execute(); err != nil {
 		t.Fatalf("tree --json: %v", err)
 	}
-	var n TreeNode
-	if err := json.Unmarshal(stdout.Bytes(), &n); err != nil {
+	// Shape contract: a flat array of FlatNode, one per walked node, in
+	// walk order, root elided. jq consumers filter on .kind and typed
+	// payload fields — nothing nested, no parsing of stringy meta.
+	var got []FlatNode
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatalf("tree --json emitted invalid JSON: %v\n%s", err, stdout.String())
 	}
-	if n.Kind != "root" {
-		t.Errorf("JSON tree root kind = %q, want root", n.Kind)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 records (domain, repo, package), got %d: %+v", len(got), got)
 	}
-	if len(n.Children) != 1 || n.Children[0].Name != "acme" {
-		t.Errorf("JSON tree shape wrong: %+v", n)
+	// Domain record.
+	if got[0].Kind != "domain" || got[0].Path != "acme" || got[0].Domain != "acme" || got[0].RepoCount != 1 {
+		t.Errorf("domain record wrong: %+v", got[0])
+	}
+	// Repo record.
+	if got[1].Kind != "repo" || got[1].Path != "acme/dev" || got[1].Repository != "dev" || got[1].PackageCount != 1 {
+		t.Errorf("repo record wrong: %+v", got[1])
+	}
+	// Package record — typed payload (version_count int, latest_version string).
+	if got[2].Kind != "package" || got[2].Namespace != "tools" || got[2].Package != "app" ||
+		got[2].VersionCount != 1 || got[2].LatestVersion != "1.0.0" {
+		t.Errorf("package record wrong: %+v", got[2])
+	}
+}
+
+func TestFlattenForJSONOrderAndContent(t *testing.T) {
+	// Pure unit test: walk-order flattening, typed payload survives, root
+	// is elided, errored nodes still appear (with their error field).
+	root := &TreeNode{Kind: "root", Children: []*TreeNode{
+		{
+			Name: "acme", Kind: "domain", Path: "acme", Domain: "acme", RepoCount: 1,
+			Children: []*TreeNode{
+				{
+					Name: "dev", Kind: "repo", Path: "acme/dev",
+					Domain: "acme", Repository: "dev", PackageCount: 0,
+					Children: []*TreeNode{},
+				},
+			},
+		},
+		{Name: "broken", Kind: "domain", Path: "broken", Domain: "broken", Error: "denied"},
+	}}
+	got := flattenForJSON(root)
+	if len(got) != 3 {
+		t.Fatalf("got %d records, want 3 (acme, acme/dev, broken)", len(got))
+	}
+	for i, want := range []string{"acme", "acme/dev", "broken"} {
+		if got[i].Path != want {
+			t.Errorf("record %d: path = %q, want %q", i, got[i].Path, want)
+		}
+	}
+	if got[2].Error != "denied" {
+		t.Errorf("errored node lost its error: %+v", got[2])
 	}
 }
 
