@@ -11,7 +11,7 @@ import (
 	"github.com/jmurray2011/cob/internal/manifest"
 )
 
-func newVerifyCmd() *cobra.Command {
+func newVerifyCmd(cfg *Config) *cobra.Command {
 	var (
 		flagVersion string
 		flagDeep    bool
@@ -35,7 +35,7 @@ func newVerifyCmd() *cobra.Command {
   cob verify ./my-package.yaml --version 2.1.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runVerify(cmd.Context(), args[0], flagVersion, flagDeep)
+			return runVerify(cmd.Context(), cfg, args[0], flagVersion, flagDeep)
 		},
 	}
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Package version (required, or set COB_VERSION)")
@@ -43,15 +43,15 @@ func newVerifyCmd() *cobra.Command {
 	return cmd
 }
 
-func runVerify(ctx context.Context, target, versionFlag string, deep bool) error {
+func runVerify(ctx context.Context, cfg *Config, target, versionFlag string, deep bool) error {
 	if isManifestPath(target) {
-		return runVerifyManifest(ctx, target, versionFlag, deep)
+		return runVerifyManifest(ctx, cfg, target, versionFlag, deep)
 	}
-	return runVerifyCoords(ctx, target, versionFlag)
+	return runVerifyCoords(ctx, cfg, target, versionFlag)
 }
 
-func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, deep bool) error {
-	out := newWriter(flagJSON)
+func runVerifyManifest(ctx context.Context, cfg *Config, manifestPath, versionFlag string, deep bool) error {
+	out := newWriter(cfg)
 
 	version, err := resolveVersion(versionFlag)
 	if err != nil {
@@ -68,7 +68,7 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 		Namespace: m.Namespace, Package: m.Package, Version: version,
 	}
 
-	client, err := dialClient(ctx)
+	client, err := dialClient(ctx, cfg)
 	if err != nil {
 		return fail(out, "verify", cob.ExitError, "%s", err)
 	}
@@ -182,8 +182,8 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 // cob-provenance.json — no manifest, no source access. Every recorded asset
 // must still hash to what provenance recorded, and the chain of evidence is
 // printed.
-func runVerifyCoords(ctx context.Context, target, versionFlag string) error {
-	out := newWriter(flagJSON)
+func runVerifyCoords(ctx context.Context, cfg *Config, target, versionFlag string) error {
+	out := newWriter(cfg)
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
@@ -200,7 +200,7 @@ func runVerifyCoords(ctx context.Context, target, versionFlag string) error {
 		coords.Version = v
 	}
 
-	client, err := dialClient(ctx)
+	client, err := dialClient(ctx, cfg)
 	if err != nil {
 		return fail(out, "verify", cob.ExitError, "%s", err)
 	}

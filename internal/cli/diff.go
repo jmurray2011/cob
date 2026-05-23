@@ -11,7 +11,7 @@ import (
 	"github.com/jmurray2011/cob/internal/manifest"
 )
 
-func newDiffCmd() *cobra.Command {
+func newDiffCmd(cfg *Config) *cobra.Command {
 	var (
 		flagVersion string
 		flagDeep    bool
@@ -29,7 +29,7 @@ func newDiffCmd() *cobra.Command {
   cob diff ./my-package.yaml --version 2.1.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDiff(cmd.Context(), args[0], flagVersion, flagDeep)
+			return runDiff(cmd.Context(), cfg, args[0], flagVersion, flagDeep)
 		},
 	}
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Package version (required, or set COB_VERSION)")
@@ -37,8 +37,8 @@ func newDiffCmd() *cobra.Command {
 	return cmd
 }
 
-func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) error {
-	out := newWriter(flagJSON)
+func runDiff(ctx context.Context, cfg *Config, manifestPath, versionFlag string, deep bool) error {
+	out := newWriter(cfg)
 
 	version, err := resolveVersion(versionFlag)
 	if err != nil {
@@ -55,7 +55,7 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) e
 		Namespace: m.Namespace, Package: m.Package, Version: version,
 	}
 
-	client, err := dialClient(ctx)
+	client, err := dialClient(ctx, cfg)
 	if err != nil {
 		return fail(out, "diff", cob.ExitError, "%s", err)
 	}

@@ -9,27 +9,27 @@ import (
 
 // Test seams. Production code uses the real constructors; tests reassign
 // these to inject an in-memory AWS client and to capture output into
-// buffers. They are package-level vars rather than command parameters so the
-// cobra wiring and run* signatures stay unchanged.
+// buffers. They are function indirections, not state — Config holds the
+// runtime configuration; these two pick which implementation of "build an
+// AWS client" or "build an output writer" we get.
 var (
 	newClient = cob.NewClient
-	// newWriter builds the output writer for a command, applying the global
-	// --quiet flag (which output.New itself doesn't know about).
-	newWriter = func(json bool) *output.Writer {
-		w := output.New(json)
-		w.SetQuiet(flagQuiet)
+	// newWriter builds the output writer from cfg, applying --quiet (which
+	// output.New itself doesn't know about).
+	newWriter = func(cfg *Config) *output.Writer {
+		w := output.New(cfg.JSON)
+		w.SetQuiet(cfg.Quiet)
 		return w
 	}
 )
 
-// dialClient builds the AWS client from the current global flags. Every
-// command goes through it, so a flag affecting client construction is wired
-// in exactly one place.
-func dialClient(ctx context.Context) (*cob.Client, error) {
+// dialClient builds the AWS client from cfg. Every command goes through it,
+// so a flag affecting client construction is wired in one place.
+func dialClient(ctx context.Context, cfg *Config) (*cob.Client, error) {
 	return newClient(ctx, cob.ClientOptions{
-		Profile: flagProfile,
-		Region:  flagRegion,
-		Debug:   flagDebug,
-		TmpDir:  flagTmpDir,
+		Profile: cfg.Profile,
+		Region:  cfg.Region,
+		Debug:   cfg.Debug,
+		TmpDir:  cfg.TmpDir,
 	})
 }

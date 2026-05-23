@@ -12,7 +12,7 @@ import (
 	"github.com/jmurray2011/cob/internal/output"
 )
 
-func newPromoteCmd() *cobra.Command {
+func newPromoteCmd(cfg *Config) *cobra.Command {
 	var (
 		flagVersion     string
 		flagTo          string
@@ -37,7 +37,7 @@ func newPromoteCmd() *cobra.Command {
   cob promote acme/dev/tools/my-app@2.1.0 --to staging --resume`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPromote(cmd.Context(), args[0], flagVersion, flagTo, flagForce, flagYes, flagDryRun, flagResume, flagConcurrency)
+			return runPromote(cmd.Context(), cfg, args[0], flagVersion, flagTo, flagForce, flagYes, flagDryRun, flagResume, flagConcurrency)
 		},
 	}
 
@@ -53,14 +53,14 @@ func newPromoteCmd() *cobra.Command {
 	return cmd
 }
 
-func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, yes, dryRun, resume bool, concurrency int) error {
-	out := newWriter(flagJSON)
+func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo string, force, yes, dryRun, resume bool, concurrency int) error {
+	out := newWriter(cfg)
 
 	if resume && force {
 		return fail(out, "promote", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")
 	}
 
-	client, err := dialClient(ctx)
+	client, err := dialClient(ctx, cfg)
 	if err != nil {
 		return fail(out, "promote", cob.ExitError, "%s", err)
 	}
@@ -268,7 +268,7 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		return &ExitError{Code: cob.ExitError}
 	}
 
-	prov, err := carryForwardProvenance(ctx, client, coords, srcRepo, toRepo, realNames, results)
+	prov, err := carryForwardProvenance(ctx, client, coords, srcRepo, toRepo, realNames, results, cfg.Version)
 	if err != nil {
 		return fail(out, "promote", cob.ExitError, "%s", err)
 	}
@@ -329,7 +329,7 @@ func runPromoteDryRun(ctx context.Context, promoter *cob.Promoter, coords *cob.P
 // which would discard real chain history). coords must already carry the
 // source repository.
 func carryForwardProvenance(ctx context.Context, client *cob.Client, coords *cob.PackageCoordinates,
-	srcRepo, toRepo string, realNames []string, results []*cob.AssetResult) (*cob.Provenance, error) {
+	srcRepo, toRepo string, realNames []string, results []*cob.AssetResult, cobVersion string) (*cob.Provenance, error) {
 
 	prov, err := cob.FetchProvenance(ctx, client.CodeArtifact, coords)
 	if err != nil {
@@ -360,7 +360,7 @@ func carryForwardProvenance(ctx context.Context, client *cob.Client, coords *cob
 		From:       fmt.Sprintf("%s/%s", coords.Domain, srcRepo),
 		To:         fmt.Sprintf("%s/%s", coords.Domain, toRepo),
 		Time:       cob.NowStamp(),
-		CobVersion: buildVersion,
+		CobVersion: cobVersion,
 		Region:     client.Region,
 		Actor:      client.CallerIdentity(ctx),
 	})

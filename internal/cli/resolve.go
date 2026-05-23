@@ -11,7 +11,7 @@ import (
 	"github.com/jmurray2011/cob/internal/manifest"
 )
 
-func newResolveCmd() *cobra.Command {
+func newResolveCmd(cfg *Config) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resolve <coordinates>",
 		Short: "Resolve the latest version of a package",
@@ -20,14 +20,14 @@ func newResolveCmd() *cobra.Command {
   VERSION=$(cob resolve acme/dev/tools/my-app)`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runResolve(cmd.Context(), args[0])
+			return runResolve(cmd.Context(), cfg, args[0])
 		},
 	}
 	return cmd
 }
 
-func runResolve(ctx context.Context, target string) error {
-	out := newWriter(flagJSON)
+func runResolve(ctx context.Context, cfg *Config, target string) error {
+	out := newWriter(cfg)
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
@@ -37,7 +37,7 @@ func runResolve(ctx context.Context, target string) error {
 		return fail(out, "resolve", cob.ExitError, "full coordinates required (domain/repo/namespace/package)")
 	}
 
-	client, err := dialClient(ctx)
+	client, err := dialClient(ctx, cfg)
 	if err != nil {
 		return fail(out, "resolve", cob.ExitError, "%s", err)
 	}
@@ -54,7 +54,7 @@ func runResolve(ctx context.Context, target string) error {
 		return fail(out, "resolve", codeFor(err), "%s", err)
 	}
 
-	if flagJSON {
+	if cfg.JSON {
 		result := struct {
 			Package    string `json:"package"`
 			Repository string `json:"repository"`

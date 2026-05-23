@@ -11,7 +11,7 @@ import (
 	"github.com/jmurray2011/cob/internal/manifest"
 )
 
-func newValidateCmd() *cobra.Command {
+func newValidateCmd(cfg *Config) *cobra.Command {
 	var flagVersion string
 
 	cmd := &cobra.Command{
@@ -24,15 +24,15 @@ func newValidateCmd() *cobra.Command {
   cob validate ./my-package.yaml --version 2.1.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runValidate(args[0], flagVersion)
+			return runValidate(cfg, args[0], flagVersion)
 		},
 	}
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Version to resolve ${VERSION} with (optional)")
 	return cmd
 }
 
-func runValidate(manifestPath, versionFlag string) error {
-	out := newWriter(flagJSON)
+func runValidate(cfg *Config, manifestPath, versionFlag string) error {
+	out := newWriter(cfg)
 
 	m, err := manifest.Load(manifestPath)
 	if err != nil {

@@ -12,7 +12,7 @@ import (
 	"github.com/jmurray2011/cob/internal/manifest"
 )
 
-func newManifestCmd() *cobra.Command {
+func newManifestCmd(cfg *Config) *cobra.Command {
 	var flagVersion string
 
 	cmd := &cobra.Command{
@@ -31,15 +31,15 @@ func newManifestCmd() *cobra.Command {
   cob manifest acme/dev/tools/my-app@2.1.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runManifest(cmd.Context(), args[0], flagVersion)
+			return runManifest(cmd.Context(), cfg, args[0], flagVersion)
 		},
 	}
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Package version (or use @version / COB_VERSION)")
 	return cmd
 }
 
-func runManifest(ctx context.Context, target, versionFlag string) error {
-	out := newWriter(flagJSON)
+func runManifest(ctx context.Context, cfg *Config, target, versionFlag string) error {
+	out := newWriter(cfg)
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {
@@ -56,7 +56,7 @@ func runManifest(ctx context.Context, target, versionFlag string) error {
 		coords.Version = v
 	}
 
-	client, err := dialClient(ctx)
+	client, err := dialClient(ctx, cfg)
 	if err != nil {
 		return fail(out, "manifest", cob.ExitError, "%s", err)
 	}

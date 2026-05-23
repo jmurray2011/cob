@@ -12,7 +12,7 @@ import (
 	"github.com/jmurray2011/cob/internal/output"
 )
 
-func newPublishCmd() *cobra.Command {
+func newPublishCmd(cfg *Config) *cobra.Command {
 	var (
 		flagVersion     string
 		flagForce       bool
@@ -36,7 +36,7 @@ func newPublishCmd() *cobra.Command {
   cob publish ./my-package.yaml --version 2.1.0 --resume`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPublish(cmd.Context(), args[0], flagVersion, flagForce, flagDryRun, flagYes, flagResume, flagConcurrency)
+			return runPublish(cmd.Context(), cfg, args[0], flagVersion, flagForce, flagDryRun, flagYes, flagResume, flagConcurrency)
 		},
 	}
 
@@ -50,8 +50,8 @@ func newPublishCmd() *cobra.Command {
 	return cmd
 }
 
-func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dryRun, yes, resume bool, concurrency int) error {
-	out := newWriter(flagJSON)
+func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag string, force, dryRun, yes, resume bool, concurrency int) error {
+	out := newWriter(cfg)
 
 	if resume && force {
 		return fail(out, "publish", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")
@@ -83,7 +83,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		Version:    version,
 	}
 
-	client, err := dialClient(ctx)
+	client, err := dialClient(ctx, cfg)
 	if err != nil {
 		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
@@ -248,7 +248,7 @@ func runPublish(ctx context.Context, manifestPath, versionFlag string, force, dr
 		return &ExitError{Code: cob.ExitError}
 	}
 
-	prov := buildPublishProvenance(ctx, m, version, sources, results, client)
+	prov := buildPublishProvenance(ctx, m, version, sources, results, client, cfg.Version)
 	if err := finalizeProvenance(ctx, publisher, coords, prov, out, result, start,
 		"Assets published but provenance/finalize failed. Version is unfinished — re-run with --resume to finalize it."); err != nil {
 		return err
@@ -360,7 +360,7 @@ func gatePublish(ctx context.Context, registry *cob.Registry, coords *cob.Packag
 // from. Origin is omitted for an asset that was skipped on --resume — its
 // upload-time source state is not knowable at resume time.
 func buildPublishProvenance(ctx context.Context, m *manifest.Manifest, version string,
-	sources []NamedSource, results []*cob.AssetResult, client *cob.Client) *cob.Provenance {
+	sources []NamedSource, results []*cob.AssetResult, client *cob.Client, cobVersion string) *cob.Provenance {
 
 	prov := &cob.Provenance{Package: fmt.Sprintf("%s/%s", m.Namespace, m.Package)}
 	for i, ns := range sources {
@@ -383,7 +383,7 @@ func buildPublishProvenance(ctx context.Context, m *manifest.Manifest, version s
 		Repository:     fmt.Sprintf("%s/%s", m.Domain, m.Repository),
 		Version:        version,
 		Time:           cob.NowStamp(),
-		CobVersion:     buildVersion,
+		CobVersion:     cobVersion,
 		Region:         client.Region,
 		ManifestSHA256: m.SHA256(),
 		Actor:          client.CallerIdentity(ctx),

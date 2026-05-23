@@ -19,13 +19,13 @@ func TestRunResolve(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("partial coordinates rejected", func(t *testing.T) {
-		useFake(t, &fakeCA{})
-		wantExit(t, runResolve(ctx, "dom/repo"), cob.ExitError)
+		cfg, _, _ := useFake(t, &fakeCA{})
+		wantExit(t, runResolve(ctx, cfg, "dom/repo"), cob.ExitError)
 	})
 
 	t.Run("no published versions -> not found", func(t *testing.T) {
-		useFake(t, &fakeCA{}) // ListPackageVersions default: empty
-		wantExit(t, runResolve(ctx, "dom/repo/ns/pkg"), cob.ExitNotFound)
+		cfg, _, _ := useFake(t, &fakeCA{}) // ListPackageVersions default: empty
+		wantExit(t, runResolve(ctx, cfg, "dom/repo/ns/pkg"), cob.ExitNotFound)
 	})
 
 	t.Run("success prints the resolved version", func(t *testing.T) {
@@ -34,8 +34,8 @@ func TestRunResolve(t *testing.T) {
 				Versions: []catypes.PackageVersionSummary{{Version: aws.String("2.1.0")}},
 			}, nil
 		}}
-		stdout, _ := useFake(t, ca)
-		if err := runResolve(ctx, "dom/repo/ns/pkg"); err != nil {
+		cfg, stdout, _ := useFake(t, ca)
+		if err := runResolve(ctx, cfg, "dom/repo/ns/pkg"); err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
 		if got := strings.TrimSpace(stdout.String()); got != "2.1.0" {
@@ -51,8 +51,8 @@ func TestRunManifest(t *testing.T) {
 		},
 		listAssetsFn: oneAsset("app.bin", 7),
 	}
-	stdout, _ := useFake(t, ca)
-	if err := runManifest(context.Background(), "dom/repo/ns/pkg@1.0.0", ""); err != nil {
+	cfg, stdout, _ := useFake(t, ca)
+	if err := runManifest(context.Background(), cfg, "dom/repo/ns/pkg@1.0.0", ""); err != nil {
 		t.Fatalf("manifest: %v", err)
 	}
 	got := stdout.String()
@@ -75,8 +75,8 @@ func TestRunLs(t *testing.T) {
 				{Name: aws.String("acme"), Status: catypes.DomainStatusActive},
 			}}, nil
 		}}
-		stdout, _ := useFake(t, ca)
-		if err := runLs(ctx, "", false); err != nil {
+		cfg, stdout, _ := useFake(t, ca)
+		if err := runLs(ctx, cfg, "", false); err != nil {
 			t.Fatalf("ls: %v", err)
 		}
 		if !strings.Contains(stdout.String(), "acme") {
@@ -85,19 +85,19 @@ func TestRunLs(t *testing.T) {
 	})
 
 	t.Run("no domains -> not found", func(t *testing.T) {
-		useFake(t, &fakeCA{})
-		wantExit(t, runLs(ctx, "", false), cob.ExitNotFound)
+		cfg, _, _ := useFake(t, &fakeCA{})
+		wantExit(t, runLs(ctx, cfg, "", false), cob.ExitNotFound)
 	})
 
 	t.Run("no assets -> not found", func(t *testing.T) {
-		useFake(t, &fakeCA{}) // ListPackageVersionAssets default: empty
-		wantExit(t, runLs(ctx, "dom/repo/ns/pkg@1.0.0", false), cob.ExitNotFound)
+		cfg, _, _ := useFake(t, &fakeCA{}) // ListPackageVersionAssets default: empty
+		wantExit(t, runLs(ctx, cfg, "dom/repo/ns/pkg@1.0.0", false), cob.ExitNotFound)
 	})
 
 	t.Run("--json not-found emits an empty array, not an object", func(t *testing.T) {
-		stdout, _ := useFake(t, &fakeCA{})
-		flagJSON = true // useFake restores it on cleanup
-		wantExit(t, runLs(ctx, "dom/repo", false), cob.ExitNotFound)
+		cfg, stdout, _ := useFake(t, &fakeCA{})
+		cfg.JSON = true
+		wantExit(t, runLs(ctx, cfg, "dom/repo", false), cob.ExitNotFound)
 		if got := strings.TrimSpace(stdout.String()); got != "[]" {
 			t.Errorf("ls --json not-found stdout = %q, want []", got)
 		}
@@ -111,15 +111,15 @@ func TestRunPull(t *testing.T) {
 		ca := &fakeCA{listAssetsFn: func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
 			return nil, &catypes.ResourceNotFoundException{}
 		}}
-		useFake(t, ca)
-		err := runPull(ctx, "dom/repo/ns/pkg@1.0.0", "", t.TempDir(), "", "", 4)
+		cfg, _, _ := useFake(t, ca)
+		err := runPull(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "", t.TempDir(), "", "", 4)
 		wantExit(t, err, cob.ExitNotFound)
 	})
 
 	t.Run("requested asset not in version", func(t *testing.T) {
 		ca := &fakeCA{listAssetsFn: oneAsset("real.bin", 3)}
-		useFake(t, ca)
-		err := runPull(ctx, "dom/repo/ns/pkg@1.0.0", "missing.bin", t.TempDir(), "", "missing.bin", 4)
+		cfg, _, _ := useFake(t, ca)
+		err := runPull(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "missing.bin", t.TempDir(), "", "missing.bin", 4)
 		wantExit(t, err, cob.ExitNotFound)
 	})
 
@@ -130,9 +130,9 @@ func TestRunPull(t *testing.T) {
 				return &codeartifact.GetPackageVersionAssetOutput{Asset: io.NopCloser(strings.NewReader("hello"))}, nil
 			},
 		}
-		useFake(t, ca)
+		cfg, _, _ := useFake(t, ca)
 		dst := filepath.Join(t.TempDir(), "out.bin")
-		if err := runPull(ctx, "dom/repo/ns/pkg@1.0.0", "a.bin", dst, "", "a.bin", 4); err != nil {
+		if err := runPull(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "a.bin", dst, "", "a.bin", 4); err != nil {
 			t.Fatalf("pull: %v", err)
 		}
 		got, err := os.ReadFile(dst)
@@ -147,18 +147,18 @@ func TestRunPublish(t *testing.T) {
 
 	t.Run("conflict when version already exists", func(t *testing.T) {
 		// Default DescribePackageVersion reports the version as existing.
-		useFake(t, &fakeCA{})
+		cfg, _, _ := useFake(t, &fakeCA{})
 		mf := writeManifest(t)
-		err := runPublish(ctx, mf, "1.0.0", false, false, true, false, 4)
+		err := runPublish(ctx, cfg, mf, "1.0.0", false, false, true, false, 4)
 		wantExit(t, err, cob.ExitConflict)
 	})
 
 	t.Run("dry-run works even when the version already exists", func(t *testing.T) {
 		// Default DescribePackageVersion reports the version as existing; a
 		// dry run must still preview rather than exit with a conflict.
-		useFake(t, &fakeCA{})
+		cfg, _, _ := useFake(t, &fakeCA{})
 		mf := writeManifest(t)
-		if err := runPublish(ctx, mf, "1.0.0", false, true, true, false, 4); err != nil {
+		if err := runPublish(ctx, cfg, mf, "1.0.0", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run with existing version must not error, got %v", err)
 		}
 	})
@@ -174,9 +174,9 @@ func TestRunPublish(t *testing.T) {
 				return &codeartifact.PublishPackageVersionOutput{}, nil
 			},
 		}
-		useFake(t, ca)
+		cfg, _, _ := useFake(t, ca)
 		mf := writeManifest(t)
-		if err := runPublish(ctx, mf, "1.0.0", false, false, true, false, 4); err != nil {
+		if err := runPublish(ctx, cfg, mf, "1.0.0", false, false, true, false, 4); err != nil {
 			t.Fatalf("publish: %v", err)
 		}
 		// one real asset + the cob-provenance.json finalizer
@@ -199,9 +199,9 @@ func TestRunPublish(t *testing.T) {
 				return &codeartifact.PublishPackageVersionOutput{}, nil
 			},
 		}
-		useFake(t, ca)
+		cfg, _, _ := useFake(t, ca)
 		mf := writeManifest(t)
-		if err := runPublish(ctx, mf, "1.0.0", false, false, true, true, 4); err != nil {
+		if err := runPublish(ctx, cfg, mf, "1.0.0", false, false, true, true, 4); err != nil {
 			t.Fatalf("resume: %v", err)
 		}
 		// payload.txt is already present -> skipped; only cob-provenance.json uploads.
@@ -214,13 +214,13 @@ func TestRunPublish(t *testing.T) {
 		ca := &fakeCA{describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 			return nil, &catypes.ResourceNotFoundException{}
 		}}
-		useFake(t, ca)
-		wantExit(t, runPublish(ctx, writeManifest(t), "1.0.0", false, false, true, true, 4), cob.ExitError)
+		cfg, _, _ := useFake(t, ca)
+		wantExit(t, runPublish(ctx, cfg, writeManifest(t), "1.0.0", false, false, true, true, 4), cob.ExitError)
 	})
 
 	t.Run("resume and force are mutually exclusive", func(t *testing.T) {
-		useFake(t, &fakeCA{})
-		wantExit(t, runPublish(ctx, writeManifest(t), "1.0.0", true, false, true, true, 4), cob.ExitError)
+		cfg, _, _ := useFake(t, &fakeCA{})
+		wantExit(t, runPublish(ctx, cfg, writeManifest(t), "1.0.0", true, false, true, true, 4), cob.ExitError)
 	})
 }
 
@@ -323,14 +323,14 @@ func TestRunPromote(t *testing.T) {
 
 	t.Run("conflict when destination version exists", func(t *testing.T) {
 		// Default DescribePackageVersion reports the dest version as existing.
-		useFake(t, &fakeCA{})
-		err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, false, 4)
+		cfg, _, _ := useFake(t, &fakeCA{})
+		err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, false, 4)
 		wantExit(t, err, cob.ExitConflict)
 	})
 
 	t.Run("@latest with no source versions -> not found", func(t *testing.T) {
-		useFake(t, &fakeCA{}) // ListPackageVersions default: empty
-		err := runPromote(ctx, "dom/dev/ns/pkg@latest", "", "prod", false, true, false, false, 4)
+		cfg, _, _ := useFake(t, &fakeCA{}) // ListPackageVersions default: empty
+		err := runPromote(ctx, cfg, "dom/dev/ns/pkg@latest", "", "prod", false, true, false, false, 4)
 		wantExit(t, err, cob.ExitNotFound)
 	})
 
@@ -338,8 +338,8 @@ func TestRunPromote(t *testing.T) {
 		// Default DescribePackageVersion reports the dest version as
 		// existing; --dry-run must preview, not exit with a conflict.
 		ca := &fakeCA{listAssetsFn: oneAsset("app.bin", 9)}
-		stdout, _ := useFake(t, ca)
-		if err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
+		cfg, stdout, _ := useFake(t, ca)
+		if err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run with existing dest must not error, got %v", err)
 		}
 		if !strings.Contains(stdout.String(), "app.bin") {
@@ -361,8 +361,8 @@ func TestRunPromote(t *testing.T) {
 				return &codeartifact.PublishPackageVersionOutput{}, nil
 			},
 		}
-		useFake(t, ca)
-		if err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4); err != nil {
+		cfg, _, _ := useFake(t, ca)
+		if err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4); err != nil {
 			t.Fatalf("resume: %v", err)
 		}
 		// app.bin already present -> skipped; only cob-provenance.json publishes.
@@ -375,13 +375,13 @@ func TestRunPromote(t *testing.T) {
 		ca := &fakeCA{describeFn: func(*codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
 			return nil, &catypes.ResourceNotFoundException{}
 		}}
-		useFake(t, ca)
-		wantExit(t, runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4), cob.ExitError)
+		cfg, _, _ := useFake(t, ca)
+		wantExit(t, runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4), cob.ExitError)
 	})
 
 	t.Run("resume and force are mutually exclusive", func(t *testing.T) {
-		useFake(t, &fakeCA{})
-		wantExit(t, runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", true, true, false, true, 4), cob.ExitError)
+		cfg, _, _ := useFake(t, &fakeCA{})
+		wantExit(t, runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", true, true, false, true, 4), cob.ExitError)
 	})
 
 	t.Run("dry-run lists assets and promotes nothing", func(t *testing.T) {
@@ -396,8 +396,8 @@ func TestRunPromote(t *testing.T) {
 				return &codeartifact.PublishPackageVersionOutput{}, nil
 			},
 		}
-		stdout, _ := useFake(t, ca)
-		if err := runPromote(ctx, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
+		cfg, stdout, _ := useFake(t, ca)
+		if err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run: %v", err)
 		}
 		if published != 0 {
@@ -411,30 +411,30 @@ func TestRunPromote(t *testing.T) {
 
 func TestRunValidate(t *testing.T) {
 	t.Run("valid manifest", func(t *testing.T) {
-		useFake(t, &fakeCA{})
+		cfg, _, _ := useFake(t, &fakeCA{})
 		dir := t.TempDir()
 		writeFile(t, dir, "x.txt", "data")
 		mf := writeFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x.txt\n")
-		if err := runValidate(mf, "1.0.0"); err != nil {
+		if err := runValidate(cfg, mf, "1.0.0"); err != nil {
 			t.Fatalf("validate: %v", err)
 		}
 	})
 
 	t.Run("reserved asset name cob-provenance.json rejected", func(t *testing.T) {
-		useFake(t, &fakeCA{})
+		cfg, _, _ := useFake(t, &fakeCA{})
 		dir := t.TempDir()
 		writeFile(t, dir, "cob-provenance.json", "{}")
 		mf := writeFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  shadow: ./cob-provenance.json\n")
-		wantExit(t, runValidate(mf, "1.0.0"), cob.ExitError)
+		wantExit(t, runValidate(cfg, mf, "1.0.0"), cob.ExitError)
 	})
 
 	t.Run("duplicate basename rejected", func(t *testing.T) {
-		useFake(t, &fakeCA{})
+		cfg, _, _ := useFake(t, &fakeCA{})
 		dir := t.TempDir()
 		writeFile(t, dir, "x.txt", "data")
 		mf := writeFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x.txt\n  b: x.txt\n")
-		wantExit(t, runValidate(mf, "1.0.0"), cob.ExitError)
+		wantExit(t, runValidate(cfg, mf, "1.0.0"), cob.ExitError)
 	})
 }
 
@@ -543,8 +543,8 @@ func TestRunVerify(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("clean match -> exit 0", func(t *testing.T) {
-		useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
-		if err := runVerify(ctx, writeHelloManifest(t), "1.0.0", true); err != nil {
+		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
+		if err := runVerify(ctx, cfg, writeHelloManifest(t), "1.0.0", true); err != nil {
 			t.Fatalf("verify clean: %v", err)
 		}
 	})
@@ -553,31 +553,31 @@ func TestRunVerify(t *testing.T) {
 		// hex SHA-256 is case-insensitive; different sources return upper
 		// vs lower. A case-sensitive compare here would be a spurious
 		// mismatch on bytes that are actually identical.
-		useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, strings.ToUpper(helloSHA))})
-		if err := runVerify(ctx, writeHelloManifest(t), "1.0.0", true); err != nil {
+		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, strings.ToUpper(helloSHA))})
+		if err := runVerify(ctx, cfg, writeHelloManifest(t), "1.0.0", true); err != nil {
 			t.Fatalf("uppercase-hex must still match the lowercase source hash: %v", err)
 		}
 	})
 
 	t.Run("SHA mismatch -> exit 4 (ExitMismatch)", func(t *testing.T) {
-		useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5,
+		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5,
 			"deadbeef0000000000000000000000000000000000000000000000000000beef")})
-		wantExit(t, runVerify(ctx, writeHelloManifest(t), "1.0.0", true), cob.ExitMismatch)
+		wantExit(t, runVerify(ctx, cfg, writeHelloManifest(t), "1.0.0", true), cob.ExitMismatch)
 	})
 
 	t.Run("source resolution failure -> exit 1 (ExitError)", func(t *testing.T) {
 		// publisher claims payload.txt exists, but the local source is missing
 		// -> per-asset Resolve fails -> opErrors > 0 -> the check didn't run.
-		useFake(t, &fakeCA{listAssetsFn: publishedAsset("missing.txt", 5, helloSHA)})
+		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("missing.txt", 5, helloSHA)})
 		dir := t.TempDir()
 		mf := writeFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  payload: ./missing.txt\n")
-		wantExit(t, runVerify(ctx, mf, "1.0.0", true), cob.ExitError)
+		wantExit(t, runVerify(ctx, cfg, mf, "1.0.0", true), cob.ExitError)
 	})
 
 	t.Run("coords @latest with no published versions -> exit 2", func(t *testing.T) {
-		useFake(t, &fakeCA{}) // ListPackageVersions default: empty
-		wantExit(t, runVerify(ctx, "dom/repo/ns/pkg", "latest", false), cob.ExitNotFound)
+		cfg, _, _ := useFake(t, &fakeCA{}) // ListPackageVersions default: empty
+		wantExit(t, runVerify(ctx, cfg, "dom/repo/ns/pkg", "latest", false), cob.ExitNotFound)
 	})
 }
 
@@ -585,16 +585,16 @@ func TestRunDiff(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("clean -> exit 0", func(t *testing.T) {
-		useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
-		if err := runDiff(ctx, writeHelloManifest(t), "1.0.0", true); err != nil {
+		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
+		if err := runDiff(ctx, cfg, writeHelloManifest(t), "1.0.0", true); err != nil {
 			t.Fatalf("diff clean: %v", err)
 		}
 	})
 
 	t.Run("drift -> exit 4 (ExitMismatch)", func(t *testing.T) {
-		useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5,
+		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5,
 			"deadbeef0000000000000000000000000000000000000000000000000000beef")})
-		wantExit(t, runDiff(ctx, writeHelloManifest(t), "1.0.0", true), cob.ExitMismatch)
+		wantExit(t, runDiff(ctx, cfg, writeHelloManifest(t), "1.0.0", true), cob.ExitMismatch)
 	})
 }
 

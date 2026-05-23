@@ -16,7 +16,7 @@ import (
 // in `ls dom/*/ns/pkg@v` (mirrors registry.versionMetaConcurrency).
 const promotionStatusConcurrency = 8
 
-func newLsCmd() *cobra.Command {
+func newLsCmd(cfg *Config) *cobra.Command {
 	var flagAllRepos bool
 
 	cmd := &cobra.Command{
@@ -33,7 +33,7 @@ func newLsCmd() *cobra.Command {
 			if len(args) > 0 {
 				target = args[0]
 			}
-			return runLs(cmd.Context(), target, flagAllRepos)
+			return runLs(cmd.Context(), cfg, target, flagAllRepos)
 		},
 	}
 
@@ -101,10 +101,10 @@ func classifyLs(coords *cob.PackageCoordinates, target string, allRepos bool) (l
 	return lsKindAssets, ""
 }
 
-func runLs(ctx context.Context, target string, allRepos bool) error {
-	out := newWriter(flagJSON)
+func runLs(ctx context.Context, cfg *Config, target string, allRepos bool) error {
+	out := newWriter(cfg)
 
-	client, err := dialClient(ctx)
+	client, err := dialClient(ctx, cfg)
 	if err != nil {
 		return fail(out, "ls", cob.ExitError, "%s", err)
 	}
@@ -176,10 +176,10 @@ func resolvePromotionLatest(ctx context.Context, registry *cob.Registry, coords 
 // emits an empty array of the documented element type — so a consumer always
 // gets a parseable array, never an error object — and writes the message to
 // stderr; the exit code (2) already signals not-found. Non-JSON behaves like
-// fail.
+// fail. Whether output is JSON is read off the Writer itself (out.JSON
+// returns true if it emitted), so this function needs no Config dependency.
 func failEmptyList(out *output.Writer, emptyList any, format string, args ...any) error {
-	if flagJSON {
-		out.JSON(emptyList)
+	if out.JSON(emptyList) {
 		out.Error(format, args...)
 		return &ExitError{Code: cob.ExitNotFound}
 	}

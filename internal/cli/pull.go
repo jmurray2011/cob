@@ -15,7 +15,7 @@ import (
 	"github.com/jmurray2011/cob/internal/output"
 )
 
-func newPullCmd() *cobra.Command {
+func newPullCmd(cfg *Config) *cobra.Command {
 	var (
 		flagVersion     string
 		flagOutput      string
@@ -38,7 +38,7 @@ func newPullCmd() *cobra.Command {
 			if len(args) > 1 {
 				assetName = args[1]
 			}
-			return runPull(cmd.Context(), args[0], flagVersion, flagOutput, flagAssets, assetName, flagConcurrency)
+			return runPull(cmd.Context(), cfg, args[0], flagVersion, flagOutput, flagAssets, assetName, flagConcurrency)
 		},
 	}
 
@@ -50,10 +50,10 @@ func newPullCmd() *cobra.Command {
 	return cmd
 }
 
-func runPull(ctx context.Context, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
-	out := newWriter(flagJSON)
+func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
+	out := newWriter(cfg)
 
-	client, err := dialClient(ctx)
+	client, err := dialClient(ctx, cfg)
 	if err != nil {
 		return fail(out, "pull", cob.ExitError, "%s", err)
 	}
