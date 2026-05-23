@@ -2,6 +2,7 @@ package cob
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
@@ -309,5 +311,85 @@ func TestS3SourceConcurrentOpenOriginRaceFree(t *testing.T) {
 	}
 	if o == nil || (o.ETag != "get-etag" && o.ETag != "head-etag") {
 		t.Errorf("Origin = %+v; expected non-nil with one of the two response etags", o)
+	}
+}
+
+// TestResolveRetainsChecksumModeOnRegionRedirect pins a fragile lexical
+// invariant: in S3Source.Resolve, the *s3.HeadObjectInput (with
+// ChecksumMode=Enabled) is built once and used by both the initial call
+// and the post-region-redirect retry. A refactor that moves `in :=
+// &s3.HeadObjectInput{...}` inside the conditional, or rebuilds the
+// input for the retry, would silently drop ChecksumMode on the retry —
+// and S3 only returns ChecksumSHA256 when ChecksumMode is set, so cob
+// would fall back to "unverified" without anyone noticing.
+//
+// We override rebuildS3Client (the package-level seam in source_s3.go)
+// so the post-redirect retry stays on our fake; otherwise the production
+// code path would build a real s3.Client for the second call and try to
+// hit real S3.
+func TestResolveRetainsChecksumModeOnRegionRedirect(t *testing.T) {
+	// Real SHA-256 of "hello" base64'd is what HeadObject would return.
+	sum := sha256.Sum256([]byte("hello"))
+	wantHex := hex.EncodeToString(sum[:])
+	wantB64 := base64.StdEncoding.EncodeToString(sum[:])
+
+	var calls []*s3.HeadObjectInput
+	f := &fakeS3{
+		region: "us-east-1",
+		headFn: func(in *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
+			// Capture a snapshot — Go's struct values are copied here,
+			// so a refactor that mutates `in` between calls can't fool us.
+			snapshot := *in
+			calls = append(calls, &snapshot)
+			if len(calls) == 1 {
+				// First call: a cross-region redirect carrying the bucket's real region.
+				return nil, respErr(301, http.Header{"X-Amz-Bucket-Region": {"us-west-2"}})
+			}
+			// Second call (post-redirect): real response with the SHA-256
+			// S3 only returns when ChecksumMode is enabled.
+			return &s3.HeadObjectOutput{
+				ContentLength:  aws.Int64(5),
+				ChecksumSHA256: aws.String(wantB64),
+			}, nil
+		},
+	}
+
+	// Keep the post-redirect retry on the same fake instead of letting
+	// correctRegion build a real *s3.Client.
+	orig := rebuildS3Client
+	rebuildS3Client = func(opts s3.Options) S3API {
+		f.region = opts.Region // reflect the swap so f.Options() reports it
+		return f
+	}
+	t.Cleanup(func() { rebuildS3Client = orig })
+
+	src := newFakeS3Source(f)
+	meta, err := src.Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("expected exactly 2 HeadObject calls (initial + retry), got %d", len(calls))
+	}
+
+	// First call must have ChecksumMode — that's the documented contract,
+	// and a regression there would also break the no-redirect case.
+	if calls[0].ChecksumMode != s3types.ChecksumModeEnabled {
+		t.Errorf("first HeadObject: ChecksumMode = %v, want Enabled", calls[0].ChecksumMode)
+	}
+	// Second call MUST also have ChecksumMode — this is the invariant
+	// the test exists to pin. If someone refactors Resolve to build a
+	// fresh input for the retry (or moves construction inside the
+	// conditional) without copying ChecksumMode, this fires.
+	if calls[1].ChecksumMode != s3types.ChecksumModeEnabled {
+		t.Errorf("retry HeadObject after region redirect: ChecksumMode = %v, want Enabled — the captured-in-scope input invariant in Resolve is broken; the retry must use the same input value as the initial call", calls[1].ChecksumMode)
+	}
+
+	// And the user-visible consequence: AssetMetadata.SHA256 round-trips.
+	// If ChecksumMode were dropped on the retry, S3 wouldn't return
+	// ChecksumSHA256 and meta.SHA256 would be empty — silent regression
+	// to "unverified" for every cross-region bucket.
+	if meta.SHA256 != wantHex {
+		t.Errorf("meta.SHA256 = %q, want %q (ChecksumSHA256 must round-trip via the retry too)", meta.SHA256, wantHex)
 	}
 }

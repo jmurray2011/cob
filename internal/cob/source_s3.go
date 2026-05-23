@@ -75,6 +75,14 @@ func (s *S3Source) currentClient() S3API {
 	return s.client
 }
 
+// rebuildS3Client is the test seam used by correctRegion's client swap.
+// Production returns s3.New(opts) — the real SDK client pinned to the
+// redirected region. Tests can override this so the post-redirect retry
+// goes through their fake instead of trying to hit real S3, which lets
+// TestResolveRetainsChecksumModeOnRegionRedirect observe both calls'
+// inputs and pin the "ChecksumMode survives the retry" invariant.
+var rebuildS3Client = func(opts s3.Options) S3API { return s3.New(opts) }
+
 // correctRegion inspects err for an S3 cross-region redirect. A request sent
 // to the wrong regional endpoint comes back as a 301/400 that still carries
 // the bucket's real region in the x-amz-bucket-region header. When that
@@ -98,7 +106,7 @@ func (s *S3Source) correctRegion(err error) bool {
 	}
 	opts := s.client.Options()
 	opts.Region = region
-	s.client = s3.New(opts)
+	s.client = rebuildS3Client(opts)
 	s.regionFixed = true
 	return true
 }
