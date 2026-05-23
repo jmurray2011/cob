@@ -82,6 +82,12 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 			return fail(out, "promote", cob.ExitError, "%s", err)
 		}
 		warnManifestOverrides(m, out)
+		// Implicit pre-flight lint — see runPublish for rationale. The
+		// manifest is the source of truth for the source repo, so a
+		// broken one shouldn't even reach promote stage inference.
+		if err := validateManifest(m, version); err != nil {
+			return fail(out, "promote", cob.ExitError, "%s", err)
+		}
 
 		// Infer source repo from promote stages.
 		srcRepo, err = m.InferPromoteSource(toRepo)

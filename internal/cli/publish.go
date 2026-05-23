@@ -73,6 +73,16 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 		return fail(out, "publish", cob.ExitError, "%s", err)
 	}
 	warnManifestOverrides(m, out)
+	// Implicit pre-flight lint — same checks `cob diff <manifest>`
+	// exposes user-side. Bails before any AWS work if the manifest is
+	// broken (bad URI, missing local file, reserved asset name, basename
+	// collision). The `cob validate` command went away because this
+	// guard ensures every manifest-based command refuses a bad manifest
+	// in the same way; there's no longer a "ran lint, didn't run lint"
+	// distinction to remember.
+	if err := validateManifest(m, version); err != nil {
+		return fail(out, "publish", cob.ExitError, "%s", err)
+	}
 
 	if err := m.ResolveVariables(version); err != nil {
 		return fail(out, "publish", cob.ExitError, "%s", err)

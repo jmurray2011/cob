@@ -248,8 +248,8 @@ Resolution is by publication timestamp, not semver.
 
 ### init
 
-Prints a starter manifest to stdout — placeholders that pass `cob validate`
-out of the box, plus inline examples for each source type. The optional
+Prints a starter manifest to stdout — placeholders that pass `cob diff`
+lint out of the box, plus inline examples for each source type. The optional
 coordinates argument fills in any subset of domain/repository/namespace/
 package; the rest stay as placeholders so you can fill them in as you
 iterate. No AWS calls.
@@ -270,107 +270,13 @@ cob init acme/dev/tools/my-app --minimal > my-package.yaml
 
 Flags: `--minimal`
 
-### validate
-
-Offline check of a manifest -- no AWS calls. Verifies schema, variable
-resolvability, and source-URI syntax. For **local file** sources, also
-asserts existence and that the path is a regular file. For **remote
-sources** (`s3://`, `ca://`), validate is **syntax-only** -- it never
-dereferences them. The output labels every line accordingly so you can
-see exactly what was checked: `(42.0 MB)` for verified-local,
-`(remote, syntax only)` for unverified-remote.
-
-```bash
-cob validate my-package.yaml
-cob validate my-package.yaml --version 2.1.0   # also resolves ${VERSION}
-```
-
-For byte integrity against a published version, run [`cob verify`](#verify)
-against the manifest -- it can compare published SHA-256s, fetch and
-hash sources with `--deep`, etc. Validate intentionally stays offline so
-it's safe in pre-commit / CI lint stages without credentials.
-
-Flags: `--version` (optional)
-
-### verify
-
-Checks that bytes match published. Three modes, picked from the
-positional argument(s); none mutate; exit code is non-zero on any
-mismatch.
-
-**Default output is terse for matches, full-detail for mismatches.** Each
-match is one line — glyph, name, size, method. Each mismatch expands to
-the full audit form (URI, size, full SHA-256 for both sides), because
-that's where the detail actually matters. Pass `-v` / `--verbose` to put
-the URI and full hash on every match row as well.
-
-**Coordinates (one arg)** -- self-verifies a published version against
-its own recorded `cob-provenance.json`. The chain of evidence (who
-published/promoted it, where each file came from, recursing through
-`ca://`) is printed first; then each recorded asset's provenance SHA-256
-is compared to CodeArtifact's stored asset SHA. Audit a version you
-didn't build, with nothing but its coordinates:
-
-```bash
-cob verify my-domain/dev/my-namespace/my-package@2.1.0
-cob verify my-domain/dev/my-namespace/my-package@latest
-```
-
-**Manifest (one arg, file ending `.yaml`/`.yml`)** -- compares each
-manifest source's SHA-256 against the published assets. A CI gate for
-reproducible builds. Each source is checked by this precedence, cheapest
-first:
-
-1. a **known checksum** -- S3 object with `--checksum-algorithm SHA256`,
-   a `ca://` source, or a local file (no download);
-2. for an unchecksummed S3 source, the recorded **origin** (see Provenance):
-   a `HeadObject` now, comparing `version_id`/`etag` to what was recorded
-   at publish -- a no-download drift signal. Unchanged → the recorded SHA
-   is trusted (`match(origin)`); changed/unreadable → reported as drift;
-3. otherwise the recorded **`cob-provenance.json`** SHA (`match(provenance)`);
-4. with **`--deep`**, cob downloads and hashes the source (no S3 writes).
-
-Only sources with none of the above are reported *unverified*. The match
-line shows the basis, e.g. `match(source)`, `match(origin)`,
-`match(provenance)`, `match(deep)`.
-
-```bash
-cob verify my-package.yaml --version 2.1.0
-cob verify my-package.yaml --version 2.1.0 --deep   # download+hash unchecksummed sources
-```
-
-**Directory + coordinates (two args)** -- for each published asset of
-`<coords>`, looks for a local file of the same name in `<dir>`, hashes
-it, and compares to the published SHA-256. No manifest is consulted; no
-remote URIs are dereferenced. The straight answer to "do these local
-files match what was published?"
-
-```bash
-# After `cob pull` (which writes ca:// pinned sources for re-publish
-# lineage), the most direct check that your local copy is intact:
-cob verify ~/pulled-dir my-domain/dev/my-namespace/my-package@2.1.0
-```
-
-A typical mismatch row looks like:
-
-```
-  ✗ readability.jar                  mismatch
-      local     195.5 MB   /home/me/pulled-dir/readability.jar              a3f2b8c9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1
-      published 195.5 MB   my-domain/dev/my-namespace/my-package@2.1.3      25c4517cdef0123456789abcdef0123456789abcdef0123456789abcdef01234
-```
-
-`sha256sum` the local file and you can string-compare the full hash --
-no need to mentally truncate.
-
-Flags: `--version` (manifest mode; or `COB_VERSION`), `--deep` (manifest mode only), `-v`/`--verbose`
-
 ### log
 
 Read-only print of a version's chain of evidence — who published it, who
 promoted it, when, and where — plus per-asset origins (where each file
 physically came from, recursing through `ca://` upstreams). No integrity
-check; that's what [`verify`](#verify) is for. Useful when you want the
-history without paying for the asset listing and hash comparison.
+check; that's what [`diff <coords>`](#diff) is for. Useful when you want
+the history without paying for the asset listing and hash comparison.
 
 ```bash
 cob log my-domain/dev/my-namespace/my-package@2.1.0
@@ -399,39 +305,111 @@ costs only two probes. Text-mode only — a JSON consumer can run their
 own loop over `prov.chain[]`.
 
 Exits with an error if the version has no `cob-provenance.json` (a non-cob
-publisher or pre-provenance version). For those, `cob verify <coords>`
-still works against CodeArtifact's recorded asset hashes, but there's no
-chain to print.
+publisher or pre-provenance version). For those, `cob diff <coords>`
+still won't help (no provenance to compare against), but CodeArtifact's
+stored asset hashes can be inspected via `cob ls <coords>@<v>`.
 
 A note on the dangling-chain situation `--check-references` surfaces: the
 destination's provenance is **self-contained** (`promote` carries the
 source's chain forward and appends its own event, and `reconcilePromotedAssets`
 preserves each asset's original Source URI and S3 Origin record). So a
 deleted upstream affects only the ability to follow a `from:` link by
-hand — it does not affect `cob verify`, `cob diff`, or `--deep` rehash,
-all of which work entirely from the destination's own records.
+hand — it does not affect `cob diff <coords>` self-integrity, manifest-
+vs-published diff, or `--deep` rehash, all of which work entirely from
+the destination's own records.
 
 ### diff
 
-Two modes. Both report added (`+`), removed (`-`), changed (`~`), and exit
-`1` on any drift / `0` when identical -- like `diff(1)`.
+`diff` is cob's only comparison verb. Five modes, picked from the
+positional shape; none mutate; exit code is 0 if identical, non-zero on
+any drift.
 
-**Manifest mode** (one arg) -- compares a manifest's sources against a
-published version. Uses the same precedence as `verify` (known checksum →
-recorded S3 origin → provenance → `--deep`); a changed S3 `etag`/
-`version_id` shows as `~` with no download. Run before `publish --force`
-to see what would change.
+Match rows are terse by default: glyph, name, size, method (one line).
+Mismatch rows expand to the full audit form (URI, size, full SHA-256 for
+both sides) — that's where the bytes matter. Pass `-v` / `--verbose` to
+put the URI and full hash on every row, not just mismatches.
+
+| Mode                       | Invocation                            | What it answers                            |
+|----------------------------|---------------------------------------|--------------------------------------------|
+| Manifest lint (offline)    | `cob diff <m.yaml>`                   | Is this manifest well-formed?              |
+| Manifest vs published      | `cob diff <m.yaml> --version X`       | Does this manifest still produce @X?       |
+| Self-integrity             | `cob diff <coords>`                   | Is this published version intact?          |
+| Local dir vs published     | `cob diff <dir> <coords>`             | Do my local files match what was published?|
+| Version vs version         | `cob diff <coords-A> <coords-B>`      | What changed between these two releases?   |
+
+**Manifest lint** -- schema + URI syntax + local-file existence. No AWS
+calls. The same checks run implicitly at the top of every other
+manifest-based command (`publish`, `promote`, `pull`, `diff --version`),
+so a manifest that publishes cleanly will always lint cleanly first. This
+mode is the user-facing report of that pre-flight.
+
+```bash
+cob diff my-package.yaml
+```
+
+Output labels each row: `(42.0 MB)` for verified-local,
+`(remote, syntax only)` for unverified-remote. Safe in pre-commit / CI
+lint stages without credentials.
+
+**Manifest vs published** -- hashes each source and compares to the
+published asset of the same name. Run before `publish --force` to see
+exactly what would change. Source hash precedence, cheapest first:
+
+1. a **known checksum** -- S3 object with `--checksum-algorithm SHA256`,
+   a `ca://` source, or a local file (no download);
+2. for an unchecksummed S3 source, the recorded **origin** (see Provenance):
+   a `HeadObject` now, comparing `version_id`/`etag` to what was recorded
+   at publish -- a no-download drift signal. Unchanged → recorded SHA is
+   trusted (`match(origin)`); changed/unreadable → reported as drift;
+3. otherwise the recorded **`cob-provenance.json`** SHA (`match(provenance)`);
+4. with **`--deep`**, cob downloads and hashes the source (no S3 writes).
 
 ```bash
 cob diff my-package.yaml --version 2.1.0
+cob diff my-package.yaml --version 2.1.0 --deep   # hash unchecksummed sources
 ```
 
-**Version-to-version mode** (two coordinate args) -- compares two
-published versions of the same package by the SHA-256 each side recorded
-in CodeArtifact. No downloads, `--deep` is ignored. The `cob-provenance.
-json` asset is excluded from the comparison on both sides (its bytes
-trivially differ on every publish/promote -- chain timestamps, IDs --
-but that isn't a package change).
+**Self-integrity** -- fetches the recorded `cob-provenance.json` for
+`<coords>` and compares each entry's SHA-256 to what CodeArtifact
+currently stores. The chain of evidence (who published/promoted it,
+where each file came from, recursing through `ca://`) is printed first;
+then the comparison. Audit a version you didn't build, with nothing but
+its coordinates:
+
+```bash
+cob diff my-domain/dev/my-namespace/my-package@2.1.0
+cob diff my-domain/dev/my-namespace/my-package@latest
+```
+
+**Local dir vs published** -- for each published asset of `<coords>`,
+looks for a local file of the same name in `<dir>`, hashes it, and
+compares to the published SHA-256. No manifest is consulted, no remote
+URIs dereferenced. The straight answer to "do these local files match
+what was published?"
+
+```bash
+# After `cob pull` (which writes ca:// pinned sources for re-publish
+# lineage), the most direct check that your local copy is intact:
+cob diff ~/pulled-dir my-domain/dev/my-namespace/my-package@2.1.0
+```
+
+A typical mismatch row:
+
+```
+  ✗ readability.jar                  mismatch
+      local     195.5 MB   /home/me/pulled-dir/readability.jar              a3f2b8c9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1
+      published 195.5 MB   my-domain/dev/my-namespace/my-package@2.1.3      25c4517cdef0123456789abcdef0123456789abcdef0123456789abcdef01234
+```
+
+`sha256sum` the local file and you can string-compare the full hash --
+no truncation guesswork.
+
+**Version vs version** -- compares two published versions of the same
+package by the SHA-256 each side recorded in CodeArtifact. No downloads.
+`cob-provenance.json` is excluded from both sides (its bytes trivially
+differ on every publish/promote -- chain timestamps, IDs -- but that
+isn't a package change). The two coordinates must reference the same
+package; cross-repo same-package is allowed.
 
 ```bash
 # What changed in this release?
@@ -441,16 +419,8 @@ cob diff acme/dev/tools/my-app@2.0.0 acme/dev/tools/my-app@2.1.0
 cob diff acme/dev/tools/my-app@2.1.0 acme/prod/tools/my-app@2.1.0
 ```
 
-The two coordinates must reference the same package (cross-package diffs
-are rejected). Cross-repo same-package is the supported cross-cutting
-case.
-
-```bash
-cob diff my-package.yaml --version 2.1.0
-cob diff my-package.yaml --version 2.1.0 --deep
-```
-
-Flags: `--version` (required, or `COB_VERSION`), `--deep`
+Flags: `--version` (manifest mode: `COB_VERSION` fallback), `--deep`
+(manifest vs published only), `-v`/`--verbose`
 
 ### manifest
 
@@ -506,11 +476,13 @@ that's the intended trade-off for a self-contained evidence trail.
 
 `promote` carries `assets` forward unchanged (same bytes) and only appends
 to `chain`. The file appears in `cob ls <pkg>@ver` and is fetched by
-`cob pull`; it is excluded from `verify`'s "not in manifest" reporting.
+`cob pull`; it is excluded from `diff`'s "not in manifest" reporting.
 
-Read it with `cob verify <coordinates>` (no manifest): it self-verifies the
-version against this document and prints the chain plus the recursive origin
-tree -- audit any cob-published version with nothing but its coordinates.
+Read it with `cob diff <coordinates>` (the self-integrity mode): cob fetches
+this document, compares each recorded SHA-256 to what CodeArtifact stores,
+and prints the chain plus the recursive origin tree -- audit any cob-
+published version with nothing but its coordinates. For chain-only viewing
+without the byte comparison, use `cob log <coordinates>`.
 
 ### Parallel transfers
 

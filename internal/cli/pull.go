@@ -76,6 +76,14 @@ func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, 
 			return fail(out, "pull", cob.ExitError, "%s", err)
 		}
 		warnManifestOverrides(m, out)
+		// Implicit pre-flight lint — see runPublish for rationale.
+		// Pull only reads m.Domain/Repository/Namespace/Package to
+		// resolve coords, but a malformed manifest (bad URI syntax,
+		// reserved asset name, basename collision) should still fail
+		// the same way every other manifest-based command does.
+		if err := validateManifest(m, version); err != nil {
+			return fail(out, "pull", cob.ExitError, "%s", err)
+		}
 
 		coords = &cob.PackageCoordinates{
 			Domain:     m.Domain,

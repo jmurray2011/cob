@@ -21,8 +21,8 @@ func newLogCmd(cfg *Config) *cobra.Command {
 			"and prints the chain of evidence — who published it, who " +
 			"promoted it, when, and where — plus per-asset origins (where " +
 			"each file came from). Read-only; no integrity check (use " +
-			"`cob verify` for that). For a version not published by cob, " +
-			"exits with an error rather than fabricating a chain.\n\n" +
+			"`cob diff <coords>` for that). For a version not published " +
+			"by cob, exits with an error rather than fabricating a chain.\n\n" +
 			"With --check-references, each chain event's repository " +
 			"reference is probed; entries whose referenced version has " +
 			"been deleted are annotated inline with (deleted). Adds one " +

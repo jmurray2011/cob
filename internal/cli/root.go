@@ -35,8 +35,6 @@ func NewRootCmd(version string) *cobra.Command {
 		newPromoteCmd(cfg),
 		newLsCmd(cfg),
 		newResolveCmd(cfg),
-		newValidateCmd(cfg),
-		newVerifyCmd(cfg),
 		newDiffCmd(cfg),
 		newManifestCmd(cfg),
 		newTreeCmd(cfg),
