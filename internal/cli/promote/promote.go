@@ -209,7 +209,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, toRepo s
 	for i, name := range realNames {
 		if a, done := present[name]; done {
 			out.AssetSkipped(name)
-			results[i] = &cob.AssetResult{Name: name, SHA256: a.SHA256, Size: a.Size, Method: "skipped"}
+			results[i] = &cob.AssetResult{Name: name, Kind: cob.KindTransfer, SHA256: a.SHA256, Size: a.Size, Method: cob.TransferSkipped}
 			continue
 		}
 		todos = append(todos, i)
@@ -334,7 +334,7 @@ func runPromoteDryRun(ctx context.Context, client *cob.Client, promoter *cob.Pro
 			continue // regenerated at promote time, not copied verbatim
 		}
 		out.Plain("  would promote %s", name)
-		result.Assets = append(result.Assets, cob.AssetResult{Name: name, Method: "dry-run"})
+		result.Assets = append(result.Assets, cob.AssetResult{Name: name, Kind: cob.KindDryRun, Method: cob.DryRunPreview})
 	}
 	if destExists {
 		out.Warn("version already exists in %s; a real promote needs --force to overwrite it", toRepo)

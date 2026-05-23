@@ -92,12 +92,12 @@ func (p *Puller) FetchAssetInfo(ctx context.Context, coords *PackageCoordinates)
 // skipped (Method "skipped").
 func (p *Puller) PullAsset(ctx context.Context, coords *PackageCoordinates, info AssetInfo, outputPath string) (*AssetResult, error) {
 	start := time.Now()
-	result := &AssetResult{Name: info.Name, Size: info.Size, Method: "spilled"}
+	result := &AssetResult{Name: info.Name, Kind: KindTransfer, Size: info.Size, Method: TransferSpilled}
 
 	// Skip if it already exists with the expected hash.
 	if info.SHA256 != "" {
 		if existing, err := hashFile(outputPath); err == nil && existing == info.SHA256 {
-			result.Method = "skipped"
+			result.Method = TransferSkipped
 			result.SHA256 = existing
 			result.DurationMs = time.Since(start).Milliseconds()
 			return result, nil

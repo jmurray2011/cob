@@ -201,7 +201,38 @@ func TestEndToEndPublishPullDiffPromote(t *testing.T) {
 		}
 	})
 
-	// --- 9. Pull rejects a server-supplied traversal name ------------------
+	// --- 9. JSON shape: every asset row in --json output carries Kind ------
+
+	t.Run("--json output discriminates each row by Kind", func(t *testing.T) {
+		// Re-run publish with --json so the CommandResult lands on stdout
+		// and we can parse it back, asserting every Asset row has Kind
+		// set. Catches a producer that constructs an AssetResult without
+		// setting Kind — those rows would deserialize as kind:"" and a
+		// consumer switching on Kind would fall through silently.
+		cfg, stdout, _ := clitest.UseFake(t, clitest.NewStatefulCA())
+		cfg.JSON = true
+		dir2 := t.TempDir()
+		clitest.WriteFile(t, dir2, "thing.bin", "payload")
+		mf2 := clitest.WriteFile(t, dir2, "m.yaml",
+			"domain: a\nrepository: r\nnamespace: n\npackage: p\nsources:\n  thing: ./thing.bin\n")
+		if err := publish.Run(ctx, cfg, mf2, "1.0.0", false, false, true, false, 4); err != nil {
+			t.Fatalf("publish --json: %v", err)
+		}
+		var out cob.CommandResult
+		if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+			t.Fatalf("CommandResult parse: %v\n%s", err, stdout.String())
+		}
+		if len(out.Assets) == 0 {
+			t.Fatal("no assets in CommandResult")
+		}
+		for i, a := range out.Assets {
+			if a.Kind == "" {
+				t.Errorf("Assets[%d] (%q method=%q) has no Kind — producer forgot to set it", i, a.Name, a.Method)
+			}
+		}
+	})
+
+	// --- 10. Pull rejects a server-supplied traversal name -----------------
 
 	t.Run("safeJoin defense holds across pull", func(t *testing.T) {
 		// Seed a hostile version: an asset whose stored name is "../escape".

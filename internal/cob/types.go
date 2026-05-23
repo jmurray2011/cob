@@ -11,16 +11,84 @@ type PackageCoordinates struct {
 	Version    string
 }
 
-// AssetResult holds the outcome of a single asset transfer.
+// AssetResultKind discriminates what an AssetResult represents. It exists
+// so a --json consumer can switch on a stable namespace before reading
+// Method, rather than memorizing which string values appear in which
+// command context (the original concern: "spilled" is a transfer outcome,
+// "match" is a comparison outcome, "exists" is a lint outcome, and a
+// consumer used to have to grep all three vocabularies).
+//
+// Each kind has its own set of Method constants (TransferXxx, CompareXxx,
+// LintXxx). Parametric methods like "match(provenance)" / "match(source)"
+// stay as concatenated strings — they're already structured via the
+// suffix.
+type AssetResultKind string
+
+const (
+	// KindTransfer — publish, pull, promote real-asset transfers.
+	// Methods: TransferSpilled, TransferSkipped.
+	KindTransfer AssetResultKind = "transfer"
+	// KindCompare — diff manifest/self-check/dir/versions modes.
+	// Methods: CompareMatch* / CompareMismatch / CompareAdded /
+	// CompareRemoved / CompareChanged / CompareSame / CompareMissing /
+	// CompareMissingLocal / CompareAltered / CompareUnknown.
+	KindCompare AssetResultKind = "compare"
+	// KindLint — diff lint mode (offline schema/URI/local-file checks).
+	// Methods: LintExists, LintSyntaxS3, LintSyntaxCA, LintSyntax.
+	KindLint AssetResultKind = "lint"
+	// KindDryRun — publish/promote --dry-run preview rows.
+	// Methods: DryRunPreview.
+	KindDryRun AssetResultKind = "dry-run"
+)
+
+// Method constants — grouped by AssetResultKind. Producers should use
+// these instead of bare string literals so a typo lands at compile time
+// (when the constant doesn't exist) instead of at JSON-parse time.
+const (
+	// Transfer kind.
+	TransferSpilled = "spilled" // streamed from source → spill → CodeArtifact
+	TransferSkipped = "skipped" // already present in the version (--resume)
+
+	// Compare kind. "match" alone is the dir-mode and version-vs-version
+	// case; the parametric "match(<srcFrom>)" forms are produced by the
+	// manifest/self-check modes — kept as concatenated strings because
+	// the suffix names which trust path produced the match.
+	CompareMatch        = "match"
+	CompareMismatch     = "mismatch"
+	CompareAdded        = "added"         // in manifest, not published
+	CompareRemoved      = "removed"       // published, not in manifest
+	CompareChanged      = "changed"       // differs from published
+	CompareSame         = "same"          // version-vs-version: bytes identical
+	CompareMissing      = "missing"       // recorded in provenance but not in published version
+	CompareMissingLocal = "missing-local" // dir-mode: not on disk
+	CompareAltered      = "altered"       // self-check: published hash diverged from provenance record
+	CompareUnknown      = "unknown"       // no checksum/provenance/--deep — couldn't compare
+
+	// Lint kind.
+	LintExists   = "exists"     // local file: stat'd and is a regular file
+	LintSyntaxS3 = "syntax(s3)" // s3:// URI parsed; existence not checked
+	LintSyntaxCA = "syntax(ca)" // ca:// URI parsed; existence not checked
+	LintSyntax   = "syntax"     // initial state before classifier runs
+
+	// DryRun kind.
+	DryRunPreview = "dry-run"
+)
+
+// AssetResult holds the outcome of a single asset operation — transfer,
+// compare, lint, or dry-run preview. The Kind field discriminates which
+// vocabulary Method draws from (see AssetResultKind constants above).
+// Older v0.x JSON consumers that didn't read Kind still work: the field
+// is additive and Method retains the same string values it always had.
 type AssetResult struct {
-	Name       string `json:"name"`
-	Source     string `json:"source,omitempty"`
-	Size       int64  `json:"size"`
-	SHA256     string `json:"sha256"`
-	Method     string `json:"method"` // transfer/verify outcome, e.g. spilled, skipped, match(...), mismatch, missing, drift
-	DurationMs int64  `json:"duration_ms"`
-	Error      error  `json:"-"`
-	ErrorMsg   string `json:"error,omitempty"`
+	Name       string          `json:"name"`
+	Kind       AssetResultKind `json:"kind,omitempty"`
+	Source     string          `json:"source,omitempty"`
+	Size       int64           `json:"size"`
+	SHA256     string          `json:"sha256"`
+	Method     string          `json:"method"`
+	DurationMs int64           `json:"duration_ms"`
+	Error      error           `json:"-"`
+	ErrorMsg   string          `json:"error,omitempty"`
 }
 
 // SetError sets both the error and its string representation for JSON.

@@ -174,7 +174,7 @@ func runLint(out *output.Writer, manifestPath string) error {
 	var failures, localOK, remoteOK int
 	byAsset := make(map[string]string, len(m.Sources))
 	for _, s := range m.Sources {
-		ar := cob.AssetResult{Name: s.Name, Source: s.URI, Method: "syntax"}
+		ar := cob.AssetResult{Name: s.Name, Kind: cob.KindLint, Source: s.URI, Method: cob.LintSyntax}
 
 		resolved, err := manifest.ExpandURI(s.URI, version)
 		if err != nil {
@@ -215,15 +215,15 @@ func runLint(out *output.Writer, manifestPath string) error {
 
 		switch kind {
 		case cliutil.URIFile:
-			ar.Method = "exists"
+			ar.Method = cob.LintExists
 			localOK++
 			out.Plain("  ✓ %s  %s  (%s)", s.Name, resolved, output.FormatSize(size))
 		case cliutil.URIS3:
-			ar.Method = "syntax(s3)"
+			ar.Method = cob.LintSyntaxS3
 			remoteOK++
 			out.Plain("  ✓ %s  %s  (remote, syntax only)", s.Name, resolved)
 		case cliutil.URICA:
-			ar.Method = "syntax(ca)"
+			ar.Method = cob.LintSyntaxCA
 			remoteOK++
 			out.Plain("  ✓ %s  %s  (remote, syntax only)", s.Name, resolved)
 		}
@@ -347,7 +347,7 @@ func runManifest(ctx context.Context, cfg *cliutil.Config, out *output.Writer, m
 
 	var added, removed, changed, same, unknown, errs int
 	for _, c := range cmps {
-		ar := cob.AssetResult{Name: c.Name, Source: c.Source, SHA256: c.SrcSHA}
+		ar := cob.AssetResult{Name: c.Name, Kind: cob.KindCompare, Source: c.Source, SHA256: c.SrcSHA}
 		switch {
 		case c.Err != nil:
 			errs++
@@ -359,21 +359,21 @@ func runManifest(ctx context.Context, cfg *cliutil.Config, out *output.Writer, m
 				}, termWidth)
 		case c.InManifest && !c.InPublished:
 			added++
-			ar.Method = "added"
+			ar.Method = cob.CompareAdded
 			out.Plain("  + %s  (not published in @%s)", padRight(c.Name, nameWidth), version)
 		case !c.InManifest && c.InPublished:
 			removed++
-			ar.Method = "removed"
+			ar.Method = cob.CompareRemoved
 			out.Plain("  - %s  (published, not in manifest)", padRight(c.Name, nameWidth))
 		case c.OriginDrift:
 			changed++
-			ar.Method = "changed"
+			ar.Method = cob.CompareChanged
 			renderDiffSingleFail(out, c.Name,
 				"S3 source changed since publish (etag/version differs from provenance)",
 				nameWidth, []diffDetail{{"source", c.Source}}, termWidth)
 		case c.SrcSHA == "":
 			unknown++
-			ar.Method = "unknown"
+			ar.Method = cob.CompareUnknown
 			renderDiffSkipped(out, c.Name,
 				"unverified — no checksum/provenance (use --deep to hash)",
 				nameWidth, []diffDetail{{"source", c.Source}})
@@ -381,13 +381,13 @@ func runManifest(ctx context.Context, cfg *cliutil.Config, out *output.Writer, m
 			// hex SHA-256 case-insensitive — different sources/SDKs return
 			// upper- vs lower-hex; EqualFold avoids a spurious mismatch.
 			same++
-			ar.Method = "match(" + c.SrcFrom + ")"
+			ar.Method = cob.CompareMatch + "(" + c.SrcFrom + ")"
 			renderDiffMatch(out, c.Name, c.Source,
 				fmt.Sprintf("match(%s)", c.SrcFrom), c.SrcSHA,
 				pubSize[c.Name], nameWidth, termWidth, verbose)
 		default:
 			changed++
-			ar.Method = "changed"
+			ar.Method = cob.CompareChanged
 			ar.ErrorMsg = fmt.Sprintf("SHA-256 mismatch: source=%s published=%s", c.SrcSHA, c.PubSHA)
 			renderDiffMismatch(out, c.Name, nameWidth,
 				diffSide{label: "source", uri: c.Source, hash: c.SrcSHA},
@@ -520,24 +520,24 @@ func runSelfCheck(ctx context.Context, cfg *cliutil.Config, out *output.Writer, 
 
 	var failures int
 	for _, e := range prov.Assets {
-		ar := cob.AssetResult{Name: e.Asset, Source: e.Source, SHA256: e.SHA256, Size: e.Size}
+		ar := cob.AssetResult{Name: e.Asset, Kind: cob.KindCompare, Source: e.Source, SHA256: e.SHA256, Size: e.Size}
 		cur, ok := pubSHA[e.Asset]
 		switch {
 		case !ok:
 			failures++
-			ar.Method = "missing"
+			ar.Method = cob.CompareMissing
 			renderDiffSingleFail(out, e.Asset,
 				"recorded in provenance but not in the published version", nameWidth,
 				[]diffDetail{
 					{"recorded", fmt.Sprintf("%s   %s", rightPadSize(e.Size, 10), e.SHA256)},
 				}, termWidth)
 		case strings.EqualFold(cur, e.SHA256):
-			ar.Method = "match(provenance)"
+			ar.Method = cob.CompareMatch + "(provenance)"
 			renderDiffMatch(out, e.Asset, "", "match(provenance)", e.SHA256,
 				e.Size, nameWidth, termWidth, verbose)
 		default:
 			failures++
-			ar.Method = "altered"
+			ar.Method = cob.CompareAltered
 			ar.ErrorMsg = fmt.Sprintf("altered since publish: recorded=%s published=%s", e.SHA256, cur)
 			renderDiffMismatch(out, e.Asset, nameWidth,
 				diffSide{label: "recorded", uri: "(provenance)", size: e.Size, hash: e.SHA256},
@@ -644,20 +644,20 @@ func runDir(ctx context.Context, cfg *cliutil.Config, out *output.Writer, dirPat
 		localPath, joinErr := cliutil.SafeJoin(dirPath, a.Name)
 		if joinErr != nil {
 			opErrors++
-			ar := cob.AssetResult{Name: a.Name, Source: filepath.Join(dirPath, a.Name)}
+			ar := cob.AssetResult{Name: a.Name, Kind: cob.KindCompare, Source: filepath.Join(dirPath, a.Name)}
 			ar.SetError(joinErr)
 			renderDiffSingleFail(out, a.Name, "unsafe asset name", nameWidth,
 				[]diffDetail{{"error", joinErr.Error()}}, termWidth)
 			result.Assets = append(result.Assets, ar)
 			continue
 		}
-		ar := cob.AssetResult{Name: a.Name, Source: localPath}
+		ar := cob.AssetResult{Name: a.Name, Kind: cob.KindCompare, Source: localPath}
 
 		info, statErr := os.Stat(localPath)
 		switch {
 		case os.IsNotExist(statErr):
 			missing++
-			ar.Method = "missing-local"
+			ar.Method = cob.CompareMissingLocal
 			ar.Size = a.Size
 			ar.SHA256 = a.SHA256
 			renderDiffSingleFail(out, a.Name, "missing locally", nameWidth,
@@ -697,12 +697,12 @@ func runDir(ctx context.Context, cfg *cliutil.Config, out *output.Writer, dirPat
 
 		if strings.EqualFold(localHash, a.SHA256) {
 			matched++
-			ar.Method = "match"
+			ar.Method = cob.CompareMatch
 			renderDiffMatch(out, a.Name, localPath, "match", localHash,
 				info.Size(), nameWidth, termWidth, verbose)
 		} else {
 			mismatch++
-			ar.Method = "mismatch"
+			ar.Method = cob.CompareMismatch
 			ar.ErrorMsg = fmt.Sprintf("SHA-256 mismatch: local=%s published=%s", localHash, a.SHA256)
 			renderDiffMismatch(out, a.Name, nameWidth,
 				diffSide{label: "local", uri: localPath, size: info.Size(), hash: localHash},
@@ -806,24 +806,24 @@ func runVersions(ctx context.Context, cfg *cliutil.Config, out *output.Writer, l
 
 	var added, removed, changed, same int
 	for _, c := range cmps {
-		ar := cob.AssetResult{Name: c.Name, SHA256: c.RightSHA}
+		ar := cob.AssetResult{Name: c.Name, Kind: cob.KindCompare, SHA256: c.RightSHA}
 		switch {
 		case !c.InLeft && c.InRight:
 			added++
-			ar.Method = "added"
+			ar.Method = cob.CompareAdded
 			out.Plain("  + %s  (added in %s)", c.Name, right.Version)
 		case c.InLeft && !c.InRight:
 			removed++
-			ar.Method = "removed"
+			ar.Method = cob.CompareRemoved
 			out.Plain("  - %s  (removed in %s)", c.Name, right.Version)
 		case !strings.EqualFold(c.LeftSHA, c.RightSHA):
 			// hex SHA-256 case-insensitive — avoid spurious drift.
 			changed++
-			ar.Method = "changed"
+			ar.Method = cob.CompareChanged
 			out.Plain("  ~ %s  (%s -> %s)", c.Name, short(c.LeftSHA), short(c.RightSHA))
 		default:
 			same++
-			ar.Method = "same"
+			ar.Method = cob.CompareSame
 		}
 		result.Assets = append(result.Assets, ar)
 	}

@@ -193,7 +193,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, manifestPath, versionFlag str
 			out.AssetSkipped(ns.Name)
 			results[i] = &cob.AssetResult{
 				Name: ns.Name, Source: ns.Source.URI(),
-				SHA256: a.SHA256, Size: a.Size, Method: "skipped",
+				Kind: cob.KindTransfer, SHA256: a.SHA256, Size: a.Size, Method: cob.TransferSkipped,
 			}
 			continue
 		}
@@ -318,7 +318,7 @@ func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []cl
 		meta, err := ns.Source.Resolve(ctx)
 		if err != nil {
 			out.AssetFail(ns.Name, ns.Source.URI(), err)
-			ar := cob.AssetResult{Name: ns.Name, Source: ns.Source.URI(), Method: "spilled"}
+			ar := cob.AssetResult{Name: ns.Name, Kind: cob.KindDryRun, Source: ns.Source.URI(), Method: cob.DryRunPreview}
 			ar.SetError(err)
 			result.Assets = append(result.Assets, ar)
 			failures++
@@ -326,10 +326,11 @@ func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []cl
 		}
 		ar := cob.AssetResult{
 			Name:   ns.Name,
+			Kind:   cob.KindDryRun,
 			Source: ns.Source.URI(),
 			Size:   meta.Size,
 			SHA256: meta.SHA256,
-			Method: "spilled",
+			Method: cob.DryRunPreview,
 		}
 		out.AssetOK(&ar, ns.Source.URI())
 		result.Assets = append(result.Assets, ar)

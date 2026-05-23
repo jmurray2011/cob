@@ -51,8 +51,9 @@ func (p *Publisher) PublishAsset(ctx context.Context, coords *PackageCoordinates
 
 	result := &AssetResult{
 		Name:   name,
+		Kind:   KindTransfer,
 		Source: src.URI(),
-		Method: "spilled",
+		Method: TransferSpilled,
 	}
 
 	// Step 1: Resolve — get metadata (size, possibly hash).
