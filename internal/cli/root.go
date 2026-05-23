@@ -4,6 +4,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jmurray2011/cob/internal/cli/diff"
+	"github.com/jmurray2011/cob/internal/cli/promote"
+	"github.com/jmurray2011/cob/internal/cli/publish"
+	"github.com/jmurray2011/cob/internal/cli/pull"
 	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
@@ -37,9 +40,9 @@ func NewRootCmd(build cliutil.BuildInfo) *cobra.Command {
 	root.PersistentFlags().DurationVar(&cfg.Timeout, "timeout", 0, "Deadline for long-running ops (pull/publish/promote/diff); e.g. 30m. 0 = no deadline (also: COB_TIMEOUT)")
 
 	root.AddCommand(
-		newPublishCmd(cfg),
-		newPullCmd(cfg),
-		newPromoteCmd(cfg),
+		publish.NewCmd(cfg),
+		pull.NewCmd(cfg),
+		promote.NewCmd(cfg),
 		newLsCmd(cfg),
 		newResolveCmd(cfg),
 		diff.NewCmd(cfg),

@@ -13,6 +13,9 @@ import (
 	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 
 	"github.com/jmurray2011/cob/internal/cli/diff"
+	"github.com/jmurray2011/cob/internal/cli/promote"
+	"github.com/jmurray2011/cob/internal/cli/publish"
+	"github.com/jmurray2011/cob/internal/cli/pull"
 	"github.com/jmurray2011/cob/internal/cob"
 
 	"github.com/jmurray2011/cob/internal/cliutil/clitest"
@@ -115,14 +118,14 @@ func TestRunPull(t *testing.T) {
 			return nil, &catypes.ResourceNotFoundException{}
 		}}
 		cfg, _, _ := clitest.UseFake(t, ca)
-		err := runPull(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "", t.TempDir(), "", "", 4)
+		err := pull.Run(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "", t.TempDir(), "", "", 4)
 		clitest.WantExit(t, err, cob.ExitNotFound)
 	})
 
 	t.Run("requested asset not in version", func(t *testing.T) {
 		ca := &clitest.FakeCA{ListAssetsFn: oneAsset("real.bin", 3)}
 		cfg, _, _ := clitest.UseFake(t, ca)
-		err := runPull(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "missing.bin", t.TempDir(), "", "missing.bin", 4)
+		err := pull.Run(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "missing.bin", t.TempDir(), "", "missing.bin", 4)
 		clitest.WantExit(t, err, cob.ExitNotFound)
 	})
 
@@ -135,7 +138,7 @@ func TestRunPull(t *testing.T) {
 		}
 		cfg, _, _ := clitest.UseFake(t, ca)
 		dst := filepath.Join(t.TempDir(), "out.bin")
-		if err := runPull(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "a.bin", dst, "", "a.bin", 4); err != nil {
+		if err := pull.Run(ctx, cfg, "dom/repo/ns/pkg@1.0.0", "a.bin", dst, "", "a.bin", 4); err != nil {
 			t.Fatalf("pull: %v", err)
 		}
 		got, err := os.ReadFile(dst)
@@ -152,7 +155,7 @@ func TestRunPublish(t *testing.T) {
 		// Default DescribePackageVersion reports the version as existing.
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		mf := writeManifest(t)
-		err := runPublish(ctx, cfg, mf, "1.0.0", false, false, true, false, 4)
+		err := publish.Run(ctx, cfg, mf, "1.0.0", false, false, true, false, 4)
 		clitest.WantExit(t, err, cob.ExitConflict)
 	})
 
@@ -161,7 +164,7 @@ func TestRunPublish(t *testing.T) {
 		// dry run must still preview rather than exit with a conflict.
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
 		mf := writeManifest(t)
-		if err := runPublish(ctx, cfg, mf, "1.0.0", false, true, true, false, 4); err != nil {
+		if err := publish.Run(ctx, cfg, mf, "1.0.0", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run with existing version must not error, got %v", err)
 		}
 	})
@@ -179,7 +182,7 @@ func TestRunPublish(t *testing.T) {
 		}
 		cfg, _, _ := clitest.UseFake(t, ca)
 		mf := writeManifest(t)
-		if err := runPublish(ctx, cfg, mf, "1.0.0", false, false, true, false, 4); err != nil {
+		if err := publish.Run(ctx, cfg, mf, "1.0.0", false, false, true, false, 4); err != nil {
 			t.Fatalf("publish: %v", err)
 		}
 		// one real asset + the cob-provenance.json finalizer
@@ -204,7 +207,7 @@ func TestRunPublish(t *testing.T) {
 		}
 		cfg, _, _ := clitest.UseFake(t, ca)
 		mf := writeManifest(t)
-		if err := runPublish(ctx, cfg, mf, "1.0.0", false, false, true, true, 4); err != nil {
+		if err := publish.Run(ctx, cfg, mf, "1.0.0", false, false, true, true, 4); err != nil {
 			t.Fatalf("resume: %v", err)
 		}
 		// payload.txt is already present -> skipped; only cob-provenance.json uploads.
@@ -218,106 +221,12 @@ func TestRunPublish(t *testing.T) {
 			return nil, &catypes.ResourceNotFoundException{}
 		}}
 		cfg, _, _ := clitest.UseFake(t, ca)
-		clitest.WantExit(t, runPublish(ctx, cfg, writeManifest(t), "1.0.0", false, false, true, true, 4), cob.ExitError)
+		clitest.WantExit(t, publish.Run(ctx, cfg, writeManifest(t), "1.0.0", false, false, true, true, 4), cob.ExitError)
 	})
 
 	t.Run("resume and force are mutually exclusive", func(t *testing.T) {
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
-		clitest.WantExit(t, runPublish(ctx, cfg, writeManifest(t), "1.0.0", true, false, true, true, 4), cob.ExitError)
-	})
-}
-
-func TestGatePublish(t *testing.T) {
-	ctx := context.Background()
-	coords := &cob.PackageCoordinates{Domain: "d", Repository: "r", Namespace: "n", Package: "p", Version: "1.0.0"}
-	reg := func(ca *clitest.FakeCA) *cob.Registry { return cob.NewRegistry(&cob.Client{CodeArtifact: ca}) }
-
-	t.Run("fresh version: no gate fires", func(t *testing.T) {
-		present, code, err := gatePublish(ctx, reg(&clitest.FakeCA{}), coords, "", false, false, false)
-		if err != nil || code != cob.ExitOK || present != nil {
-			t.Fatalf("got present=%v code=%d err=%v, want nil/0/nil", present, code, err)
-		}
-	})
-	t.Run("existing version without --force is a conflict", func(t *testing.T) {
-		_, code, err := gatePublish(ctx, reg(&clitest.FakeCA{}), coords, "Published", true, false, false)
-		if code != cob.ExitConflict || err == nil {
-			t.Fatalf("got code=%d err=%v, want ExitConflict + error", code, err)
-		}
-	})
-	t.Run("existing version with --force is allowed (caller deletes)", func(t *testing.T) {
-		_, code, err := gatePublish(ctx, reg(&clitest.FakeCA{}), coords, "Published", true, false, true)
-		if err != nil || code != cob.ExitOK {
-			t.Fatalf("got code=%d err=%v, want ok", code, err)
-		}
-	})
-	t.Run("--resume on missing version errors", func(t *testing.T) {
-		_, code, err := gatePublish(ctx, reg(&clitest.FakeCA{}), coords, "", false, true, false)
-		if code != cob.ExitError || err == nil {
-			t.Fatalf("got code=%d err=%v", code, err)
-		}
-	})
-	t.Run("--resume on Published (not Unfinished) errors", func(t *testing.T) {
-		_, code, err := gatePublish(ctx, reg(&clitest.FakeCA{}), coords, "Published", true, true, false)
-		if code != cob.ExitError || err == nil {
-			t.Fatalf("got code=%d err=%v", code, err)
-		}
-	})
-	t.Run("--resume on Unfinished returns the present map", func(t *testing.T) {
-		present, code, err := gatePublish(ctx, reg(&clitest.FakeCA{ListAssetsFn: oneAsset("a.bin", 5)}),
-			coords, "Unfinished", true, true, false)
-		if err != nil || code != cob.ExitOK {
-			t.Fatalf("got code=%d err=%v", code, err)
-		}
-		if _, ok := present["a.bin"]; !ok {
-			t.Errorf("present = %v, want a.bin", present)
-		}
-	})
-}
-
-func TestGatePromote(t *testing.T) {
-	ctx := context.Background()
-	dest := &cob.PackageCoordinates{Domain: "d", Repository: "prod", Namespace: "n", Package: "p", Version: "1.0.0"}
-	reg := func(ca *clitest.FakeCA) *cob.Registry { return cob.NewRegistry(&cob.Client{CodeArtifact: ca}) }
-
-	t.Run("fresh destination: no gate fires", func(t *testing.T) {
-		present, code, err := gatePromote(ctx, reg(&clitest.FakeCA{}), dest, "prod", "", false, false, false)
-		if err != nil || code != cob.ExitOK || present != nil {
-			t.Fatalf("got present=%v code=%d err=%v", present, code, err)
-		}
-	})
-	t.Run("existing dest without --force is a conflict", func(t *testing.T) {
-		_, code, err := gatePromote(ctx, reg(&clitest.FakeCA{}), dest, "prod", "Published", true, false, false)
-		if code != cob.ExitConflict || err == nil {
-			t.Fatalf("got code=%d err=%v", code, err)
-		}
-	})
-	t.Run("existing dest with --force is allowed", func(t *testing.T) {
-		_, code, err := gatePromote(ctx, reg(&clitest.FakeCA{}), dest, "prod", "Published", true, false, true)
-		if err != nil || code != cob.ExitOK {
-			t.Fatalf("got code=%d err=%v", code, err)
-		}
-	})
-	t.Run("--resume with no dest errors", func(t *testing.T) {
-		_, code, err := gatePromote(ctx, reg(&clitest.FakeCA{}), dest, "prod", "", false, true, false)
-		if code != cob.ExitError || err == nil {
-			t.Fatalf("got code=%d err=%v", code, err)
-		}
-	})
-	t.Run("--resume on Published (not Unfinished) errors", func(t *testing.T) {
-		_, code, err := gatePromote(ctx, reg(&clitest.FakeCA{}), dest, "prod", "Published", true, true, false)
-		if code != cob.ExitError || err == nil {
-			t.Fatalf("got code=%d err=%v", code, err)
-		}
-	})
-	t.Run("--resume on Unfinished returns the present map", func(t *testing.T) {
-		present, code, err := gatePromote(ctx, reg(&clitest.FakeCA{ListAssetsFn: oneAsset("app.bin", 9)}),
-			dest, "prod", "Unfinished", true, true, false)
-		if err != nil || code != cob.ExitOK {
-			t.Fatalf("got code=%d err=%v", code, err)
-		}
-		if _, ok := present["app.bin"]; !ok {
-			t.Errorf("present = %v, want app.bin", present)
-		}
+		clitest.WantExit(t, publish.Run(ctx, cfg, writeManifest(t), "1.0.0", true, false, true, true, 4), cob.ExitError)
 	})
 }
 
@@ -327,13 +236,13 @@ func TestRunPromote(t *testing.T) {
 	t.Run("conflict when destination version exists", func(t *testing.T) {
 		// Default DescribePackageVersion reports the dest version as existing.
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
-		err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, false, 4)
+		err := promote.Run(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, false, 4)
 		clitest.WantExit(t, err, cob.ExitConflict)
 	})
 
 	t.Run("@latest with no source versions -> not found", func(t *testing.T) {
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{}) // ListPackageVersions default: empty
-		err := runPromote(ctx, cfg, "dom/dev/ns/pkg@latest", "", "prod", false, true, false, false, 4)
+		err := promote.Run(ctx, cfg, "dom/dev/ns/pkg@latest", "", "prod", false, true, false, false, 4)
 		clitest.WantExit(t, err, cob.ExitNotFound)
 	})
 
@@ -342,7 +251,7 @@ func TestRunPromote(t *testing.T) {
 		// existing; --dry-run must preview, not exit with a conflict.
 		ca := &clitest.FakeCA{ListAssetsFn: oneAsset("app.bin", 9)}
 		cfg, stdout, _ := clitest.UseFake(t, ca)
-		if err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
+		if err := promote.Run(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run with existing dest must not error, got %v", err)
 		}
 		if !strings.Contains(stdout.String(), "app.bin") {
@@ -365,7 +274,7 @@ func TestRunPromote(t *testing.T) {
 			},
 		}
 		cfg, _, _ := clitest.UseFake(t, ca)
-		if err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4); err != nil {
+		if err := promote.Run(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4); err != nil {
 			t.Fatalf("resume: %v", err)
 		}
 		// app.bin already present -> skipped; only cob-provenance.json publishes.
@@ -379,12 +288,12 @@ func TestRunPromote(t *testing.T) {
 			return nil, &catypes.ResourceNotFoundException{}
 		}}
 		cfg, _, _ := clitest.UseFake(t, ca)
-		clitest.WantExit(t, runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4), cob.ExitError)
+		clitest.WantExit(t, promote.Run(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, false, true, 4), cob.ExitError)
 	})
 
 	t.Run("resume and force are mutually exclusive", func(t *testing.T) {
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
-		clitest.WantExit(t, runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", true, true, false, true, 4), cob.ExitError)
+		clitest.WantExit(t, promote.Run(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", true, true, false, true, 4), cob.ExitError)
 	})
 
 	t.Run("dry-run lists assets and promotes nothing", func(t *testing.T) {
@@ -400,7 +309,7 @@ func TestRunPromote(t *testing.T) {
 			},
 		}
 		cfg, stdout, _ := clitest.UseFake(t, ca)
-		if err := runPromote(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
+		if err := promote.Run(ctx, cfg, "dom/dev/ns/pkg@1.0.0", "", "prod", false, true, true, false, 4); err != nil {
 			t.Fatalf("dry-run: %v", err)
 		}
 		if published != 0 {
@@ -495,81 +404,9 @@ func TestRunDiffLint(t *testing.T) {
 		dir := t.TempDir()
 		mf := clitest.WriteFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./never-existed.txt\n")
-		err := runPublish(ctx, cfg, mf, "1.0.0", false, false, true, false, 4)
+		err := publish.Run(ctx, cfg, mf, "1.0.0", false, false, true, false, 4)
 		clitest.WantExit(t, err, cob.ExitError)
 	})
-}
-
-func TestSelectAssets(t *testing.T) {
-	all := []cob.AssetInfo{{Name: "a.bin"}, {Name: "b.bin"}, {Name: "c.bin"}}
-
-	t.Run("no filter returns everything", func(t *testing.T) {
-		got, un, err := selectAssets(all, "", "")
-		if err != nil || len(got) != 3 || len(un) != 0 {
-			t.Fatalf("got %d assets, unmatched %v, err %v", len(got), un, err)
-		}
-	})
-	t.Run("positional asset", func(t *testing.T) {
-		got, _, err := selectAssets(all, "b.bin", "")
-		if err != nil || len(got) != 1 || got[0].Name != "b.bin" {
-			t.Fatalf("got %+v, err %v", got, err)
-		}
-	})
-	t.Run("positional miss is an error", func(t *testing.T) {
-		if _, _, err := selectAssets(all, "nope.bin", ""); err == nil {
-			t.Fatal("expected a not-found error")
-		}
-	})
-	t.Run("comma filter, trims spaces, reports a miss", func(t *testing.T) {
-		got, un, err := selectAssets(all, "", "a.bin, nope.bin ,c.bin")
-		if err != nil {
-			t.Fatalf("err %v", err)
-		}
-		if len(got) != 2 {
-			t.Errorf("got %d assets, want 2 (a.bin, c.bin)", len(got))
-		}
-		if len(un) != 1 || un[0] != "nope.bin" {
-			t.Errorf("unmatched = %v, want [nope.bin]", un)
-		}
-	})
-	t.Run("comma filter matching nothing is an error", func(t *testing.T) {
-		if _, _, err := selectAssets(all, "", "x,y"); err == nil {
-			t.Fatal("expected an error when nothing matched")
-		}
-	})
-}
-
-func TestReconcilePromotedAssets(t *testing.T) {
-	recorded := []cob.ProvenanceEntry{
-		{Asset: "app.bin", Key: "app", Source: "s3://b/app", SHA256: "old", Origin: &cob.Origin{Type: "s3"}},
-		{Asset: "gone.bin", Key: "gone"}, // recorded but no longer present
-	}
-	results := []*cob.AssetResult{
-		{Name: "app.bin", SHA256: "new", Size: 10},
-		{Name: "extra.bin", SHA256: "x", Size: 5}, // promoted, never recorded
-	}
-	got := reconcilePromotedAssets(recorded, []string{"app.bin", "extra.bin"}, results)
-
-	if len(got) != 2 {
-		t.Fatalf("got %d entries, want exactly the 2 promoted assets", len(got))
-	}
-	// app.bin: hash/size from the actual promote, Origin/Source from the record.
-	if got[0].Asset != "app.bin" || got[0].SHA256 != "new" || got[0].Size != 10 {
-		t.Errorf("app.bin not rebuilt from results: %+v", got[0])
-	}
-	if got[0].Source != "s3://b/app" || got[0].Origin == nil {
-		t.Errorf("app.bin lost recorded Origin/Source: %+v", got[0])
-	}
-	// extra.bin: added out-of-band, still gets an honest entry.
-	if got[1].Asset != "extra.bin" || got[1].SHA256 != "x" {
-		t.Errorf("extra.bin not recorded: %+v", got[1])
-	}
-	// gone.bin: recorded but not promoted -> must not appear.
-	for _, e := range got {
-		if e.Asset == "gone.bin" {
-			t.Error("gone.bin was not promoted; it must not appear in provenance")
-		}
-	}
 }
 
 // helloSHA is sha256("hello") — used by the verify/diff tests against a

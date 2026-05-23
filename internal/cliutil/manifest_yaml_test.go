@@ -1,4 +1,4 @@
-package cli
+package cliutil
 
 import (
 	"strings"
@@ -24,7 +24,7 @@ func TestRenderManifestFromProvenance(t *testing.T) {
 			{Event: "publish", Time: "2026-05-18T00:00:00Z", Actor: cob.Actor{ARN: "arn:aws:sts::1:assumed-role/r/bob"}},
 		},
 	}
-	y, err := renderManifest(mcoords(), prov, nil)
+	y, err := renderManifestYAML(mcoords(), prov, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestRenderManifestInferredNonCob(t *testing.T) {
 		{Name: cob.ProvenanceFile}, // must be excluded
 		{Name: "config.yaml"},
 	}
-	y, err := renderManifest(mcoords(), nil, assets)
+	y, err := renderManifestYAML(mcoords(), nil, assets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,10 +70,10 @@ func TestRenderManifestInferredNonCob(t *testing.T) {
 }
 
 func TestRenderManifestNoSources(t *testing.T) {
-	if _, err := renderManifest(mcoords(), nil, []cob.AssetSummary{{Name: cob.ProvenanceFile}}); err == nil {
+	if _, err := renderManifestYAML(mcoords(), nil, []cob.AssetSummary{{Name: cob.ProvenanceFile}}); err == nil {
 		t.Fatal("only the provenance asset → no sources → must error")
 	}
-	if _, err := renderManifest(mcoords(), nil, nil); err == nil {
+	if _, err := renderManifestYAML(mcoords(), nil, nil); err == nil {
 		t.Fatal("no assets → must error")
 	}
 }
@@ -87,9 +87,9 @@ func TestRenderManifestQuotesUnsafeValues(t *testing.T) {
 		{Key: "evil\n  injected: x", Source: "s3://b/e", Asset: "e"},
 		{Key: "anchorish", Source: "*not-an-alias", Asset: "a"},
 	}}
-	y, err := renderManifest(mcoords(), prov, nil)
+	y, err := renderManifestYAML(mcoords(), prov, nil)
 	if err != nil {
-		t.Fatalf("renderManifest: %v", err)
+		t.Fatalf("renderManifestYAML: %v", err)
 	}
 
 	var doc struct {

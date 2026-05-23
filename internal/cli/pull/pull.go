@@ -1,4 +1,4 @@
-package cli
+package pull
 
 import (
 	"context"
@@ -17,7 +17,11 @@ import (
 	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newPullCmd(cfg *cliutil.Config) *cobra.Command {
+// generatedManifestFile is the manifest cob writes next to assets on a
+// whole-package pull (kept in sync with the cli/manifest_cmd.go constant).
+const generatedManifestFile = "cob-manifest.yaml"
+
+func NewCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagVersion     string
 		flagOutput      string
@@ -40,7 +44,7 @@ func newPullCmd(cfg *cliutil.Config) *cobra.Command {
 			if len(args) > 1 {
 				assetName = args[1]
 			}
-			return runPull(cmd.Context(), cfg, args[0], flagVersion, flagOutput, flagAssets, assetName, flagConcurrency)
+			return Run(cmd.Context(), cfg, args[0], flagVersion, flagOutput, flagAssets, assetName, flagConcurrency)
 		},
 	}
 
@@ -52,7 +56,7 @@ func newPullCmd(cfg *cliutil.Config) *cobra.Command {
 	return cmd
 }
 
-func runPull(ctx context.Context, cfg *cliutil.Config, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
+func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, outputPath, assetsFilter, assetArg string, concurrency int) error {
 	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
@@ -308,7 +312,7 @@ func writePulledManifest(ctx context.Context, client *cob.Client, coords *cob.Pa
 			return
 		}
 	}
-	y, err := manifestYAMLFor(ctx, client, coords)
+	y, err := cliutil.ManifestYAMLFor(ctx, client, coords)
 	if err != nil {
 		out.Warn("could not generate %s: %s", generatedManifestFile, err)
 		return
@@ -327,4 +331,15 @@ func isDir(path string) bool {
 		return false
 	}
 	return info.IsDir()
+}
+
+// firstResultError returns the error message of the first failed asset
+// result, for the partial-failure summary.
+func firstResultError(results []*cob.AssetResult) string {
+	for _, r := range results {
+		if r != nil && r.ErrorMsg != "" {
+			return r.ErrorMsg
+		}
+	}
+	return "asset transfer failed"
 }

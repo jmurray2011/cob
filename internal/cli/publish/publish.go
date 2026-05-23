@@ -1,4 +1,4 @@
-package cli
+package publish
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newPublishCmd(cfg *cliutil.Config) *cobra.Command {
+func NewCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagVersion     string
 		flagForce       bool
@@ -38,7 +38,7 @@ func newPublishCmd(cfg *cliutil.Config) *cobra.Command {
   cob publish ./my-package.yaml --version 2.1.0 --resume`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPublish(cmd.Context(), cfg, args[0], flagVersion, flagForce, flagDryRun, flagYes, flagResume, flagConcurrency)
+			return Run(cmd.Context(), cfg, args[0], flagVersion, flagForce, flagDryRun, flagYes, flagResume, flagConcurrency)
 		},
 	}
 
@@ -52,7 +52,7 @@ func newPublishCmd(cfg *cliutil.Config) *cobra.Command {
 	return cmd
 }
 
-func runPublish(ctx context.Context, cfg *cliutil.Config, manifestPath, versionFlag string, force, dryRun, yes, resume bool, concurrency int) error {
+func Run(ctx context.Context, cfg *cliutil.Config, manifestPath, versionFlag string, force, dryRun, yes, resume bool, concurrency int) error {
 	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
@@ -352,7 +352,7 @@ func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []cl
 // existing version with --force, or an Unfinished version with --resume. For
 // --resume it also returns the assets already in the version (the caller
 // will skip uploading those). exitCode is the code the caller should exit
-// with if err is non-nil. Extracted from runPublish so it can be unit-tested
+// with if err is non-nil. Extracted from Run so it can be unit-tested
 // without the full publish path.
 func gatePublish(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates,
 	status string, exists, resume, force bool) (present map[string]cob.AssetSummary, exitCode int, err error) {

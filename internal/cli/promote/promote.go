@@ -1,4 +1,4 @@
-package cli
+package promote
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"github.com/jmurray2011/cob/internal/cliutil"
 )
 
-func newPromoteCmd(cfg *cliutil.Config) *cobra.Command {
+func NewCmd(cfg *cliutil.Config) *cobra.Command {
 	var (
 		flagVersion     string
 		flagTo          string
@@ -39,7 +39,7 @@ func newPromoteCmd(cfg *cliutil.Config) *cobra.Command {
   cob promote acme/dev/tools/my-app@2.1.0 --to staging --resume`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPromote(cmd.Context(), cfg, args[0], flagVersion, flagTo, flagForce, flagYes, flagDryRun, flagResume, flagConcurrency)
+			return Run(cmd.Context(), cfg, args[0], flagVersion, flagTo, flagForce, flagYes, flagDryRun, flagResume, flagConcurrency)
 		},
 	}
 
@@ -55,7 +55,7 @@ func newPromoteCmd(cfg *cliutil.Config) *cobra.Command {
 	return cmd
 }
 
-func runPromote(ctx context.Context, cfg *cliutil.Config, target, versionFlag, toRepo string, force, yes, dryRun, resume bool, concurrency int) error {
+func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, toRepo string, force, yes, dryRun, resume bool, concurrency int) error {
 	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
@@ -450,4 +450,15 @@ func gatePromote(ctx context.Context, registry *cob.Registry, destCoords *cob.Pa
 			destCoords.Version, toRepo)
 	}
 	return present, cob.ExitOK, nil
+}
+
+// firstResultError returns the error message of the first failed asset
+// result, for the partial-failure summary.
+func firstResultError(results []*cob.AssetResult) string {
+	for _, r := range results {
+		if r != nil && r.ErrorMsg != "" {
+			return r.ErrorMsg
+		}
+	}
+	return "asset transfer failed"
 }
