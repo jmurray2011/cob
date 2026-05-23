@@ -24,14 +24,26 @@ const ProvenanceSchema = 2
 
 // maxProvenanceBytes caps the provenance document cob will read. It grows
 // with the dependency closure and is upstream-controlled, so the read is
-// bounded rather than unbounded.
+// bounded rather than unbounded. The same ceiling applies on the write
+// path (Marshal) so a downstream cob cannot publish a document its own
+// readers would refuse.
 const maxProvenanceBytes = 64 << 20 // 64 MiB
+
+// maxUpstreamDepth caps how many levels of UpstreamProvenance embedding
+// cob will preserve when building a new document. A direct ca:// source
+// brings depth-1; that source's own upstreams ride along to a total of
+// maxUpstreamDepth from the new root. Anything past that is dropped to
+// UpstreamTruncated — the chain coords on each cut Origin still let a
+// reader walk further via cob log if they want, so no history is lost,
+// just inlined.
+const maxUpstreamDepth = 8
 
 // Upstream status values for a ca:// origin.
 const (
-	UpstreamEmbedded = "embedded"          // upstream cob-provenance.json inlined
-	UpstreamNoProv   = "no-cob-provenance" // upstream exists but not cob-published
-	UpstreamMissing  = "missing"           // recorded coords no longer resolve (re-check time)
+	UpstreamEmbedded  = "embedded"          // upstream cob-provenance.json inlined
+	UpstreamNoProv    = "no-cob-provenance" // upstream exists but not cob-published
+	UpstreamMissing   = "missing"           // recorded coords no longer resolve (re-check time)
+	UpstreamTruncated = "depth-truncated"   // chain cut to keep document bounded; re-fetch via cob log
 )
 
 // Provenance is the cob-provenance.json document. assets is invariant across
@@ -125,17 +137,53 @@ func (p *Provenance) OriginByAsset() map[string]*Origin {
 }
 
 // Marshal renders the document as indented JSON with the current schema
-// stamped. It does not mutate the receiver. MarshalIndent of a fixed,
-// always-JSON-clean struct shape cannot fail in practice; if it ever did,
-// silently publishing empty provenance would be the worst outcome — panic.
-func (p *Provenance) Marshal() []byte {
+// stamped. It does not mutate the receiver. Two failure modes the caller
+// must handle: the encoder rejects the value (in practice unreachable for
+// the fixed struct shape, but reachable in principle once Origin carries
+// arbitrary upstream-supplied content), or the resulting document exceeds
+// maxProvenanceBytes — typically the depth-cap escape hatch wasn't enough
+// for a fan-out-heavy upstream. PruneUpstreamProvenance gives callers a
+// way to retry with the upstream tree dropped.
+func (p *Provenance) Marshal() ([]byte, error) {
 	doc := *p
 	doc.Schema = ProvenanceSchema
 	b, err := json.MarshalIndent(&doc, "", "  ")
 	if err != nil {
-		panic(fmt.Sprintf("cob: marshaling provenance failed: %v", err))
+		return nil, fmt.Errorf("marshaling provenance: %w", err)
 	}
-	return append(b, '\n')
+	b = append(b, '\n')
+	if int64(len(b)) > maxProvenanceBytes {
+		return nil, fmt.Errorf("provenance document is %d bytes, exceeds the %d-byte limit", len(b), maxProvenanceBytes)
+	}
+	return b, nil
+}
+
+// PruneUpstreamProvenance walks p in place and limits how deeply
+// UpstreamProvenance nests below it. remaining is the number of further
+// embedding levels permitted; once 0, any ca-origin asset with an inlined
+// upstream is rewritten to UpstreamTruncated with the upstream document
+// dropped. Coordinates on the Origin survive — a reader can still walk
+// the chain via cob log if they need depth past what's inlined.
+//
+// Called by CASource.Origin on every fetched upstream so the document a
+// downstream publishes can never grow without bound, and by the publish
+// finalize fallback when marshaling still trips the size cap.
+func PruneUpstreamProvenance(p *Provenance, remaining int) {
+	if p == nil {
+		return
+	}
+	for i := range p.Assets {
+		o := p.Assets[i].Origin
+		if o == nil || o.UpstreamProvenance == nil {
+			continue
+		}
+		if remaining <= 0 {
+			o.UpstreamProvenance = nil
+			o.UpstreamStatus = UpstreamTruncated
+			continue
+		}
+		PruneUpstreamProvenance(o.UpstreamProvenance, remaining-1)
+	}
 }
 
 // now is the time source for provenance stamps. It is a package var so a

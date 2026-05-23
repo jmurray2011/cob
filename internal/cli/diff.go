@@ -596,7 +596,21 @@ func runDiffDir(ctx context.Context, cfg *Config, out *output.Writer, dirPath, c
 		if a.Name == cob.ProvenanceFile {
 			continue
 		}
-		localPath := filepath.Join(dirPath, a.Name)
+		// CodeArtifact asset names are server-controlled and path-like; route
+		// through the same safeJoin defense as pull so a malicious or
+		// malformed name (../../etc/passwd, an absolute path, a symlinked
+		// component) can't pull hashes of files outside dirPath into the
+		// comparison report.
+		localPath, joinErr := safeJoin(dirPath, a.Name)
+		if joinErr != nil {
+			opErrors++
+			ar := cob.AssetResult{Name: a.Name, Source: filepath.Join(dirPath, a.Name)}
+			ar.SetError(joinErr)
+			renderDiffSingleFail(out, a.Name, "unsafe asset name", nameWidth,
+				[]diffDetail{{"error", joinErr.Error()}}, termWidth)
+			result.Assets = append(result.Assets, ar)
+			continue
+		}
 		ar := cob.AssetResult{Name: a.Name, Source: localPath}
 
 		info, statErr := os.Stat(localPath)

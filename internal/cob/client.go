@@ -86,7 +86,11 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 	}
 
 	if opts.TmpDir != "" {
-		if err := os.MkdirAll(opts.TmpDir, 0o755); err != nil {
+		// 0o700 — files inside are os.CreateTemp's default 0o600 so contents
+		// are already private, but on a shared host the dir itself leaks
+		// operational metadata (how often cob runs, when, against which
+		// versions) to any local user who can ls it. Match ~/.aws/.
+		if err := os.MkdirAll(opts.TmpDir, 0o700); err != nil {
 			return nil, fmt.Errorf("creating temp directory %s: %w", opts.TmpDir, err)
 		}
 	}

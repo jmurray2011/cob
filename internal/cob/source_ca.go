@@ -134,12 +134,19 @@ func (c *CASource) Origin(ctx context.Context) (*Origin, error) {
 	// direct ca:// source; deep history rides along inside it. An upstream
 	// without provenance (non-cob / pre-provenance publisher) is recorded
 	// honestly rather than treated as an error.
+	//
+	// PruneUpstreamProvenance caps the embedded chain at maxUpstreamDepth
+	// counting from the new root: this source's `up` is depth 1, so we
+	// permit maxUpstreamDepth-1 further levels below it. Deeper history
+	// stays reachable via cob log but doesn't balloon the document we're
+	// about to publish.
 	up, err := FetchProvenance(ctx, c.client, &PackageCoordinates{
 		Domain: c.domain, Repository: c.repo, Namespace: c.namespace,
 		Package: c.pkg, Version: c.version,
 	})
 	switch {
 	case err == nil && up != nil:
+		PruneUpstreamProvenance(up, maxUpstreamDepth-1)
 		o.UpstreamStatus = UpstreamEmbedded
 		o.UpstreamProvenance = up
 	default:

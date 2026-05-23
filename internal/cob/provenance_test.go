@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,7 +44,10 @@ func sampleProv() *Provenance {
 
 func TestProvenanceV2RoundTrip(t *testing.T) {
 	p := sampleProv()
-	raw := p.Marshal()
+	raw, err := p.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
 	if p.Schema != 0 {
 		t.Errorf("Marshal must not mutate the receiver, Schema became %d", p.Schema)
 	}
@@ -68,7 +73,10 @@ func TestProvenanceV2RoundTrip(t *testing.T) {
 
 func TestFetchProvenanceV2(t *testing.T) {
 	ctx := context.Background()
-	doc := sampleProv().Marshal()
+	doc, err := sampleProv().Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
 
 	t.Run("present", func(t *testing.T) {
 		ca := &fakeCA{getAssetFn: func(in *codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
@@ -118,7 +126,10 @@ func TestBytesSource(t *testing.T) {
 // an upstream without provenance is recorded honestly, not as an error.
 func TestCASourceOriginRecursive(t *testing.T) {
 	ctx := context.Background()
-	upstream := (&Provenance{Package: "tools/lib", Chain: []ProvenanceEvent{{Event: "publish"}}}).Marshal()
+	upstream, err := (&Provenance{Package: "tools/lib", Chain: []ProvenanceEvent{{Event: "publish"}}}).Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
 
 	t.Run("embedded", func(t *testing.T) {
 		ca := &fakeCA{getAssetFn: func(*codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
@@ -150,4 +161,103 @@ func TestCASourceOriginRecursive(t *testing.T) {
 			t.Fatalf("want no-cob-provenance, got status=%q prov=%+v err=%v", o.UpstreamStatus, o.UpstreamProvenance, err)
 		}
 	})
+}
+
+// makeChainedProv builds a Provenance with depth levels of UpstreamProvenance
+// nested under a single ca-origin asset, for exercising the depth cap.
+func makeChainedProv(depth int) *Provenance {
+	root := &Provenance{Package: "root", Assets: []ProvenanceEntry{{
+		Key: "a", Asset: "a.bin", Origin: &Origin{Type: "ca", UpstreamStatus: UpstreamEmbedded},
+	}}}
+	cur := root.Assets[0].Origin
+	for i := 0; i < depth; i++ {
+		next := &Provenance{Package: fmt.Sprintf("up-%d", i), Assets: []ProvenanceEntry{{
+			Key: "a", Asset: "a.bin", Origin: &Origin{Type: "ca", UpstreamStatus: UpstreamEmbedded},
+		}}}
+		cur.UpstreamProvenance = next
+		cur = next.Assets[0].Origin
+	}
+	return root
+}
+
+// chainDepth counts how many UpstreamProvenance levels are reachable from p's
+// first asset's origin — mirrors makeChainedProv so tests can verify pruning.
+func chainDepth(p *Provenance) int {
+	d := 0
+	if p == nil || len(p.Assets) == 0 || p.Assets[0].Origin == nil {
+		return 0
+	}
+	o := p.Assets[0].Origin
+	for o.UpstreamProvenance != nil && len(o.UpstreamProvenance.Assets) > 0 {
+		d++
+		next := o.UpstreamProvenance.Assets[0].Origin
+		if next == nil {
+			break
+		}
+		o = next
+	}
+	return d
+}
+
+func TestPruneUpstreamProvenanceCapsDepth(t *testing.T) {
+	// remaining=0 must drop the immediate UpstreamProvenance and flip status.
+	p := makeChainedProv(3)
+	PruneUpstreamProvenance(p, 0)
+	if chainDepth(p) != 0 {
+		t.Errorf("remaining=0 should drop all upstreams; depth=%d", chainDepth(p))
+	}
+	if p.Assets[0].Origin.UpstreamStatus != UpstreamTruncated {
+		t.Errorf("cut origin must record UpstreamTruncated, got %q", p.Assets[0].Origin.UpstreamStatus)
+	}
+
+	// remaining=2 keeps the first two levels and truncates at the third.
+	p = makeChainedProv(5)
+	PruneUpstreamProvenance(p, 2)
+	if got := chainDepth(p); got != 2 {
+		t.Errorf("remaining=2 should keep 2 levels; depth=%d", got)
+	}
+	// The last-kept origin should now report Truncated where its upstream was.
+	cur := p.Assets[0].Origin
+	for i := 0; i < 2; i++ {
+		cur = cur.UpstreamProvenance.Assets[0].Origin
+	}
+	if cur.UpstreamStatus != UpstreamTruncated || cur.UpstreamProvenance != nil {
+		t.Errorf("truncation marker missing at depth 2: status=%q upstream=%v", cur.UpstreamStatus, cur.UpstreamProvenance)
+	}
+}
+
+func TestMarshalRejectsOversize(t *testing.T) {
+	// Stuff a giant string into a free-form field so the encoded document
+	// blows past maxProvenanceBytes — exercises the write-side cap that
+	// keeps a downstream cob from publishing a doc its readers would refuse.
+	big := strings.Repeat("x", maxProvenanceBytes+1)
+	p := &Provenance{Package: big}
+	if _, err := p.Marshal(); err == nil {
+		t.Fatal("Marshal should refuse a document past maxProvenanceBytes")
+	} else if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error should mention the limit, got %v", err)
+	}
+}
+
+func TestCASourceOriginAppliesDepthCap(t *testing.T) {
+	// Stage an upstream whose own embedded tree already extends maxUpstreamDepth
+	// levels. CASource.Origin must prune it to fit under the new root so the
+	// total depth never exceeds maxUpstreamDepth.
+	deep := makeChainedProv(maxUpstreamDepth + 4)
+	bytes, err := deep.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	ca := &fakeCA{getAssetFn: func(*codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
+		return &codeartifact.GetPackageVersionAssetOutput{Asset: io.NopCloser(strings.NewReader(string(bytes)))}, nil
+	}}
+	src, _ := NewCASource(ca, "ca://acme/dev/tools/lib@2.0.0/lib.deb")
+	o, err := src.Origin(context.Background())
+	if err != nil || o == nil || o.UpstreamProvenance == nil {
+		t.Fatalf("origin: o=%+v err=%v", o, err)
+	}
+	// o.UpstreamProvenance is depth 1 from the new root; remaining-1 = maxUpstreamDepth-1.
+	if got := chainDepth(o.UpstreamProvenance); got > maxUpstreamDepth-1 {
+		t.Errorf("CASource.Origin must cap embedded chain to maxUpstreamDepth-1 (%d); depth=%d", maxUpstreamDepth-1, got)
+	}
 }

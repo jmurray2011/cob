@@ -743,6 +743,38 @@ func TestRunDiff(t *testing.T) {
 			t.Errorf("error should call out the directory-without-coords case:\n%s", stderr.String())
 		}
 	})
+
+	t.Run("dir: server-supplied traversal-shaped asset name is rejected, never hashed", func(t *testing.T) {
+		// CodeArtifact asset names are path-like and server-controlled. A
+		// "../../etc/passwd"-style name must be rejected by safeJoin
+		// rather than stat'd/hashed under the user-chosen directory. Stage
+		// a real file outside the dir at exactly the path the traversal
+		// would resolve to, so a regression (raw filepath.Join) would
+		// actually succeed at hashing it — the test then fails because
+		// the row should be an op-error, not a match.
+		outsideDir := t.TempDir()
+		writeFile(t, outsideDir, "secret.bin", "leaked")
+		dir := filepath.Join(outsideDir, "scope")
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		traversalName := "../secret.bin"
+		cfg, stdout, _ := useFake(t, &fakeCA{
+			listAssetsFn: publishedAsset(traversalName, 6, helloSHA),
+		})
+		err := runDiff(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false, false)
+		// op-error path: exit 1 (not 0/4) and the row carries the safeJoin reason.
+		wantExit(t, err, cob.ExitError)
+		out := stdout.String()
+		if !strings.Contains(out, "unsafe asset name") {
+			t.Errorf("expected diff to reject the traversal-shaped name:\n%s", out)
+		}
+		// Summary must reflect "1 could not be checked, 0 matched" — a regression
+		// that hashed the outside-the-dir file would land it as a 1-matched row.
+		if !strings.Contains(out, "1 could not be checked") || !strings.Contains(out, "(0 matched)") {
+			t.Errorf("traversal name must NOT be hashed; summary should report op-error not match:\n%s", out)
+		}
+	})
 }
 
 // oneAsset returns a listAssetsFn that reports a single named asset with the

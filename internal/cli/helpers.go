@@ -217,7 +217,25 @@ func confirmAction(ctx context.Context, yes bool, prompt string) (bool, error) {
 func finalizeProvenance(ctx context.Context, publisher *cob.Publisher, coords *cob.PackageCoordinates,
 	prov *cob.Provenance, out *output.Writer, cmdResult *cob.CommandResult, start time.Time, failureHint string) error {
 
-	provSrc := cob.NewBytesSource(cob.ProvenanceFile, prov.Marshal())
+	provBytes, err := prov.Marshal()
+	if err != nil {
+		// Marshal only fails today on size — the depth cap caught most of
+		// it, but a fan-out-heavy upstream can still tip over. Drop every
+		// inlined upstream and retry; the chain coords on each Origin
+		// survive, so the trail isn't lost, just no longer self-contained.
+		out.Warn("provenance too large to embed upstream chains (%v); retrying with them dropped", err)
+		cob.PruneUpstreamProvenance(prov, 0)
+		provBytes, err = prov.Marshal()
+		if err != nil {
+			cmdResult.DurationMs = time.Since(start).Milliseconds()
+			cmdResult.Status = "error"
+			cmdResult.Error = err.Error()
+			out.Error("%s\n  %s", err, failureHint)
+			out.CommandResult(cmdResult)
+			return &ExitError{Code: cob.ExitError}
+		}
+	}
+	provSrc := cob.NewBytesSource(cob.ProvenanceFile, provBytes)
 	out.AssetStart(cob.ProvenanceFile, "", 0)
 	par, err := publisher.PublishAsset(ctx, coords, cob.ProvenanceFile, provSrc, false)
 	if err != nil {
