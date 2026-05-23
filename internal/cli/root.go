@@ -6,9 +6,12 @@ import (
 
 // NewRootCmd creates the top-level cob command. It owns the per-process
 // *Config; subcommand constructors close over it so a run* function reads
-// configuration through an argument rather than a package global.
-func NewRootCmd(version string) *cobra.Command {
-	cfg := &Config{Version: version}
+// configuration through an argument rather than a package global. The
+// BuildInfo flows into both Config.Version (a plain string for chain
+// stamping) and Config.Build (the structured shape `cob version --json`
+// emits).
+func NewRootCmd(build BuildInfo) *cobra.Command {
+	cfg := &Config{Version: build.Version, Build: build}
 
 	root := &cobra.Command{
 		Use:           "cob",
@@ -41,8 +44,11 @@ func NewRootCmd(version string) *cobra.Command {
 		newRmCmd(cfg),
 		newLogCmd(cfg),
 		newInitCmd(cfg),
+		newVersionCmd(cfg),
 	)
 
-	root.Version = version
+	// --version prints the same parenthesized "v (commit, go, time)" line
+	// the version subcommand emits in human mode, so the two paths agree.
+	root.Version = build.HumanString()
 	return root
 }

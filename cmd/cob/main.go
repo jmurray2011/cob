@@ -15,42 +15,34 @@ import (
 
 var version = "dev"
 
-// resolveBuildVersion returns a version string, enriched (when cob was built
-// without an explicit -ldflags version) with the VCS revision/time and Go
-// version that the toolchain embeds.
-func resolveBuildVersion() string {
+// resolveBuildInfo returns the structured build metadata cob carries: the
+// version string (from -ldflags or VCS), the VCS revision/time the
+// toolchain embeds, and the Go runtime. NewRootCmd renders this both as
+// cobra's --version line and as `cob version --json` for CI consumers.
+func resolveBuildInfo() cli.BuildInfo {
 	info, ok := debug.ReadBuildInfo()
 	v := version
 	if v == "dev" && ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
 		v = info.Main.Version
 	}
+	bi := cli.BuildInfo{Version: v}
 	if !ok {
-		return v
+		return bi
 	}
-	var rev, t string
+	bi.Go = info.GoVersion
 	for _, s := range info.Settings {
 		switch s.Key {
 		case "vcs.revision":
 			if len(s.Value) > 12 {
-				rev = s.Value[:12]
+				bi.Commit = s.Value[:12]
 			} else {
-				rev = s.Value
+				bi.Commit = s.Value
 			}
 		case "vcs.time":
-			t = s.Value
+			bi.Time = s.Value
 		}
 	}
-	extra := info.GoVersion
-	if rev != "" {
-		extra = rev + ", " + extra
-	}
-	if t != "" {
-		extra += ", " + t
-	}
-	if extra != "" {
-		return v + " (" + extra + ")"
-	}
-	return v
+	return bi
 }
 
 func main() {
@@ -66,7 +58,7 @@ func main() {
 		stop()
 	}()
 
-	root := cli.NewRootCmd(resolveBuildVersion())
+	root := cli.NewRootCmd(resolveBuildInfo())
 	if err := root.ExecuteContext(ctx); err != nil {
 		// ExitError already had its message emitted by the command layer;
 		// just carry the code out. Anything else is unexpected — print it.

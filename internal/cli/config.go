@@ -24,8 +24,12 @@ type Config struct {
 	// scriptable output without the JSON envelope. Set by --no-tui or
 	// COB_TUI=0.
 	NoTUI bool
-	// Version is the cob build version, recorded into provenance documents.
+	// Version is the cob build version string, recorded into provenance
+	// documents and surfaced via `cob --version`. For richer structured
+	// build metadata (commit, time, toolchain) see Build, which the
+	// version subcommand renders as JSON.
 	Version string
+	Build   BuildInfo
 }
 
 // applyEnvFallbacks merges COB_* env vars into cfg for any persistent flag
