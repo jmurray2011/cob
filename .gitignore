@@ -2,3 +2,16 @@
 /cob
 /dist/
 *.exe
+
+# Go test/build droppings
+*.test
+*.prof
+coverage.out
+coverage.txt
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
