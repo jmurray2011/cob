@@ -272,14 +272,23 @@ Flags: `--minimal`
 
 ### validate
 
-Checks a manifest **offline** -- no AWS calls. Schema, variable
-resolvability, source-URI syntax, and local-file existence. Good for
-pre-commit / CI lint stages.
+Offline check of a manifest -- no AWS calls. Verifies schema, variable
+resolvability, and source-URI syntax. For **local file** sources, also
+asserts existence and that the path is a regular file. For **remote
+sources** (`s3://`, `ca://`), validate is **syntax-only** -- it never
+dereferences them. The output labels every line accordingly so you can
+see exactly what was checked: `(42.0 MB)` for verified-local,
+`(remote, syntax only)` for unverified-remote.
 
 ```bash
 cob validate my-package.yaml
 cob validate my-package.yaml --version 2.1.0   # also resolves ${VERSION}
 ```
+
+For byte integrity against a published version, run [`cob verify`](#verify)
+against the manifest -- it can compare published SHA-256s, fetch and
+hash sources with `--deep`, etc. Validate intentionally stays offline so
+it's safe in pre-commit / CI lint stages without credentials.
 
 Flags: `--version` (optional)
 

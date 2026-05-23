@@ -12,56 +12,73 @@ import (
 // liveRenderer drives a bubbletea program that paints a multi-row
 // progress view in place. It implements the renderer interface by
 // translating each event into a tea.Msg and dispatching to the running
-// program. The program runs in its own goroutine; Close sends a quit
-// message and waits for it to exit so subsequent terminal output isn't
-// interleaved with a still-painting TUI.
+// program.
+//
+// Lazy start: the bubbletea program is not launched until the first
+// asset event arrives. Commands that never emit asset events (validate,
+// log, ls, tree, …) leave the renderer dormant, and their Header /
+// Plain / Summary writes go to stdout cleanly — without an empty TUI
+// painting blank rows underneath and racing with each write.
 //
 // On TERM=dumb or similar degraded terminals, tea.Program falls back to
 // minimal output rather than failing — the renderer therefore stays
 // safe to install even when terminal capabilities are uncertain.
 type liveRenderer struct {
-	program *tea.Program
+	out io.Writer
+
+	startOnce sync.Once
+	program   *tea.Program // nil until ensureStarted runs
 
 	doneOnce sync.Once
 	done     chan struct{}
 	runErr   error
 }
 
-// newLiveRenderer builds a bubbletea program writing to out and starts it
-// in the background. The Mode argument is informational only — by the
-// time we're constructing this, the picker has already decided it's
-// appropriate.
+// newLiveRenderer returns a dormant renderer. The bubbletea program
+// starts lazily on the first asset event.
 func newLiveRenderer(out io.Writer) *liveRenderer {
-	m := newLiveModel()
-	prog := tea.NewProgram(
-		m,
-		tea.WithOutput(out),
-		// We deliberately do NOT use WithAltScreen — operators want the
-		// run to remain in their scrollback after exit; the inline mode
-		// scrolls naturally with the rest of the shell.
-		tea.WithoutSignalHandler(), // cob's main wires its own ctx cancellation
-	)
-	lr := &liveRenderer{program: prog, done: make(chan struct{})}
-	go func() {
-		defer close(lr.done)
-		_, lr.runErr = prog.Run()
-	}()
-	return lr
+	return &liveRenderer{out: out}
+}
+
+// ensureStarted spins up the bubbletea program on demand. Idempotent;
+// subsequent calls are no-ops. The program writes to lr.out and runs in
+// its own goroutine. Mode-related options (no alt-screen, no signal
+// handler) are documented near their flags below.
+func (l *liveRenderer) ensureStarted() {
+	l.startOnce.Do(func() {
+		m := newLiveModel()
+		l.program = tea.NewProgram(
+			m,
+			tea.WithOutput(l.out),
+			// Inline (no WithAltScreen): operators want the final view
+			// to remain in their scrollback after exit.
+			tea.WithoutSignalHandler(), // cob's main wires its own ctx cancellation
+		)
+		l.done = make(chan struct{})
+		go func() {
+			defer close(l.done)
+			_, l.runErr = l.program.Run()
+		}()
+	})
 }
 
 func (l *liveRenderer) AssetsExpected(count int, totalBytes int64) {
+	l.ensureStarted()
 	l.program.Send(assetsExpectedMsg{count: count, totalBytes: totalBytes})
 }
 
 func (l *liveRenderer) AssetStart(name, sourceURI string, size int64) {
+	l.ensureStarted()
 	l.program.Send(assetStartMsg{name: name, sourceURI: sourceURI, size: size})
 }
 
 func (l *liveRenderer) AssetProgress(name string, delta int64) {
+	l.ensureStarted()
 	l.program.Send(assetProgressMsg{name: name, delta: delta})
 }
 
 func (l *liveRenderer) AssetOK(r *cob.AssetResult, sourceURI string) {
+	l.ensureStarted()
 	l.program.Send(assetDoneMsg{
 		name:       r.Name,
 		sourceURI:  sourceURI,
@@ -73,20 +90,25 @@ func (l *liveRenderer) AssetOK(r *cob.AssetResult, sourceURI string) {
 }
 
 func (l *liveRenderer) AssetFail(name, sourceURI string, err error) {
+	l.ensureStarted()
 	l.program.Send(assetFailMsg{name: name, sourceURI: sourceURI, err: err})
 }
 
 func (l *liveRenderer) AssetSkipped(name string) {
+	l.ensureStarted()
 	l.program.Send(assetSkipMsg{name: name})
 }
 
-// Close sends a Quit to the program and waits for it to exit. Idempotent:
-// repeat calls return immediately once the program is gone. Without this
-// wait, subsequent terminal writes (the command's Summary line, the next
-// shell prompt) could appear before bubbletea has finished its final
-// View paint.
+// Close sends a Quit to the program (if it ever started) and waits for
+// it to exit. Idempotent. A no-op when the renderer stayed dormant.
+// Without the wait, subsequent terminal writes (the command's Summary
+// line, the next shell prompt) could appear before bubbletea finishes
+// its final View paint.
 func (l *liveRenderer) Close() {
 	l.doneOnce.Do(func() {
+		if l.program == nil {
+			return // dormant — nothing to tear down
+		}
 		l.program.Send(quitMsg{})
 		<-l.done
 	})

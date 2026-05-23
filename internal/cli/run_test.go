@@ -410,14 +410,61 @@ func TestRunPromote(t *testing.T) {
 }
 
 func TestRunValidate(t *testing.T) {
-	t.Run("valid manifest", func(t *testing.T) {
-		cfg, _, _ := useFake(t, &fakeCA{})
+	t.Run("local manifest renders file existence + size", func(t *testing.T) {
+		cfg, stdout, _ := useFake(t, &fakeCA{})
 		dir := t.TempDir()
-		writeFile(t, dir, "x.txt", "data")
+		writeFile(t, dir, "x.txt", "data") // 4 bytes
 		mf := writeFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x.txt\n")
 		if err := runValidate(cfg, mf, "1.0.0"); err != nil {
 			t.Fatalf("validate: %v", err)
 		}
+		out := stdout.String()
+		// Local source line shows the file size — actual measurement,
+		// not the old misleading "0 B 0ms" stub.
+		if !strings.Contains(out, "✓ a") || !strings.Contains(out, "(4 B)") {
+			t.Errorf("local file line missing or wrong:\n%s", out)
+		}
+		// Summary says what was actually verified.
+		if !strings.Contains(out, "1 local files verified to exist") {
+			t.Errorf("summary should distinguish local vs remote:\n%s", out)
+		}
+	})
+
+	t.Run("remote-only manifest renders syntax-only and explains the gap", func(t *testing.T) {
+		// Regression for: validate against a manifest of s3:// sources
+		// said "✓" with no context — operators interpreted that as "the
+		// referenced bytes are fine" when validate hadn't touched them.
+		cfg, stdout, _ := useFake(t, &fakeCA{})
+		dir := t.TempDir()
+		mf := writeFile(t, dir, "m.yaml",
+			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  app: s3://bucket/app.bin\n")
+		if err := runValidate(cfg, mf, "1.0.0"); err != nil {
+			t.Fatalf("validate remote: %v", err)
+		}
+		out := stdout.String()
+		if !strings.Contains(out, "(remote, syntax only)") {
+			t.Errorf("remote source should be labelled syntax-only:\n%s", out)
+		}
+		if !strings.Contains(out, "use `cob verify`") {
+			t.Errorf("summary should point operators at `cob verify` for byte integrity:\n%s", out)
+		}
+		// "0 B" alone (without a size unit qualifier elsewhere) was the
+		// old misleading rendering. Today the line for a remote source
+		// has no fake size at all.
+		if strings.Contains(out, "0 B") || strings.Contains(out, "0ms") {
+			t.Errorf("validate must not fabricate size/duration for remote sources:\n%s", out)
+		}
+	})
+
+	t.Run("missing local file is flagged", func(t *testing.T) {
+		// The case that motivated the fix: a user with a manifest of
+		// local sources deletes a file. Validate must catch it.
+		cfg, _, _ := useFake(t, &fakeCA{})
+		dir := t.TempDir()
+		mf := writeFile(t, dir, "m.yaml",
+			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./missing.txt\n")
+		err := runValidate(cfg, mf, "1.0.0")
+		wantExit(t, err, cob.ExitError)
 	})
 
 	t.Run("reserved asset name cob-provenance.json rejected", func(t *testing.T) {

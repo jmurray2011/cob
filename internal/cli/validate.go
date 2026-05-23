@@ -9,6 +9,7 @@ import (
 
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/manifest"
+	"github.com/jmurray2011/cob/internal/output"
 )
 
 func newValidateCmd(cfg *Config) *cobra.Command {
@@ -18,8 +19,12 @@ func newValidateCmd(cfg *Config) *cobra.Command {
 		Use:   "validate <manifest>",
 		Short: "Check a manifest offline (no AWS calls)",
 		Long: "Validates manifest schema, variable resolvability, and source URI " +
-			"syntax without contacting AWS. Local file sources are checked for " +
-			"existence. Designed for pre-commit and CI lint stages.",
+			"syntax — no AWS calls. Local file sources are checked for " +
+			"existence and that they're regular files; remote sources " +
+			"(s3:// and ca://) are syntax-only — validate never " +
+			"dereferences them. For end-to-end byte verification against a " +
+			"published version, use `cob verify`. Designed for pre-commit " +
+			"and CI lint stages.",
 		Example: `  cob validate ./my-package.yaml
   cob validate ./my-package.yaml --version 2.1.0`,
 		Args: cobra.ExactArgs(1),
@@ -62,25 +67,25 @@ func runValidate(cfg *Config, manifestPath, versionFlag string) error {
 		Status:     "ok",
 	}
 
-	var failures int
+	var failures, localOK, remoteOK int
 	byAsset := make(map[string]string, len(m.Sources)) // stored name -> manifest key
 	for _, s := range m.Sources {
-		ar := cob.AssetResult{Name: s.Name, Source: s.URI, Method: "ok"}
+		ar := cob.AssetResult{Name: s.Name, Source: s.URI, Method: "syntax"}
 
 		resolved, err := manifest.ExpandURI(s.URI, version)
 		if err != nil {
 			ar.SetError(err)
-			out.AssetFail(s.Name, s.URI, err)
+			out.Plain("  ✗ %s  %s", s.Name, err)
 			failures++
 			result.Assets = append(result.Assets, ar)
 			continue
 		}
 		ar.Source = resolved
 
-		asset, size, err := validateSourceURI(resolved, m.Dir)
+		asset, size, kind, err := validateSourceURI(resolved, m.Dir)
 		if err != nil {
 			ar.SetError(err)
-			out.AssetFail(s.Name, resolved, err)
+			out.Plain("  ✗ %s  %s", s.Name, err)
 			failures++
 			result.Assets = append(result.Assets, ar)
 			continue
@@ -89,7 +94,7 @@ func runValidate(cfg *Config, manifestPath, versionFlag string) error {
 		if asset == cob.ProvenanceFile {
 			e := fmt.Errorf("uses the reserved asset name %q (cob writes that as the publish finalizer)", asset)
 			ar.SetError(e)
-			out.AssetFail(s.Name, resolved, e)
+			out.Plain("  ✗ %s  %s", s.Name, e)
 			failures++
 			result.Assets = append(result.Assets, ar)
 			continue
@@ -97,14 +102,33 @@ func runValidate(cfg *Config, manifestPath, versionFlag string) error {
 		if prev, dup := byAsset[asset]; dup {
 			e := fmt.Errorf("collides with source %q: both publish as asset %q", prev, asset)
 			ar.SetError(e)
-			out.AssetFail(s.Name, resolved, e)
+			out.Plain("  ✗ %s  %s", s.Name, e)
 			failures++
 			result.Assets = append(result.Assets, ar)
 			continue
 		}
 		byAsset[asset] = s.Name
 
-		out.AssetOK(&ar, resolved)
+		// Distinct rendering per kind so the user can see *what* validate
+		// actually checked: a local file got its existence + size verified;
+		// a remote URI got nothing but a syntax pass. The current line was
+		// previously rendered through the asset-stream pipeline as
+		// "0 B 0ms ok" — meaningless numbers that implied measurement
+		// where none had happened.
+		switch kind {
+		case uriFile:
+			ar.Method = "exists"
+			localOK++
+			out.Plain("  ✓ %s  %s  (%s)", s.Name, resolved, output.FormatSize(size))
+		case uriS3:
+			ar.Method = "syntax(s3)"
+			remoteOK++
+			out.Plain("  ✓ %s  %s  (remote, syntax only)", s.Name, resolved)
+		case uriCA:
+			ar.Method = "syntax(ca)"
+			remoteOK++
+			out.Plain("  ✓ %s  %s  (remote, syntax only)", s.Name, resolved)
+		}
 		result.Assets = append(result.Assets, ar)
 	}
 
@@ -119,46 +143,64 @@ func runValidate(cfg *Config, manifestPath, versionFlag string) error {
 		out.CommandResult(result)
 		return &ExitError{Code: cob.ExitError}
 	}
-	out.Summary("Valid: %d sources, %d-stage promote pipeline.", len(m.Sources), promoteStageCount(m))
+
+	// Spell out the contract: schema + URI syntax pass, plus what was
+	// actually verified vs not. A user who deleted the asset files but
+	// has a manifest of remote URIs should see why validate didn't flag
+	// it — and what command to use instead.
+	switch {
+	case localOK > 0 && remoteOK > 0:
+		out.Summary("Valid: %d sources schema-OK — %d local files verified to exist, %d remote URIs syntax-only (use `cob verify` for remote integrity). %d-stage promote pipeline.",
+			len(m.Sources), localOK, remoteOK, promoteStageCount(m))
+	case localOK > 0:
+		out.Summary("Valid: %d sources schema-OK — %d local files verified to exist. %d-stage promote pipeline.",
+			len(m.Sources), localOK, promoteStageCount(m))
+	case remoteOK > 0:
+		out.Summary("Valid: %d sources schema-OK — all remote URIs, syntax-only (use `cob verify` against a published version for byte integrity). %d-stage promote pipeline.",
+			len(m.Sources), promoteStageCount(m))
+	default:
+		out.Summary("Valid: %d sources, %d-stage promote pipeline.", len(m.Sources), promoteStageCount(m))
+	}
 	return out.CommandResult(result)
 }
 
 // validateSourceURI checks a (variable-resolved) source URI's syntax without
 // any network call and returns the stored asset name (basename) it would
-// publish as, plus its size. Local files are additionally checked for
-// existence and report their real size; remote sources report 0 because
-// sizing them would need a network call validate deliberately avoids. It
-// shares classifyURI with publish's buildSource, so the two commands agree
-// on which URIs are valid.
-func validateSourceURI(uri, manifestDir string) (string, int64, error) {
+// publish as, its size, and the kind so the renderer can describe exactly
+// what was verified (local existence vs remote syntax-only). For local
+// files, size is the real on-disk size and existence is asserted; for
+// remote sources, size is 0 — sizing them would need a network call that
+// validate deliberately avoids. Shares classifyURI with publish's
+// buildSource, so the two commands agree on which URIs are valid.
+func validateSourceURI(uri, manifestDir string) (asset string, size int64, kind uriKind, err error) {
 	kind, path, err := classifyURI(uri, manifestDir)
 	if err != nil {
-		return "", 0, err
+		return "", 0, kind, err
 	}
 	switch kind {
 	case uriS3:
-		s, err := cob.NewS3Source(nil, uri)
-		if err != nil {
-			return "", 0, err
+		s, sErr := cob.NewS3Source(nil, uri)
+		if sErr != nil {
+			return "", 0, kind, sErr
 		}
-		return s.Filename(), 0, nil
+		return s.Filename(), 0, kind, nil
 	case uriCA:
-		s, err := cob.NewCASource(nil, uri)
-		if err != nil {
-			return "", 0, err
+		s, cErr := cob.NewCASource(nil, uri)
+		if cErr != nil {
+			return "", 0, kind, cErr
 		}
-		return s.Filename(), 0, nil
+		return s.Filename(), 0, kind, nil
 	default: // uriFile
-		info, err := os.Stat(path)
-		if err != nil {
-			return "", 0, fmt.Errorf("local source not found: %s", path)
+		info, sErr := os.Stat(path)
+		if sErr != nil {
+			return "", 0, kind, fmt.Errorf("local source not found: %s", path)
 		}
 		if !info.Mode().IsRegular() {
 			// FIFOs, sockets, device nodes etc. would hang the eventual
 			// publish; fail at validate time instead.
-			return "", 0, fmt.Errorf("local source is not a regular file: %s (mode %s)", path, info.Mode())
+			return "", 0, kind, fmt.Errorf("local source is not a regular file: %s (mode %s)", path, info.Mode())
 		}
-		return filepath.Base(path), info.Size(), nil
+		return filepath.Base(path), info.Size(), kind, nil
 	}
 }
 
