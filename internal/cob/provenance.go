@@ -115,6 +115,118 @@ type Origin struct {
 	Mtime string `json:"mtime,omitempty"`
 }
 
+// Validate enforces the per-Type invariants on Origin. The flat JSON
+// shape means each Origin populates only a subset of fields; this turns
+// the "only the matching fields are populated" convention into an
+// explicit check at the serialize boundary, so a corrupt origin
+// (refactor bug, garbage from a malformed upstream document) surfaces
+// loudly here instead of silently producing nonsense downstream.
+//
+// Called from Provenance.Marshal once per asset; never blocks reads,
+// so a v1-era document with sloppy origins can still be loaded — only
+// brand-new writes are gated. Recurses into embedded UpstreamProvenance
+// so an Origin inside a ca chain that's been tampered with surfaces
+// too. A nil Origin (the provenance finalizer asset itself uses this)
+// is fine.
+func (o *Origin) Validate() error {
+	if o == nil {
+		return nil
+	}
+	mustBeEmpty := func(kind string, fields ...struct{ name, val string }) error {
+		for _, f := range fields {
+			if f.val != "" {
+				return fmt.Errorf("%s origin: %s must be empty (cross-type pollution), got %q", kind, f.name, f.val)
+			}
+		}
+		return nil
+	}
+	switch o.Type {
+	case "":
+		// No type ⇒ origin not recorded. The publisher may legitimately
+		// omit Origin entirely; the field is best-effort metadata.
+		return nil
+	case "s3":
+		if o.Bucket == "" || o.Key == "" {
+			return fmt.Errorf("s3 origin: bucket and key required, got bucket=%q key=%q", o.Bucket, o.Key)
+		}
+		if err := mustBeEmpty("s3",
+			struct{ name, val string }{"domain", o.Domain},
+			struct{ name, val string }{"ca_repository", o.CARepository},
+			struct{ name, val string }{"namespace", o.Namespace},
+			struct{ name, val string }{"package", o.Package},
+			struct{ name, val string }{"ca_version", o.CAVersion},
+			struct{ name, val string }{"ca_asset", o.CAAsset},
+			struct{ name, val string }{"upstream_status", o.UpstreamStatus},
+			struct{ name, val string }{"path", o.Path},
+			struct{ name, val string }{"mtime", o.Mtime},
+		); err != nil {
+			return err
+		}
+		if o.UpstreamProvenance != nil {
+			return fmt.Errorf("s3 origin: upstream_provenance must be empty (ca-only field)")
+		}
+	case "ca":
+		if o.Domain == "" || o.CARepository == "" || o.Namespace == "" || o.Package == "" || o.CAVersion == "" || o.CAAsset == "" {
+			return fmt.Errorf("ca origin: domain/ca_repository/namespace/package/ca_version/ca_asset all required, got domain=%q repo=%q ns=%q pkg=%q ver=%q asset=%q",
+				o.Domain, o.CARepository, o.Namespace, o.Package, o.CAVersion, o.CAAsset)
+		}
+		if err := mustBeEmpty("ca",
+			struct{ name, val string }{"bucket", o.Bucket},
+			struct{ name, val string }{"key", o.Key},
+			struct{ name, val string }{"version_id", o.VersionID},
+			struct{ name, val string }{"etag", o.ETag},
+			struct{ name, val string }{"last_modified", o.LastModified},
+			struct{ name, val string }{"region", o.Region},
+			struct{ name, val string }{"path", o.Path},
+			struct{ name, val string }{"mtime", o.Mtime},
+		); err != nil {
+			return err
+		}
+		if o.Versioned != nil {
+			return fmt.Errorf("ca origin: versioned must be empty (s3-only field)")
+		}
+		// Recurse into the embedded upstream so a tampered chain element
+		// surfaces at the same write boundary.
+		if o.UpstreamProvenance != nil {
+			for i, a := range o.UpstreamProvenance.Assets {
+				if err := a.Origin.Validate(); err != nil {
+					return fmt.Errorf("upstream provenance asset[%d] (%s): %w", i, a.Asset, err)
+				}
+			}
+		}
+	case "file":
+		if o.Path == "" {
+			return fmt.Errorf("file origin: path required")
+		}
+		if err := mustBeEmpty("file",
+			struct{ name, val string }{"bucket", o.Bucket},
+			struct{ name, val string }{"key", o.Key},
+			struct{ name, val string }{"version_id", o.VersionID},
+			struct{ name, val string }{"etag", o.ETag},
+			struct{ name, val string }{"last_modified", o.LastModified},
+			struct{ name, val string }{"region", o.Region},
+			struct{ name, val string }{"domain", o.Domain},
+			struct{ name, val string }{"ca_repository", o.CARepository},
+			struct{ name, val string }{"namespace", o.Namespace},
+			struct{ name, val string }{"package", o.Package},
+			struct{ name, val string }{"ca_version", o.CAVersion},
+			struct{ name, val string }{"ca_asset", o.CAAsset},
+			struct{ name, val string }{"upstream_status", o.UpstreamStatus},
+		); err != nil {
+			return err
+		}
+		if o.Versioned != nil {
+			return fmt.Errorf("file origin: versioned must be empty (s3-only field)")
+		}
+		if o.UpstreamProvenance != nil {
+			return fmt.Errorf("file origin: upstream_provenance must be empty (ca-only field)")
+		}
+	default:
+		return fmt.Errorf("unknown origin type %q (expected s3, ca, or file)", o.Type)
+	}
+	return nil
+}
+
 // SHAByAsset indexes the recorded SHA-256 by stored asset name. Field name
 // is stable across schema versions, so this also works on v1 documents.
 func (p *Provenance) SHAByAsset() map[string]string {
@@ -145,6 +257,14 @@ func (p *Provenance) OriginByAsset() map[string]*Origin {
 // for a fan-out-heavy upstream. PruneUpstreamProvenance gives callers a
 // way to retry with the upstream tree dropped.
 func (p *Provenance) Marshal() ([]byte, error) {
+	// Per-asset Origin invariants — caught here so a corrupt origin
+	// (refactor bug, malformed upstream document) fails the write
+	// instead of producing a doc that downstream readers can't trust.
+	for i, a := range p.Assets {
+		if err := a.Origin.Validate(); err != nil {
+			return nil, fmt.Errorf("asset[%d] (%s): %w", i, a.Asset, err)
+		}
+	}
 	doc := *p
 	doc.Schema = ProvenanceSchema
 	b, err := json.MarshalIndent(&doc, "", "  ")

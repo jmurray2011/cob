@@ -165,14 +165,28 @@ func TestCASourceOriginRecursive(t *testing.T) {
 
 // makeChainedProv builds a Provenance with depth levels of UpstreamProvenance
 // nested under a single ca-origin asset, for exercising the depth cap.
+// Each ca origin carries the full coords set so Origin.Validate passes —
+// the chain we're building is meant to represent real, well-formed upstreams.
 func makeChainedProv(depth int) *Provenance {
+	caOrigin := func(level int) *Origin {
+		return &Origin{
+			Type:           "ca",
+			Domain:         "d",
+			CARepository:   "r",
+			Namespace:      "n",
+			Package:        fmt.Sprintf("p-%d", level),
+			CAVersion:      "1.0.0",
+			CAAsset:        "a.bin",
+			UpstreamStatus: UpstreamEmbedded,
+		}
+	}
 	root := &Provenance{Package: "root", Assets: []ProvenanceEntry{{
-		Key: "a", Asset: "a.bin", Origin: &Origin{Type: "ca", UpstreamStatus: UpstreamEmbedded},
+		Key: "a", Asset: "a.bin", Origin: caOrigin(0),
 	}}}
 	cur := root.Assets[0].Origin
 	for i := 0; i < depth; i++ {
 		next := &Provenance{Package: fmt.Sprintf("up-%d", i), Assets: []ProvenanceEntry{{
-			Key: "a", Asset: "a.bin", Origin: &Origin{Type: "ca", UpstreamStatus: UpstreamEmbedded},
+			Key: "a", Asset: "a.bin", Origin: caOrigin(i + 1),
 		}}}
 		cur.UpstreamProvenance = next
 		cur = next.Assets[0].Origin
@@ -236,6 +250,66 @@ func TestMarshalRejectsOversize(t *testing.T) {
 		t.Fatal("Marshal should refuse a document past maxProvenanceBytes")
 	} else if !strings.Contains(err.Error(), "exceeds") {
 		t.Errorf("error should mention the limit, got %v", err)
+	}
+}
+
+func TestOriginValidate(t *testing.T) {
+	tru := true
+	cases := []struct {
+		name    string
+		o       *Origin
+		wantErr string // substring; "" = should pass
+	}{
+		// Well-formed by type — these must not error.
+		{"nil origin permitted (finalizer asset)", nil, ""},
+		{"empty type permitted (origin not recorded)", &Origin{}, ""},
+		{"good s3", &Origin{Type: "s3", Bucket: "b", Key: "k"}, ""},
+		{"good ca", &Origin{Type: "ca", Domain: "d", CARepository: "r", Namespace: "n", Package: "p", CAVersion: "v", CAAsset: "a"}, ""},
+		{"good file", &Origin{Type: "file", Path: "/x/y"}, ""},
+
+		// Missing required fields per type.
+		{"s3 missing bucket", &Origin{Type: "s3", Key: "k"}, "bucket and key required"},
+		{"ca missing namespace", &Origin{Type: "ca", Domain: "d", CARepository: "r", Package: "p", CAVersion: "v", CAAsset: "a"}, "all required"},
+		{"file missing path", &Origin{Type: "file"}, "path required"},
+
+		// Cross-type pollution — fields from one type must not bleed into another.
+		{"s3 with ca fields", &Origin{Type: "s3", Bucket: "b", Key: "k", Domain: "leak"}, "must be empty"},
+		{"ca with s3 etag", &Origin{Type: "ca", Domain: "d", CARepository: "r", Namespace: "n", Package: "p", CAVersion: "v", CAAsset: "a", ETag: "leak"}, "must be empty"},
+		{"ca with versioned flag", &Origin{Type: "ca", Domain: "d", CARepository: "r", Namespace: "n", Package: "p", CAVersion: "v", CAAsset: "a", Versioned: &tru}, "versioned must be empty"},
+		{"file with bucket", &Origin{Type: "file", Path: "/x", Bucket: "leak"}, "must be empty"},
+		{"s3 with upstream_provenance", &Origin{Type: "s3", Bucket: "b", Key: "k", UpstreamProvenance: &Provenance{}}, "upstream_provenance must be empty"},
+
+		// Unknown type — guard against a typo in a hand-edited document.
+		{"unknown type", &Origin{Type: "gs"}, "unknown origin type"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.o.Validate()
+			switch {
+			case c.wantErr == "" && err != nil:
+				t.Errorf("Validate should pass, got %v", err)
+			case c.wantErr != "" && err == nil:
+				t.Errorf("Validate should fail with %q, got nil", c.wantErr)
+			case c.wantErr != "" && !strings.Contains(err.Error(), c.wantErr):
+				t.Errorf("Validate error = %v, want substring %q", err, c.wantErr)
+			}
+		})
+	}
+}
+
+func TestMarshalRejectsInvalidOrigin(t *testing.T) {
+	// The Validate hook in Marshal is the actual write-boundary defense;
+	// a hand-built doc with cross-type pollution must fail to serialize
+	// rather than going on disk and leaking that nonsense to readers.
+	p := &Provenance{
+		Package: "x",
+		Assets: []ProvenanceEntry{{
+			Key: "a", Asset: "a.bin",
+			Origin: &Origin{Type: "s3", Bucket: "b", Key: "k", Path: "/leak"},
+		}},
+	}
+	if _, err := p.Marshal(); err == nil {
+		t.Fatal("Marshal should reject an s3 origin polluted with file fields")
 	}
 }
 
