@@ -40,18 +40,23 @@ func newLogCmd(cfg *cliutil.Config) *cobra.Command {
 
   # machine-readable: emits the full Provenance struct as JSON
   cob log acme/dev/tools/my-app@2.1.0 --json`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLog(cmd.Context(), cfg, args[0], flagCheckRefs)
+			return runLog(cmd.Context(), cfg, args, flagCheckRefs)
 		},
 	}
 	cmd.Flags().BoolVar(&flagCheckRefs, "check-references", false, "Probe each chain event's referenced repository; annotate any that no longer hold this version (text mode only)")
 	return cmd
 }
 
-func runLog(ctx context.Context, cfg *cliutil.Config, target string, checkRefs bool) error {
+func runLog(ctx context.Context, cfg *cliutil.Config, args []string, checkRefs bool) error {
 	out := cliutil.NewWriter(cfg)
 	defer out.Close()
+
+	target, err := cliutil.ResolveTarget(cfg, out, args, "log")
+	if err != nil {
+		return cliutil.Fail(out, "log", cob.ExitError, "%s", err)
+	}
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {

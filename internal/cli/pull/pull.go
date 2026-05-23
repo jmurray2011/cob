@@ -38,13 +38,20 @@ func NewCmd(cfg *cliutil.Config) *cobra.Command {
 
   # pull one asset, resolving the latest version
   cob pull acme/dev/tools/my-app@latest app.tar.gz --output ./app.tar.gz`,
-		Args: cobra.RangeArgs(1, 2),
+		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var assetName string
+			// Single arg is always the target (a hypothetical
+			// "asset-name-with-implicit-target" rule would collide
+			// with pull's existing 1-or-2 positional shape). 0 args
+			// triggers the current-package fallback inside Run.
+			var target, assetName string
+			if len(args) > 0 {
+				target = args[0]
+			}
 			if len(args) > 1 {
 				assetName = args[1]
 			}
-			return Run(cmd.Context(), cfg, args[0], flagVersion, flagOutput, flagAssets, assetName, flagConcurrency)
+			return Run(cmd.Context(), cfg, target, flagVersion, flagOutput, flagAssets, assetName, flagConcurrency)
 		},
 	}
 
@@ -61,6 +68,18 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, outputPa
 	defer out.Close()
 	ctx, cancel := cliutil.Interruptable(ctx, cfg, out)
 	defer cancel()
+
+	// Empty target → fall back to the current package (sourced from
+	// --package, COB_PACKAGE_COORDS, .cob/current, or
+	// ~/.config/cob/current). Cobra's MaximumNArgs(2) allows the
+	// zero-arg call.
+	if target == "" {
+		var err error
+		target, err = cliutil.ResolveTarget(cfg, out, nil, "pull")
+		if err != nil {
+			return cliutil.Fail(out, "pull", cob.ExitError, "%s", err)
+		}
+	}
 
 	client, err := cliutil.DialClient(ctx, cfg)
 	if err != nil {

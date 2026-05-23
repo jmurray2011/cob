@@ -20,17 +20,22 @@ func newResolveCmd(cfg *cliutil.Config) *cobra.Command {
 		Long:  "Resolves the most recently published version by timestamp and prints the version string. Designed for scripting: VERSION=$(cob resolve domain/repo/ns/pkg).",
 		Example: `  # print the latest published version (for scripting)
   VERSION=$(cob resolve acme/dev/tools/my-app)`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runResolve(cmd.Context(), cfg, args[0])
+			return runResolve(cmd.Context(), cfg, args)
 		},
 	}
 	return cmd
 }
 
-func runResolve(ctx context.Context, cfg *cliutil.Config, target string) error {
+func runResolve(ctx context.Context, cfg *cliutil.Config, args []string) error {
 	out := cliutil.NewWriter(cfg)
 	defer out.Close()
+
+	target, err := cliutil.ResolveTarget(cfg, out, args, "resolve")
+	if err != nil {
+		return cliutil.Fail(out, "resolve", cob.ExitError, "%s", err)
+	}
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {

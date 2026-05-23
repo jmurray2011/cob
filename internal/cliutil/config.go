@@ -49,6 +49,17 @@ type Config struct {
 	// version subcommand renders as JSON.
 	Version string
 	Build   BuildInfo
+
+	// PackageOverride is the "current package" coordinates, set by
+	// --package, COB_PACKAGE_COORDS, or read via CurrentPackage from
+	// .cob/current / ~/.config/cob/current. Read-only commands (log,
+	// diff <coords>, pull <coords>, manifest, resolve) fall back to
+	// this when no positional argument was given. Destructive commands
+	// (rm, publish, promote) deliberately do NOT inherit it — an
+	// operator who cd's into the wrong project shouldn't have rm
+	// silently target last week's `cob use` setting.
+	PackageOverride       string
+	PackageOverrideSource CurrentPackageSource
 }
 
 // BuildInfo carries the version metadata cob can determine from the
@@ -131,6 +142,16 @@ func ApplyEnvFallbacks(cmd *cobra.Command, cfg *Config) {
 			// command's own output). The flag form's parser catches
 			// typos for anyone who cares enough to set --timeout.
 		}
+	}
+	// --package wins over COB_PACKAGE_COORDS, which wins over .cob/current.
+	// The .cob lookup happens lazily inside CurrentPackage so we don't
+	// stat the filesystem from PersistentPreRun on commands that never
+	// need a current package.
+	if cmd.Flags().Changed("package") {
+		cfg.PackageOverrideSource = SourceFlag
+	} else if v := os.Getenv("COB_PACKAGE_COORDS"); v != "" {
+		cfg.PackageOverride = v
+		cfg.PackageOverrideSource = SourceEnv
 	}
 	// COB_TUI maps inversely: COB_TUI=0 means "disable the TUI" (set
 	// NoTUI=true). COB_TUI=1 or unset keeps the default. Done after the

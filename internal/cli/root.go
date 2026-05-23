@@ -38,6 +38,7 @@ func NewRootCmd(build cliutil.BuildInfo) *cobra.Command {
 	root.PersistentFlags().StringVar(&cfg.TmpDir, "tmpdir", "", "Directory for streaming spill files (default: $TMPDIR)")
 	root.PersistentFlags().BoolVar(&cfg.NoTUI, "no-tui", false, "Force line-stream output even on a TTY (also: COB_TUI=0)")
 	root.PersistentFlags().DurationVar(&cfg.Timeout, "timeout", 0, "Deadline for long-running ops (pull/publish/promote/diff); e.g. 30m. 0 = no deadline (also: COB_TIMEOUT)")
+	root.PersistentFlags().StringVar(&cfg.PackageOverride, "package", "", "Coordinates to use when a read-only command (log/diff/pull/manifest/resolve) gets no positional arg (also: COB_PACKAGE_COORDS, .cob/current). Destructive commands (rm/publish/promote) ignore this and still require explicit coordinates.")
 
 	root.AddCommand(
 		publish.NewCmd(cfg),
@@ -52,6 +53,7 @@ func NewRootCmd(build cliutil.BuildInfo) *cobra.Command {
 		newLogCmd(cfg),
 		newInitCmd(cfg),
 		newVersionCmd(cfg),
+		newUseCmd(cfg),
 	)
 
 	// --version prints the same parenthesized "v (commit, go, time)" line

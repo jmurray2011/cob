@@ -209,6 +209,21 @@ func (w *Writer) Summary(format string, args ...any) {
 	}
 }
 
+// Notice writes an informational line to stderr — no prefix, no JSON
+// fold-in. For headers that should be visible to an interactive operator
+// but must NOT touch stdout, because stdout is being captured by a
+// script (e.g. `VERSION=$(cob resolve ...)`). Plain/Header would land on
+// stdout; Warn would prepend "Warning:". Notice is the missing middle.
+//
+// Suppressed in --quiet mode so a `--quiet --json` script gets nothing
+// but the structured output it asked for, on the right channel.
+func (w *Writer) Notice(format string, args ...any) {
+	if w.mode.Quiet {
+		return
+	}
+	fmt.Fprintf(w.errOut, format+"\n", args...)
+}
+
 // Warn records a warning and writes it to stderr. It fires in every mode,
 // including --json: stderr is separate from the stdout JSON stream, so it
 // cannot corrupt machine-readable output, and a warning silently dropped in

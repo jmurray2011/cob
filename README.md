@@ -461,6 +461,47 @@ cob manifest my-domain/dev/my-namespace/my-package@latest
 
 Flags: `--version` (or use `@version` / `COB_VERSION`)
 
+### use — current package for interactive sessions
+
+When you're debugging or auditing, you tend to run several read-only
+commands against the same coordinates back-to-back. Instead of retyping
+`acme/prod/tools/my-app@2.1.0` three times:
+
+```bash
+cob use acme/prod/tools/my-app@2.1.0
+cob log                              # picks it up
+cob diff                             # picks it up
+cob pull --output ./assets/          # picks it up
+```
+
+Storage is project-local by default: `./.cob/current`. A `.gitignore` is
+dropped in alongside on creation so a local current package can't leak
+into git. Add `--global` to write `~/.config/cob/current` instead.
+
+Resolution precedence when a read-only command sees no positional arg:
+
+1. `--package` flag on the root command
+2. `COB_PACKAGE_COORDS` env (distinct from `COB_PACKAGE`, which overrides
+   the `package:` field in a manifest)
+3. `.cob/current` in the cwd, walking up parent directories
+4. `~/.config/cob/current` (global)
+
+First match wins. When fallback fires, an `Using <coords> (from <source>)`
+header is printed to **stderr** (not stdout) so a captured `cob resolve`
+still emits just the version string.
+
+**Commands that inherit:** `log`, `diff` (self-check, dir, version-vs-version),
+`pull`, `manifest`, `resolve`. **Commands that do not:** `rm`, `publish`,
+`promote`. Destructive commands deliberately require explicit coordinates
+so an operator who `cd`'d into the wrong project can't have `cob rm`
+silently target a stale `cob use` setting.
+
+```bash
+cob use --show     # print current coords and where they came from
+cob use --clear    # remove the pointer (idempotent)
+cob use --global X # write to ~/.config/cob/current
+```
+
 ### Provenance
 
 Every `cob publish` writes one extra asset, **`cob-provenance.json`** -- a
@@ -620,20 +661,22 @@ No automatic SSO login. If an SSO token is expired, cob tells you to run `aws ss
 All `COB_*` variables sit in the middle of the precedence chain: **CLI flags > env vars > manifest file**.
 
 ```
-COB_VERSION      Package version (--version fallback, ${VERSION} in source URIs)
-COB_DOMAIN       Override manifest domain
-COB_REPOSITORY   Override manifest repository
-COB_NAMESPACE    Override manifest namespace
-COB_PACKAGE      Override manifest package
-COB_PROFILE      AWS profile (--profile fallback)
-COB_REGION       AWS region (--region fallback)
-COB_TMPDIR       Spill directory (--tmpdir fallback)
-COB_JSON         Set 1/true to default to --json output
-COB_QUIET        Set 1/true to default to --quiet output
-COB_DEBUG        Set 1/true to default to --debug logging
-COB_TUI          Set 0 to disable the live progress view (same as --no-tui)
-ACCESSIBLE       Set 1 to force the line-stream renderer (screen-reader friendly)
-COB_VAR_*        Values for ${env.*} in source URIs (see Variable substitution)
+COB_VERSION          Package version (--version fallback, ${VERSION} in source URIs)
+COB_DOMAIN           Override manifest domain
+COB_REPOSITORY       Override manifest repository
+COB_NAMESPACE        Override manifest namespace
+COB_PACKAGE          Override manifest package (a manifest field; NOT the same as COB_PACKAGE_COORDS)
+COB_PACKAGE_COORDS   Current-package coordinates for read-only commands (see `cob use`)
+COB_PROFILE          AWS profile (--profile fallback)
+COB_REGION           AWS region (--region fallback)
+COB_TMPDIR           Spill directory (--tmpdir fallback)
+COB_TIMEOUT          Deadline for long-running ops (--timeout fallback, e.g. 30m)
+COB_JSON             Set 1/true to default to --json output
+COB_QUIET            Set 1/true to default to --quiet output
+COB_DEBUG            Set 1/true to default to --debug logging
+COB_TUI              Set 0 to disable the live progress view (same as --no-tui)
+ACCESSIBLE           Set 1 to force the line-stream renderer (screen-reader friendly)
+COB_VAR_*            Values for ${env.*} in source URIs (see Variable substitution)
 ```
 
 `ACCESSIBLE` is a cross-tool convention (Charm libs, `gh`, others) for

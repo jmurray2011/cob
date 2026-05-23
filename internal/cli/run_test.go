@@ -26,12 +26,12 @@ func TestRunResolve(t *testing.T) {
 
 	t.Run("partial coordinates rejected", func(t *testing.T) {
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
-		clitest.WantExit(t, runResolve(ctx, cfg, "dom/repo"), cob.ExitError)
+		clitest.WantExit(t, runResolve(ctx, cfg, []string{"dom/repo"}), cob.ExitError)
 	})
 
 	t.Run("no published versions -> not found", func(t *testing.T) {
 		cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{}) // ListPackageVersions default: empty
-		clitest.WantExit(t, runResolve(ctx, cfg, "dom/repo/ns/pkg"), cob.ExitNotFound)
+		clitest.WantExit(t, runResolve(ctx, cfg, []string{"dom/repo/ns/pkg"}), cob.ExitNotFound)
 	})
 
 	t.Run("success prints the resolved version", func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestRunResolve(t *testing.T) {
 			}, nil
 		}}
 		cfg, stdout, _ := clitest.UseFake(t, ca)
-		if err := runResolve(ctx, cfg, "dom/repo/ns/pkg"); err != nil {
+		if err := runResolve(ctx, cfg, []string{"dom/repo/ns/pkg"}); err != nil {
 			t.Fatalf("resolve: %v", err)
 		}
 		if got := strings.TrimSpace(stdout.String()); got != "2.1.0" {
@@ -58,7 +58,7 @@ func TestRunManifest(t *testing.T) {
 		ListAssetsFn: oneAsset("app.bin", 7),
 	}
 	cfg, stdout, _ := clitest.UseFake(t, ca)
-	if err := runManifest(context.Background(), cfg, "dom/repo/ns/pkg@1.0.0", ""); err != nil {
+	if err := runManifest(context.Background(), cfg, []string{"dom/repo/ns/pkg@1.0.0"}, ""); err != nil {
 		t.Fatalf("manifest: %v", err)
 	}
 	got := stdout.String()

@@ -74,7 +74,7 @@ func sampleProvenance() *cob.Provenance {
 func TestRunLogTextEmitsChainAndOrigins(t *testing.T) {
 	ctx := context.Background()
 	cfg, stdout, _ := clitest.UseFake(t, provenanceCA(t, sampleProvenance()))
-	if err := runLog(ctx, cfg, "acme/dev/tools/app@2.1.0", false); err != nil {
+	if err := runLog(ctx, cfg, []string{"acme/dev/tools/app@2.1.0"}, false); err != nil {
 		t.Fatalf("log: %v", err)
 	}
 	out := stdout.String()
@@ -100,7 +100,7 @@ func TestRunLogJSONEmitsProvenance(t *testing.T) {
 	ctx := context.Background()
 	cfg, stdout, _ := clitest.UseFake(t, provenanceCA(t, sampleProvenance()))
 	cfg.JSON = true
-	if err := runLog(ctx, cfg, "acme/dev/tools/app@2.1.0", false); err != nil {
+	if err := runLog(ctx, cfg, []string{"acme/dev/tools/app@2.1.0"}, false); err != nil {
 		t.Fatalf("log --json: %v", err)
 	}
 	// Round-trip back through the Provenance struct so we're asserting the
@@ -126,21 +126,21 @@ func TestRunLogMissingProvenance(t *testing.T) {
 	// fabricate a chain.
 	ctx := context.Background()
 	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{}) // default getAsset returns ResourceNotFound
-	err := runLog(ctx, cfg, "acme/dev/tools/app@2.1.0", false)
+	err := runLog(ctx, cfg, []string{"acme/dev/tools/app@2.1.0"}, false)
 	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunLogRequiresVersion(t *testing.T) {
 	ctx := context.Background()
 	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
-	err := runLog(ctx, cfg, "acme/dev/tools/app", false)
+	err := runLog(ctx, cfg, []string{"acme/dev/tools/app"}, false)
 	clitest.WantExit(t, err, cob.ExitError)
 }
 
 func TestRunLogPartialCoords(t *testing.T) {
 	ctx := context.Background()
 	cfg, _, _ := clitest.UseFake(t, &clitest.FakeCA{})
-	err := runLog(ctx, cfg, "acme/dev", false)
+	err := runLog(ctx, cfg, []string{"acme/dev"}, false)
 	clitest.WantExit(t, err, cob.ExitError)
 }
 
@@ -193,7 +193,7 @@ func TestRunLogCheckReferencesAnnotatesDeleted(t *testing.T) {
 		"dev":     false,
 		"staging": true,
 	}))
-	if err := runLog(ctx, cfg, "acme/staging/tools/app@2.1.0", true); err != nil {
+	if err := runLog(ctx, cfg, []string{"acme/staging/tools/app@2.1.0"}, true); err != nil {
 		t.Fatalf("log --check-references: %v", err)
 	}
 	out := stdout.String()
@@ -218,7 +218,7 @@ func TestRunLogCheckReferencesSilentWhenAllResolve(t *testing.T) {
 		"dev":     true,
 		"staging": true,
 	}))
-	if err := runLog(ctx, cfg, "acme/staging/tools/app@2.1.0", true); err != nil {
+	if err := runLog(ctx, cfg, []string{"acme/staging/tools/app@2.1.0"}, true); err != nil {
 		t.Fatalf("log --check-references: %v", err)
 	}
 	if strings.Contains(stdout.String(), "(deleted)") || strings.Contains(stdout.String(), "(?)") {
@@ -238,7 +238,7 @@ func TestRunLogCheckReferencesAnnotatesProbeFailure(t *testing.T) {
 		"dev":     &catypes.AccessDeniedException{Message: aws.String("denied")},
 		"staging": true,
 	}))
-	if err := runLog(ctx, cfg, "acme/staging/tools/app@2.1.0", true); err != nil {
+	if err := runLog(ctx, cfg, []string{"acme/staging/tools/app@2.1.0"}, true); err != nil {
 		t.Fatalf("log --check-references: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "acme/dev (?)") {
@@ -256,7 +256,7 @@ func TestRunLogCheckReferencesNoOpInJSONMode(t *testing.T) {
 		"staging": true,
 	}))
 	cfg.JSON = true
-	if err := runLog(ctx, cfg, "acme/staging/tools/app@2.1.0", true); err != nil {
+	if err := runLog(ctx, cfg, []string{"acme/staging/tools/app@2.1.0"}, true); err != nil {
 		t.Fatalf("log --check-references --json: %v", err)
 	}
 	var got cob.Provenance

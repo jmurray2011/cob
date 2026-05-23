@@ -29,18 +29,23 @@ func newManifestCmd(cfg *cliutil.Config) *cobra.Command {
 			"same bytes.",
 		Example: `  # reconstruct a manifest from a published version
   cob manifest acme/dev/tools/my-app@2.1.0`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runManifest(cmd.Context(), cfg, args[0], flagVersion)
+			return runManifest(cmd.Context(), cfg, args, flagVersion)
 		},
 	}
 	cmd.Flags().StringVar(&flagVersion, "version", "", "Package version (or use @version / COB_VERSION)")
 	return cmd
 }
 
-func runManifest(ctx context.Context, cfg *cliutil.Config, target, versionFlag string) error {
+func runManifest(ctx context.Context, cfg *cliutil.Config, args []string, versionFlag string) error {
 	out := cliutil.NewWriter(cfg)
 	defer out.Close()
+
+	target, err := cliutil.ResolveTarget(cfg, out, args, "manifest")
+	if err != nil {
+		return cliutil.Fail(out, "manifest", cob.ExitError, "%s", err)
+	}
 
 	coords, err := manifest.ParseCoordinates(target)
 	if err != nil {

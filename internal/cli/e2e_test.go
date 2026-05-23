@@ -14,6 +14,7 @@ import (
 	"github.com/jmurray2011/cob/internal/cli/pull"
 	"github.com/jmurray2011/cob/internal/cob"
 
+	"github.com/jmurray2011/cob/internal/cliutil"
 	"github.com/jmurray2011/cob/internal/cliutil/clitest"
 )
 
@@ -232,7 +233,83 @@ func TestEndToEndPublishPullDiffPromote(t *testing.T) {
 		}
 	})
 
-	// --- 10. Pull rejects a server-supplied traversal name -----------------
+	// --- 10. cob use + inheritance through read-only commands --------------
+
+	t.Run("cob use sets a current package; log + diff + pull inherit it; rm refuses", func(t *testing.T) {
+		// Walk through the SRE flow: `cob use <coords>` then run several
+		// read-only commands without retyping. Then confirm destructive
+		// commands (rm here) still demand explicit coordinates.
+		//
+		// We use Chdir into a fresh dir + a redirected HOME so the
+		// .cob/current we set lands in test-local space (not the
+		// developer's actual cwd or home).
+		workdir := t.TempDir()
+		homedir := t.TempDir()
+		prevHome := os.Getenv("HOME")
+		prevXDG := os.Getenv("XDG_CONFIG_HOME")
+		prevCwd, _ := os.Getwd()
+		os.Setenv("HOME", homedir)
+		os.Setenv("XDG_CONFIG_HOME", homedir)
+		if err := os.Chdir(workdir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			os.Setenv("HOME", prevHome)
+			os.Setenv("XDG_CONFIG_HOME", prevXDG)
+			_ = os.Chdir(prevCwd)
+		})
+
+		// Reuse the version published in subtest #1 (acme/dev/tools/app@1.0.0).
+		coordsStr := "acme/dev/tools/app@1.0.0"
+		path, err := cliutil.SetCurrentPackage(coordsStr, false)
+		if err != nil {
+			t.Fatalf("cob use setup: %v", err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected .cob/current at %s: %v", path, err)
+		}
+
+		// log with NO args should pick up the current package.
+		cfg, stdout, stderr := clitest.UseFake(t, ca)
+		_ = stderr
+		if err := runLog(ctx, cfg, nil, false); err != nil {
+			t.Fatalf("log with no args + current package set: %v", err)
+		}
+		out := stdout.String()
+		if !strings.Contains(out, "chain of evidence:") {
+			t.Errorf("log should have rendered the chain; got %q", out)
+		}
+
+		// diff <no args> should self-check the current package.
+		cfg2, _, _ := clitest.UseFake(t, ca)
+		if err := diff.Run(ctx, cfg2, nil, "", false, false, false); err != nil {
+			t.Fatalf("diff with no args + current package set: %v", err)
+		}
+
+		// pull <no args> should pull the current package's assets.
+		cfg3, _, _ := clitest.UseFake(t, ca)
+		pulldir := t.TempDir()
+		if err := pull.Run(ctx, cfg3, "", "", pulldir, "", "", 4); err != nil {
+			t.Fatalf("pull with no args + current package set: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(pulldir, "app.bin")); err != nil {
+			t.Errorf("pull should have downloaded app.bin via current package; %v", err)
+		}
+
+		// Destructive commands must NOT inherit. We don't have a
+		// stand-alone runRm helper here (it's in cli/rm.go and uses its
+		// own dispatch); we exercise the rule indirectly via the cobra
+		// command's Args validator instead.
+		root := NewRootCmd(cliutil.BuildInfo{Version: "test"})
+		root.SetArgs([]string{"rm"}) // no coords
+		root.SetOut(&strings.Builder{})
+		root.SetErr(&strings.Builder{})
+		if err := root.Execute(); err == nil {
+			t.Error("rm with no coordinates must fail even when a current package is set")
+		}
+	})
+
+	// --- 11. Pull rejects a server-supplied traversal name -----------------
 
 	t.Run("safeJoin defense holds across pull", func(t *testing.T) {
 		// Seed a hostile version: an asset whose stored name is "../escape".

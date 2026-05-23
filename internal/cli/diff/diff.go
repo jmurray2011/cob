@@ -80,7 +80,7 @@ func NewCmd(cfg *cliutil.Config) *cobra.Command {
 
   # 5. Version vs version
   cob diff acme/dev/tools/my-app@2.0.0 acme/dev/tools/my-app@2.1.0`,
-		Args: cobra.RangeArgs(1, 2),
+		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return Run(cmd.Context(), cfg, args, flagVersion, flagDeep, flagVerbose, flagCheckRefs)
 		},
@@ -101,6 +101,19 @@ func Run(ctx context.Context, cfg *cliutil.Config, args []string, versionFlag st
 	defer out.Close()
 
 	switch len(args) {
+	case 0:
+		// No positional → resolve via current package (--package /
+		// COB_PACKAGE_COORDS / .cob/current / ~/.config/cob/current),
+		// then run as if the user had passed those coords as a single
+		// arg (self-integrity check). Falling all the way through the
+		// switch keeps the one-arg dispatch's manifest/dir/coords
+		// detection in one place; here we know it's coords because the
+		// current-package file only ever holds coordinate strings.
+		target, err := cliutil.ResolveTarget(cfg, out, nil, "diff")
+		if err != nil {
+			return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
+		}
+		return runSelfCheck(ctx, cfg, out, target, verbose, checkRefs)
 	case 1:
 		target := args[0]
 		if cliutil.IsManifestPath(target) {
