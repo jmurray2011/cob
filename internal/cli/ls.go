@@ -18,7 +18,6 @@ const promotionStatusConcurrency = 8
 
 func newLsCmd(cfg *Config) *cobra.Command {
 	var (
-		flagAllRepos  bool
 		flagRecursive bool
 		flagDepth     string
 	)
@@ -27,14 +26,15 @@ func newLsCmd(cfg *Config) *cobra.Command {
 		Use:   "ls [coordinates]",
 		Short: "List packages, versions, or assets",
 		Long: "Drill into CodeArtifact: domain/repo (packages), .../ns/pkg " +
-			"(versions), ...@ver (assets). With -R, walks the hierarchy " +
-			"under the target and prints one fully-qualified coordinate per " +
-			"line (use --depth to control how deep; see `cob tree` for a " +
-			"tree-shaped view of the same walk).",
+			"(versions), ...@ver (assets). A repo wildcard (`*`) listing a " +
+			"specific version reports promotion status across repos. With -R, " +
+			"walks the hierarchy under the target and prints one " +
+			"fully-qualified coordinate per line (use --depth to control how " +
+			"deep; see `cob tree` for a tree-shaped view of the same walk).",
 		Example: `  cob ls                              # domains
   cob ls acme/dev                     # packages in a repo
   cob ls acme/dev/tools/my-app        # versions of a package
-  cob ls acme/*/tools/my-app@2.1.0    # promotion status across repos
+  cob ls 'acme/*/tools/my-app@2.1.0'  # promotion status across repos (quote in zsh)
   cob ls -R                           # every package, fully-qualified
   cob ls -R acme/dev --depth versions # every version under a repo`,
 		Args: cobra.MaximumNArgs(1),
@@ -46,11 +46,10 @@ func newLsCmd(cfg *Config) *cobra.Command {
 			if flagRecursive {
 				return runLsRecursive(cmd.Context(), cfg, cmd, target, flagDepth)
 			}
-			return runLs(cmd.Context(), cfg, target, flagAllRepos)
+			return runLs(cmd.Context(), cfg, target)
 		},
 	}
 
-	cmd.Flags().BoolVar(&flagAllRepos, "all-repos", false, "Shorthand for wildcard repo")
 	cmd.Flags().BoolVarP(&flagRecursive, "recursive", "R", false, "Flat recursive listing (fully-qualified coordinates, one per line)")
 	cmd.Flags().StringVar(&flagDepth, "depth", "packages", "With -R: walk depth (domains|repos|packages|versions|assets)")
 
@@ -136,33 +135,27 @@ const (
 // ls has always used and must not change:
 //
 //	(no target)                     -> domains
-//	domain                          -> repos      (before wildcard rules, so
-//	                                                `ls acme --all-repos`
-//	                                                still lists repos)
-//	domain/* | --all-repos (full)   -> promotion status
+//	domain                          -> repos
+//	domain/*/ns/pkg@version         -> promotion status across repos
 //	domain/repo                     -> packages
 //	domain/repo/ns/pkg              -> versions
 //	domain/repo/ns/pkg@version      -> assets
 //
 // A non-empty second return value is a user-facing validation message for an
-// invalid flag/coordinate combination; the caller turns it into an error.
-func classifyLs(coords *cob.PackageCoordinates, target string, allRepos bool) (lsKind, string) {
+// invalid coordinate combination; the caller turns it into an error.
+func classifyLs(coords *cob.PackageCoordinates, target string) (lsKind, string) {
 	if target == "" {
 		return lsKindDomains, ""
 	}
-	// domain only (single segment). Checked before the wildcard rules so
-	// `cob ls acme --all-repos` still lists repositories.
+	// Domain only (single segment) → repos.
 	if coords.Repository == "" && coords.Namespace == "" {
 		return lsKindRepos, ""
 	}
 
-	wildcard := coords.Repository == "*" || allRepos
-	full := coords.Namespace != "" && coords.Package != ""
-
-	if wildcard && coords.Namespace == "" {
-		return lsKindInvalid, "--all-repos requires full coordinates (domain/*/namespace/package@version)"
-	}
-	if coords.Repository == "*" || (allRepos && full) {
+	if coords.Repository == "*" {
+		if coords.Namespace == "" || coords.Package == "" {
+			return lsKindInvalid, "wildcard repo (`*`) requires full coordinates (domain/*/namespace/package@version)"
+		}
 		if coords.Version == "" {
 			return lsKindInvalid, "version is required for wildcard repo listing (use domain/*/ns/pkg@version or @latest)"
 		}
@@ -177,7 +170,7 @@ func classifyLs(coords *cob.PackageCoordinates, target string, allRepos bool) (l
 	return lsKindAssets, ""
 }
 
-func runLs(ctx context.Context, cfg *Config, target string, allRepos bool) error {
+func runLs(ctx context.Context, cfg *Config, target string) error {
 	out := newWriter(cfg)
 
 	client, err := dialClient(ctx, cfg)
@@ -194,7 +187,7 @@ func runLs(ctx context.Context, cfg *Config, target string, allRepos bool) error
 		}
 	}
 
-	kind, invalid := classifyLs(coords, target, allRepos)
+	kind, invalid := classifyLs(coords, target)
 	if invalid != "" {
 		return fail(out, "ls", cob.ExitError, "%s", invalid)
 	}
@@ -223,8 +216,8 @@ func runLs(ctx context.Context, cfg *Config, target string, allRepos bool) error
 	}
 }
 
-// resolvePromotionLatest resolves @latest for a wildcard / --all-repos
-// promotion listing by probing each repository in the domain until one has
+// resolvePromotionLatest resolves @latest for a wildcard-repo promotion
+// listing by probing each repository in the domain until one has
 // the package, then pinning coords.Version. A non-latest version is left
 // untouched.
 func resolvePromotionLatest(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates, out *output.Writer) error {

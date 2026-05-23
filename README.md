@@ -155,10 +155,11 @@ Drill into CodeArtifact at any level:
 cob ls my-domain/dev                                            # list packages
 cob ls my-domain/dev/my-namespace/my-package                    # list versions
 cob ls my-domain/dev/my-namespace/my-package@2.1.0              # list assets
-cob ls my-domain/*/my-namespace/my-package@2.1.0                # promotion status across repos
+cob ls 'my-domain/*/my-namespace/my-package@2.1.0'              # promotion status across repos
 cob ls my-domain/dev/my-namespace/my-package@latest             # assets in latest version
-cob ls my-domain/dev --all-repos                                # shorthand for wildcard repo
 ```
+
+(Quote `*` for zsh; bash leaves an unmatched literal `*` alone.)
 
 For multi-level discovery use `-R` (flat, fully-qualified) or [`tree`](#tree)
 (indented tree):
@@ -174,7 +175,7 @@ cob ls -R my-domain/dev/my-namespace/my-package --depth assets  # every asset un
 `cob ls -R my-domain/dev` lists packages without spelling out `--depth packages`,
 and targeting a single package descends one level into versions).
 
-Flags: `--all-repos`, `-R`/`--recursive`, `--depth`
+Flags: `-R`/`--recursive`, `--depth`
 
 ### tree
 

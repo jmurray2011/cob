@@ -76,7 +76,7 @@ func TestRunLs(t *testing.T) {
 			}}, nil
 		}}
 		cfg, stdout, _ := useFake(t, ca)
-		if err := runLs(ctx, cfg, "", false); err != nil {
+		if err := runLs(ctx, cfg, ""); err != nil {
 			t.Fatalf("ls: %v", err)
 		}
 		if !strings.Contains(stdout.String(), "acme") {
@@ -86,18 +86,18 @@ func TestRunLs(t *testing.T) {
 
 	t.Run("no domains -> not found", func(t *testing.T) {
 		cfg, _, _ := useFake(t, &fakeCA{})
-		wantExit(t, runLs(ctx, cfg, "", false), cob.ExitNotFound)
+		wantExit(t, runLs(ctx, cfg, ""), cob.ExitNotFound)
 	})
 
 	t.Run("no assets -> not found", func(t *testing.T) {
 		cfg, _, _ := useFake(t, &fakeCA{}) // ListPackageVersionAssets default: empty
-		wantExit(t, runLs(ctx, cfg, "dom/repo/ns/pkg@1.0.0", false), cob.ExitNotFound)
+		wantExit(t, runLs(ctx, cfg, "dom/repo/ns/pkg@1.0.0"), cob.ExitNotFound)
 	})
 
 	t.Run("--json not-found emits an empty array, not an object", func(t *testing.T) {
 		cfg, stdout, _ := useFake(t, &fakeCA{})
 		cfg.JSON = true
-		wantExit(t, runLs(ctx, cfg, "dom/repo", false), cob.ExitNotFound)
+		wantExit(t, runLs(ctx, cfg, "dom/repo"), cob.ExitNotFound)
 		if got := strings.TrimSpace(stdout.String()); got != "[]" {
 			t.Errorf("ls --json not-found stdout = %q, want []", got)
 		}
