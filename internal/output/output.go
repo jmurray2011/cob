@@ -286,10 +286,24 @@ func IsTerminal(f *os.File) bool {
 }
 
 // TerminalWidth returns the current stdout column count for adaptive
-// rendering (verify's row-format picker, future help text wrapping,
-// etc.). Falls back to $COLUMNS, then to 80, so non-TTY callers get a
-// sensible default without erroring. Cheap to call repeatedly.
+// rendering (diff's row-format picker, future help text wrapping, etc.).
+// Falls back to $COLUMNS, then to 80, so non-TTY callers get a sensible
+// default without erroring. Cheap to call repeatedly.
+//
+// Indirected through the terminalWidthFn package var so a test can pin
+// a width and exercise width-sensitive rendering paths deterministically
+// — the real implementation reads os.Stdout.Fd() which can't be spoofed
+// from outside the process.
 func TerminalWidth() int {
+	return terminalWidthFn()
+}
+
+// terminalWidthFn is the test seam behind TerminalWidth. Swap it via
+// SetTerminalWidthForTest (defer-restored) inside a test; production
+// stays on defaultTerminalWidth.
+var terminalWidthFn = defaultTerminalWidth
+
+func defaultTerminalWidth() int {
 	if w, _, err := term.GetSize(os.Stdout.Fd()); err == nil && w > 0 {
 		return w
 	}
@@ -299,4 +313,17 @@ func TerminalWidth() int {
 		}
 	}
 	return 80
+}
+
+// SetTerminalWidthForTest pins TerminalWidth to width for the duration of
+// the calling test. Returns the restore func the test must defer — same
+// shape every "swap a package var" test seam in this codebase uses, so a
+// reader can spot the pattern at a glance.
+//
+// Intended only for tests; calling it from production code would silently
+// break adaptive rendering on every other goroutine.
+func SetTerminalWidthForTest(width int) (restore func()) {
+	prev := terminalWidthFn
+	terminalWidthFn = func() int { return width }
+	return func() { terminalWidthFn = prev }
 }
