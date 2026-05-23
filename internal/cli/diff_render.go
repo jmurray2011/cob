@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/jmurray2011/cob/internal/cob"
@@ -139,8 +138,17 @@ func extractAssetNames(pub []cob.AssetSummary) []string {
 // fileSHA256 streams a file through sha256 and returns the lowercase
 // hex digest. Used by dir mode to hash local files in constant memory,
 // regardless of how large any single file is.
+//
+// Symlink defense: the leaf is opened via openLeafNoFollow, which on unix
+// uses O_NOFOLLOW (atomic refusal — even a TOCTOU swap to a symlink
+// between the safeJoin check and the open is caught) and on other
+// platforms falls back to an Lstat-then-Open check. Hashing a symlinked
+// file would let a local symlink (planted earlier, or accidentally
+// created with `ln -s`) redirect the integrity check to arbitrary
+// content the user didn't intend to compare — the dir-mode contract is
+// "the regular file at this basename matches the published asset?".
 func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := openLeafNoFollow(path)
 	if err != nil {
 		return "", err
 	}

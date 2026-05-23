@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,3 +154,32 @@ func TestInterruptableNoTimeoutByDefault(t *testing.T) {
 type dummyBuf struct{}
 
 func (dummyBuf) Write(p []byte) (int, error) { return len(p), nil }
+
+// TestFileSHA256RefusesSymlink pins the dir-mode diff symlink defense:
+// a symlink at the leaf must not redirect the integrity check to the
+// file it points at. On unix this is enforced via O_NOFOLLOW (atomic);
+// on Windows via Lstat-then-Open. Either way the error must call out
+// that we're refusing to hash a symlink, not "ELOOP" kernel-speak.
+func TestFileSHA256RefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.bin")
+	if err := os.WriteFile(target, []byte("real content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.bin")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink creation unsupported on this platform: %v", err)
+	}
+	_, err := fileSHA256(link)
+	if err == nil {
+		t.Fatal("fileSHA256 should refuse a symlink at the leaf; got nil error")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("error should call out 'symlink' for the operator, got %v", err)
+	}
+	// The real file at the same dir is still hashable — the defense
+	// targets symlinks specifically, not "anything in the dir".
+	if _, err := fileSHA256(target); err != nil {
+		t.Errorf("the regular file must still hash fine: %v", err)
+	}
+}
