@@ -324,12 +324,37 @@ chain to print.
 
 ### diff
 
-Shows how the manifest differs from a published version: added (`+`),
-removed (`-`), changed (`~`). Uses the same precedence as `verify`
-(known checksum → recorded S3 origin → provenance → `--deep`); a changed
-S3 `etag`/`version_id` shows as `~` with no download. Exits `1` on any
-drift, `0` when identical -- like `diff(1)`. Run before `publish --force`
-to see exactly what would change.
+Two modes. Both report added (`+`), removed (`-`), changed (`~`), and exit
+`1` on any drift / `0` when identical -- like `diff(1)`.
+
+**Manifest mode** (one arg) -- compares a manifest's sources against a
+published version. Uses the same precedence as `verify` (known checksum →
+recorded S3 origin → provenance → `--deep`); a changed S3 `etag`/
+`version_id` shows as `~` with no download. Run before `publish --force`
+to see what would change.
+
+```bash
+cob diff my-package.yaml --version 2.1.0
+```
+
+**Version-to-version mode** (two coordinate args) -- compares two
+published versions of the same package by the SHA-256 each side recorded
+in CodeArtifact. No downloads, `--deep` is ignored. The `cob-provenance.
+json` asset is excluded from the comparison on both sides (its bytes
+trivially differ on every publish/promote -- chain timestamps, IDs --
+but that isn't a package change).
+
+```bash
+# What changed in this release?
+cob diff acme/dev/tools/my-app@2.0.0 acme/dev/tools/my-app@2.1.0
+
+# Did the promote preserve the bytes?
+cob diff acme/dev/tools/my-app@2.1.0 acme/prod/tools/my-app@2.1.0
+```
+
+The two coordinates must reference the same package (cross-package diffs
+are rejected). Cross-repo same-package is the supported cross-cutting
+case.
 
 ```bash
 cob diff my-package.yaml --version 2.1.0
