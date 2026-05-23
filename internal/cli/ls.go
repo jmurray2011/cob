@@ -17,29 +17,105 @@ import (
 const promotionStatusConcurrency = 8
 
 func newLsCmd(cfg *Config) *cobra.Command {
-	var flagAllRepos bool
+	var (
+		flagAllRepos  bool
+		flagRecursive bool
+		flagDepth     string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "ls [coordinates]",
 		Short: "List packages, versions, or assets",
-		Long:  "Drill into CodeArtifact: domain/repo (packages), .../ns/pkg (versions), ...@ver (assets).",
-		Example: `  cob ls                        # domains
-  cob ls acme/dev               # packages in a repo
-  cob ls acme/dev/tools/my-app  # versions of a package
-  cob ls acme/*/tools/my-app@2.1.0   # promotion status across repos`,
+		Long: "Drill into CodeArtifact: domain/repo (packages), .../ns/pkg " +
+			"(versions), ...@ver (assets). With -R, walks the hierarchy " +
+			"under the target and prints one fully-qualified coordinate per " +
+			"line (use --depth to control how deep; see `cob tree` for a " +
+			"tree-shaped view of the same walk).",
+		Example: `  cob ls                              # domains
+  cob ls acme/dev                     # packages in a repo
+  cob ls acme/dev/tools/my-app        # versions of a package
+  cob ls acme/*/tools/my-app@2.1.0    # promotion status across repos
+  cob ls -R                           # every package, fully-qualified
+  cob ls -R acme/dev --depth versions # every version under a repo`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := ""
 			if len(args) > 0 {
 				target = args[0]
 			}
+			if flagRecursive {
+				return runLsRecursive(cmd.Context(), cfg, cmd, target, flagDepth)
+			}
 			return runLs(cmd.Context(), cfg, target, flagAllRepos)
 		},
 	}
 
 	cmd.Flags().BoolVar(&flagAllRepos, "all-repos", false, "Shorthand for wildcard repo")
+	cmd.Flags().BoolVarP(&flagRecursive, "recursive", "R", false, "Flat recursive listing (fully-qualified coordinates, one per line)")
+	cmd.Flags().StringVar(&flagDepth, "depth", "packages", "With -R: walk depth (domains|repos|packages|versions|assets)")
 
 	return cmd
+}
+
+// runLsRecursive walks the hierarchy under target and emits each leaf as a
+// fully-qualified coordinate. JSON mode emits the same leaves as an array
+// (not the tree — that's what `cob tree --json` is for); text mode emits
+// one path per line, suitable for piping.
+func runLsRecursive(ctx context.Context, cfg *Config, cmd *cobra.Command, target, depthFlag string) error {
+	out := newWriter(cfg)
+
+	depth, err := parseTreeDepth(depthFlag)
+	if err != nil {
+		return fail(out, "ls", cob.ExitError, "%s", err)
+	}
+
+	var start *cob.PackageCoordinates
+	if target != "" {
+		start, err = manifest.ParseCoordinates(target)
+		if err != nil {
+			return fail(out, "ls", cob.ExitError, "%s", err)
+		}
+	}
+	// Mirror tree's "descend one level into a targeted node" default.
+	if start != nil && !cmd.Flags().Changed("depth") {
+		startKind := startDepthOf(start)
+		if depth <= startKind && startKind < DepthAssets {
+			depth = startKind + 1
+		}
+	}
+	if start != nil && cmd.Flags().Changed("depth") {
+		startKind := startDepthOf(start)
+		if depth < startKind {
+			return fail(out, "ls", cob.ExitError,
+				"--depth %s is shallower than the target (level %s); pick a deeper depth or drop the target",
+				depthName(depth), depthName(startKind))
+		}
+	}
+
+	client, err := dialClient(ctx, cfg)
+	if err != nil {
+		return fail(out, "ls", cob.ExitError, "%s", err)
+	}
+	registry := cob.NewRegistry(client)
+
+	root := walkHierarchy(ctx, registry, start, depth)
+	leaves := flattenLeaves(root)
+	// An empty walk under a valid target is a not-found, not a bug: emit
+	// the documented empty array in JSON mode so consumers see [] (not the
+	// command-result object) and surface ExitNotFound for the shell.
+	if len(leaves) == 0 {
+		return failEmptyList(out, []string{}, "no entries found under %q at depth %s", target, depthName(depth))
+	}
+	if out.JSON(leaves) {
+		return nil
+	}
+	for _, p := range leaves {
+		out.Plain("%s", p)
+	}
+	if errs := countErrors(root); errs > 0 {
+		out.Warn("%d branch(es) could not be listed", errs)
+	}
+	return nil
 }
 
 // lsKind is the kind of listing a parsed ls target requests.

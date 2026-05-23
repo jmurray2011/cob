@@ -160,7 +160,42 @@ cob ls my-domain/dev/my-namespace/my-package@latest             # assets in late
 cob ls my-domain/dev --all-repos                                # shorthand for wildcard repo
 ```
 
-Flags: `--all-repos`
+For multi-level discovery use `-R` (flat, fully-qualified) or [`tree`](#tree)
+(indented tree):
+
+```bash
+cob ls -R                                                       # every package, one per line
+cob ls -R my-domain/dev --depth versions                        # every version under a repo
+cob ls -R my-domain/dev/my-namespace/my-package --depth assets  # every asset under a package
+```
+
+`--depth` accepts `domains|repos|packages|versions|assets`; the default is
+`packages`, with one extra level when you target a specific node (so
+`cob ls -R my-domain/dev` lists packages without spelling out `--depth packages`,
+and targeting a single package descends one level into versions).
+
+Flags: `--all-repos`, `-R`/`--recursive`, `--depth`
+
+### tree
+
+Tree-shaped view of the same walk `ls -R` produces — useful for "what do
+we have?" exploration. Branches that can't be listed (denied repo, throttled
+call) are marked inline with `!` and don't abort the rest of the walk.
+
+```bash
+cob tree                                            # everything down to packages
+cob tree my-domain                                  # one domain
+cob tree my-domain/dev --depth versions             # one repo down to versions
+cob tree my-domain/dev/my-namespace/my-package      # versions of a package (default-bumped)
+cob tree my-domain/dev/my-namespace/my-package --depth assets
+```
+
+Default depth is `packages`. Targeting a node and omitting `--depth`
+descends one level into it. JSON mode emits a nested tree
+(`{name, kind, path, meta, children, error}`) rather than the flat array
+`ls -R --json` produces — pick whichever shape your consumer wants.
+
+Flags: `--depth`
 
 ### resolve
 
