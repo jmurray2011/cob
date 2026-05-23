@@ -591,7 +591,7 @@ func TestRunVerify(t *testing.T) {
 
 	t.Run("clean match -> exit 0", func(t *testing.T) {
 		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
-		if err := runVerify(ctx, cfg, writeHelloManifest(t), "1.0.0", true); err != nil {
+		if err := runVerify(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true); err != nil {
 			t.Fatalf("verify clean: %v", err)
 		}
 	})
@@ -601,7 +601,7 @@ func TestRunVerify(t *testing.T) {
 		// vs lower. A case-sensitive compare here would be a spurious
 		// mismatch on bytes that are actually identical.
 		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, strings.ToUpper(helloSHA))})
-		if err := runVerify(ctx, cfg, writeHelloManifest(t), "1.0.0", true); err != nil {
+		if err := runVerify(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true); err != nil {
 			t.Fatalf("uppercase-hex must still match the lowercase source hash: %v", err)
 		}
 	})
@@ -609,7 +609,7 @@ func TestRunVerify(t *testing.T) {
 	t.Run("SHA mismatch -> exit 4 (ExitMismatch)", func(t *testing.T) {
 		cfg, _, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5,
 			"deadbeef0000000000000000000000000000000000000000000000000000beef")})
-		wantExit(t, runVerify(ctx, cfg, writeHelloManifest(t), "1.0.0", true), cob.ExitMismatch)
+		wantExit(t, runVerify(ctx, cfg, []string{writeHelloManifest(t)}, "1.0.0", true), cob.ExitMismatch)
 	})
 
 	t.Run("source resolution failure -> exit 1 (ExitError)", func(t *testing.T) {
@@ -619,12 +619,104 @@ func TestRunVerify(t *testing.T) {
 		dir := t.TempDir()
 		mf := writeFile(t, dir, "m.yaml",
 			"domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  payload: ./missing.txt\n")
-		wantExit(t, runVerify(ctx, cfg, mf, "1.0.0", true), cob.ExitError)
+		wantExit(t, runVerify(ctx, cfg, []string{mf}, "1.0.0", true), cob.ExitError)
 	})
 
 	t.Run("coords @latest with no published versions -> exit 2", func(t *testing.T) {
 		cfg, _, _ := useFake(t, &fakeCA{}) // ListPackageVersions default: empty
-		wantExit(t, runVerify(ctx, cfg, "dom/repo/ns/pkg", "latest", false), cob.ExitNotFound)
+		wantExit(t, runVerify(ctx, cfg, []string{"dom/repo/ns/pkg"}, "latest", false), cob.ExitNotFound)
+	})
+
+	t.Run("dir mode: local file matches published -> exit 0 with full hash + size", func(t *testing.T) {
+		// "hello" -> helloSHA. Drop the file into a temp dir and verify
+		// against a fake that publishes the same hash at the same name.
+		dir := t.TempDir()
+		writeFile(t, dir, "payload.txt", "hello")
+		cfg, stdout, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
+		err := runVerify(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false)
+		if err != nil {
+			t.Fatalf("dir verify (clean): %v", err)
+		}
+		out := stdout.String()
+		// Header explains what dir mode is doing — operators who confuse
+		// it with manifest mode (the previous bug) get told plainly.
+		if !strings.Contains(out, "hashing local files; comparing to the published asset SHAs") {
+			t.Errorf("header should explain the comparison being done:\n%s", out)
+		}
+		// Each row carries the real size + the FULL SHA-256, not the
+		// "0 B 0ms" stub that prompted this rewrite.
+		if !strings.Contains(out, "5 B") {
+			t.Errorf("output should show real file size (5 B):\n%s", out)
+		}
+		if !strings.Contains(out, helloSHA) {
+			t.Errorf("output should show the full sha256 (%s), not a truncation:\n%s", helloSHA, out)
+		}
+	})
+
+	t.Run("dir mode: file mismatch -> exit 4 with both hashes labeled", func(t *testing.T) {
+		// File on disk is "hello"; publisher claims a different SHA.
+		// The output has to spell out "local X" vs "published Y" so the
+		// operator can run sha256sum and reconcile by eye.
+		dir := t.TempDir()
+		writeFile(t, dir, "payload.txt", "hello")
+		other := "deadbeef0000000000000000000000000000000000000000000000000000beef"
+		cfg, stdout, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, other)})
+		err := runVerify(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false)
+		wantExit(t, err, cob.ExitMismatch)
+		out := stdout.String()
+		for _, want := range []string{"mismatch", "local", "published", helloSHA, other} {
+			if !strings.Contains(out, want) {
+				t.Errorf("mismatch row should include %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("dir mode: missing local file -> exit 4 with 'missing locally' + published size", func(t *testing.T) {
+		// File doesn't exist locally. The user (and pull-then-delete
+		// workflows) needs verify to flag it AND say how big it should
+		// be so they know what they're missing.
+		dir := t.TempDir() // empty
+		cfg, stdout, _ := useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 4242, helloSHA)})
+		err := runVerify(ctx, cfg, []string{dir, "dom/repo/ns/pkg@1.0.0"}, "", false)
+		wantExit(t, err, cob.ExitMismatch)
+		out := stdout.String()
+		if !strings.Contains(out, "missing locally") {
+			t.Errorf("expected 'missing locally' for absent file:\n%s", out)
+		}
+		if !strings.Contains(out, "4.1 KB") { // FormatSize(4242) → "4.1 KB"
+			t.Errorf("expected published size shown for missing file:\n%s", out)
+		}
+	})
+
+	t.Run("dir mode: rejects file as first arg", func(t *testing.T) {
+		// `cob verify some.yaml other.thing` is a typo, not a real
+		// dir-mode invocation. The error must point the operator at
+		// the right shape rather than silently doing the wrong thing.
+		cfg, _, _ := useFake(t, &fakeCA{})
+		dir := t.TempDir()
+		mf := writeFile(t, dir, "m.yaml", "domain: d\nrepository: r\nnamespace: n\npackage: p\nsources:\n  a: ./x\n")
+		err := runVerify(ctx, cfg, []string{mf, "dom/repo/ns/pkg@1.0.0"}, "", false)
+		wantExit(t, err, cob.ExitError)
+	})
+
+	t.Run("dir mode: rejects coordinates without a version", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg, _, _ := useFake(t, &fakeCA{})
+		err := runVerify(ctx, cfg, []string{dir, "dom/repo/ns/pkg"}, "", false)
+		wantExit(t, err, cob.ExitError)
+	})
+
+	t.Run("dir mode: a single dir arg gets a helpful error pointing at the right shape", func(t *testing.T) {
+		// `cob verify /some/dir` without coords used to fall into
+		// coords-mode parsing and produce a useless error. Catch it
+		// and tell the operator exactly what to type.
+		dir := t.TempDir()
+		cfg, _, stderr := useFake(t, &fakeCA{})
+		err := runVerify(ctx, cfg, []string{dir}, "", false)
+		wantExit(t, err, cob.ExitError)
+		if !strings.Contains(stderr.String(), "is a directory") {
+			t.Errorf("error should call out the directory-without-coords case:\n%s", stderr.String())
+		}
 	})
 }
 

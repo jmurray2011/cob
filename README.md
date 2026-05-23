@@ -294,25 +294,28 @@ Flags: `--version` (optional)
 
 ### verify
 
-Checks a published version's integrity. No mutation; exits non-zero on any
-mismatch. Takes a manifest **or** compact coordinates.
+Checks that bytes match published. Three modes, picked from the
+positional argument(s); none mutate; exit code is non-zero on any
+mismatch. Every row carries the real size, the full SHA-256, and the
+URI/path that was actually hashed -- no `0 B 0ms` stubs, no opaque
+"source 1c9376b8" abbreviations.
 
-**Coordinates (no manifest)** -- self-verifies a version against its own
-recorded `cob-provenance.json`: CodeArtifact's stored SHA-256 for each asset
-is compared against the SHA recorded in provenance (CodeArtifact validates
-asset hashes on publish, so a mismatch means the recorded provenance and the
-stored asset disagree). The chain of evidence (who published/promoted it,
-where each file came from, recursing through `ca://`) is printed. Audit a version
-you didn't build, with nothing but its coordinates:
+**Coordinates (one arg)** -- self-verifies a published version against
+its own recorded `cob-provenance.json`. The chain of evidence (who
+published/promoted it, where each file came from, recursing through
+`ca://`) is printed first; then each recorded asset's provenance SHA-256
+is compared to CodeArtifact's stored asset SHA. Audit a version you
+didn't build, with nothing but its coordinates:
 
 ```bash
 cob verify my-domain/dev/my-namespace/my-package@2.1.0
 cob verify my-domain/dev/my-namespace/my-package@latest
 ```
 
-**Manifest** -- compares each manifest source's SHA-256 against the
-published assets. A CI gate for reproducible builds. Each source is checked
-by this precedence, cheapest first:
+**Manifest (one arg, file ending `.yaml`/`.yml`)** -- compares each
+manifest source's SHA-256 against the published assets. A CI gate for
+reproducible builds. Each source is checked by this precedence, cheapest
+first:
 
 1. a **known checksum** -- S3 object with `--checksum-algorithm SHA256`,
    a `ca://` source, or a local file (no download);
@@ -332,7 +335,30 @@ cob verify my-package.yaml --version 2.1.0
 cob verify my-package.yaml --version 2.1.0 --deep   # download+hash unchecksummed sources
 ```
 
-Flags: `--version` (required, or `COB_VERSION`), `--deep` (manifest mode only)
+**Directory + coordinates (two args)** -- for each published asset of
+`<coords>`, looks for a local file of the same name in `<dir>`, hashes
+it, and compares to the published SHA-256. No manifest is consulted; no
+remote URIs are dereferenced. The straight answer to "do these local
+files match what was published?"
+
+```bash
+# After `cob pull` (which writes ca:// pinned sources for re-publish
+# lineage), the most direct check that your local copy is intact:
+cob verify ~/pulled-dir my-domain/dev/my-namespace/my-package@2.1.0
+```
+
+A typical mismatch row looks like:
+
+```
+  ✗ readability.jar                  mismatch
+      local     195.5 MB   /home/me/pulled-dir/readability.jar              a3f2b8c9d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1
+      published 195.5 MB   my-domain/dev/my-namespace/my-package@2.1.3      25c4517cdef0123456789abcdef0123456789abcdef0123456789abcdef01234
+```
+
+`sha256sum` the local file and you can string-compare the full hash --
+no need to mentally truncate.
+
+Flags: `--version` (manifest mode; or `COB_VERSION`), `--deep` (manifest mode only)
 
 ### log
 
