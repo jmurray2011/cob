@@ -172,19 +172,34 @@ func (m liveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.KeyMsg:
-		// Ctrl-C: mark interrupted, fire the registered cancel
-		// callback so the runXxx's context cancels NOW (the in-flight
-		// AWS calls start tearing down before bubbletea even finishes
-		// its own teardown), then ask bubbletea to quit. Other keys
-		// are ignored — cob's TUI is non-interactive.
+		// Ctrl-C lifecycle:
+		//
+		//  First press: mark interrupted, fire the registered cancel
+		//  callback (which cancels the runXxx's ctx so in-flight AWS
+		//  calls abort), but DO NOT quit bubbletea — the pull/publish
+		//  goroutines are about to emit AssetFail/Skipped for what was
+		//  in flight, and those need a live renderer to land on, or
+		//  the final paint shows them frozen at their last progress
+		//  bar. Bubbletea quits naturally when the runXxx returns and
+		//  defer out.Close() lands a quitMsg.
+		//
+		//  Second press: the goroutines aren't responding (network
+		//  hung, SDK retrying past the cancel, whatever). Force-quit
+		//  the TUI so the operator gets their shell back; in-flight
+		//  goroutines will eventually clean up on their own.
+		//
+		// Other keys are no-ops — cob's TUI is non-interactive.
 		if msg.Type == tea.KeyCtrlC {
+			if m.interrupted != nil && m.interrupted.Load() {
+				return m, tea.Quit
+			}
 			if m.interrupted != nil {
 				m.interrupted.Store(true)
 			}
 			if m.onInterrupt != nil {
 				m.onInterrupt()
 			}
-			return m, tea.Quit
+			return m, nil
 		}
 		return m, nil
 
@@ -218,7 +233,12 @@ func (m liveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case assetProgressMsg:
-		if ar, ok := m.byName[msg.name]; ok {
+		// Only update active rows. Once a row has transitioned to
+		// done/failed/skipped, late-arriving progress deltas (which
+		// can happen on cancellation — the abort path crosses the
+		// goroutine's last io.Copy buffer flush) shouldn't push its
+		// byte count past 100% or revive a failed row's bar.
+		if ar, ok := m.byName[msg.name]; ok && ar.state == stateActive {
 			ar.bytes += msg.delta
 			m.transferred += msg.delta
 			m.rate.add(msg.delta)
@@ -284,12 +304,19 @@ func (m liveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View renders the table. Rows are sorted: done/skipped/failed first
 // (settling at the top of the live area), active in the middle, queued
 // at the bottom — so the eye lands on what's in flight without scanning.
+// When the user has hit Ctrl-C, a "canceling…" line appears above the
+// rows so the wait while goroutines abort doesn't feel like a hang.
 func (m liveModel) View() string {
 	if len(m.rows) == 0 {
 		return ""
 	}
 	ordered := orderRows(m.rows)
 	var b strings.Builder
+	if m.interrupted != nil && m.interrupted.Load() {
+		b.WriteString(m.style.failed.Render("Canceling… (Ctrl-C again to force-quit)"))
+		b.WriteByte('\n')
+		b.WriteByte('\n')
+	}
 	nameWidth := pickNameWidth(ordered, m.width)
 	for _, r := range ordered {
 		b.WriteString(m.style.renderRow(r, nameWidth, m.width))

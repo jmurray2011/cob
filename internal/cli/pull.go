@@ -179,16 +179,25 @@ func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, 
 	})
 
 	// Record every asset that ran — successes and failures — so a --json
-	// consumer can see which one failed. Only successes count toward bytes.
-	succeeded := 0
+	// consumer can see which one failed. Downloaded vs skipped is split
+	// so an interrupted-pull summary can report accurately ("I had to
+	// fetch 1, the other 11 were already there, 3 didn't finish") rather
+	// than a single misleading "Pulled N" line.
+	var downloaded, skipped, failed int
 	for _, r := range results {
 		if r == nil {
 			continue // never scheduled: an earlier task failed first
 		}
 		result.Assets = append(result.Assets, *r)
-		if r.Error == nil {
+		switch {
+		case r.Error != nil:
+			failed++
+		case r.Method == "skipped":
+			skipped++
 			result.TotalSize += r.Size
-			succeeded++
+		default:
+			downloaded++
+			result.TotalSize += r.Size
 		}
 	}
 	if !ok {
@@ -197,7 +206,23 @@ func runPull(ctx context.Context, cfg *Config, target, versionFlag, outputPath, 
 	}
 
 	result.DurationMs = time.Since(start).Milliseconds()
-	out.Summary("Pulled %d assets to %s", succeeded, outputPath)
+
+	// Interrupted path: the user hit Ctrl-C inside the live TUI, which
+	// cancels the runXxx ctx and lets the in-flight goroutines abort.
+	// They appear in result.Assets with Error set; we report them as
+	// "incomplete" rather than swallowed and exit 130 (POSIX SIGINT
+	// convention) so a CI step can distinguish "user canceled" from
+	// "operation failed".
+	if out.Interrupted() {
+		result.Status = "interrupted"
+		incomplete := len(assets) - downloaded - skipped
+		out.Summary("Interrupted: %d downloaded, %d already present, %d incomplete — re-run to resume (present files with matching SHA-256 will be skipped)",
+			downloaded, skipped, incomplete)
+		out.CommandResult(result)
+		return &ExitError{Code: cob.ExitInterrupted}
+	}
+
+	out.Summary("Pulled %d assets to %s", downloaded+skipped, outputPath)
 
 	// A failed asset must surface as a non-zero exit (a CI step that does
 	// `cob pull && deploy` otherwise deploys with missing/partial assets).

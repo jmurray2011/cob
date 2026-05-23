@@ -246,6 +246,17 @@ func runPublish(ctx context.Context, cfg *Config, manifestPath, versionFlag stri
 
 	if !ok {
 		result.DurationMs = time.Since(start).Milliseconds()
+		// Interrupted (Ctrl-C in the live TUI) is a "could not be
+		// completed" the same way an upload error is, but distinguish
+		// it via exit code 130 — CI gates that retry on transient
+		// errors should not retry a deliberate cancellation.
+		if out.Interrupted() {
+			result.Status = "interrupted"
+			out.Error("Interrupted.\n  %d of %d assets in place. Version is unfinished — re-run with --resume to continue.",
+				uploaded+skipped, len(sources))
+			out.CommandResult(result)
+			return &ExitError{Code: cob.ExitInterrupted}
+		}
 		result.Status = "error"
 		result.Error = firstResultError(results)
 		out.Error("%s\n  %d of %d assets in place. Version is unfinished — re-run with --resume to continue.",

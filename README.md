@@ -668,11 +668,18 @@ One exception: `manifest` always prints a YAML manifest (that *is* its output --
 | 2 | Not found (package/version/asset doesn't exist) |
 | 3 | Conflict (version exists, use `--force`) |
 | 4 | Verification failed -- the check ran and found a difference (`verify` SHA mismatch, `diff` drift) |
+| 130 | Interrupted -- user hit Ctrl-C; in-flight transfers were aborted |
 
 Code 4 is the one that matters for `verify`/`diff` as CI gates: it means the
 published bytes genuinely differ from what was expected, as opposed to code 1
 which means the check itself could not run. Both are non-zero, so either still
 blocks a pipeline.
+
+Code 130 follows the POSIX shell convention (128 + SIGINT). Distinguishes a
+deliberate cancellation from a transient failure, so CI retry policies can
+choose whether to honor it. `publish` and `promote` leave the version
+**Unfinished** after a 130 -- re-run with `--resume` to continue from where
+the cancel landed.
 
 ## Package composition patterns
 

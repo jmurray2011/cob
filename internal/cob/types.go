@@ -94,10 +94,16 @@ type PromotionStatus struct {
 const FormatGeneric = "generic"
 
 // Exit codes.
+//
+// ExitInterrupted follows the POSIX shell convention (128 + SIGINT/2)
+// so a CI step can distinguish "the user canceled" from "the operation
+// failed" by exit code alone, the same way a Ctrl-C'd shell pipeline
+// would propagate.
 const (
-	ExitOK       = 0
-	ExitError    = 1 // the command could not be completed
-	ExitNotFound = 2 // package/version/asset does not exist
-	ExitConflict = 3 // version already exists (use --force)
-	ExitMismatch = 4 // the check ran and found a difference: verify SHA mismatch, diff drift
+	ExitOK          = 0
+	ExitError       = 1 // the command could not be completed
+	ExitNotFound    = 2 // package/version/asset does not exist
+	ExitConflict    = 3 // version already exists (use --force)
+	ExitMismatch    = 4 // the check ran and found a difference: verify SHA mismatch, diff drift
+	ExitInterrupted = 130
 )

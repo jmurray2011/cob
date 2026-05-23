@@ -90,15 +90,15 @@ func TestLiveModelViewRendersTerminalStates(t *testing.T) {
 	}
 }
 
-// TestLiveModelCtrlCFiresInterruptAndQuits is the regression for the
-// stuck-during-pull bug: bubbletea puts the terminal in raw mode (ISIG
-// off), so the kernel never translates Ctrl-C into SIGINT. The model
-// has to catch the KeyMsg, set the shared interrupted flag (so the
-// renderer's post-Run path knows what happened), fire the registered
-// cancel callback (so in-flight AWS calls abort immediately), and
-// return tea.Quit (so bubbletea tears down the TUI). Skipping any of
-// those leaves the user stuck.
-func TestLiveModelCtrlCFiresInterruptAndQuits(t *testing.T) {
+// TestLiveModelFirstCtrlCSignalsCancelButStaysRunning locks the
+// lifecycle that the "Pulled 12 assets" misreport made necessary:
+// quitting bubbletea on the first Ctrl-C tears down the renderer
+// before the in-flight goroutines can emit their AssetFail events,
+// leaving the final paint frozen at the last progress bar. So the
+// first press sets the shared flag and fires the cancel callback,
+// but does NOT return tea.Quit — bubbletea keeps rendering until the
+// runXxx returns and defer out.Close() lands a quitMsg.
+func TestLiveModelFirstCtrlCSignalsCancelButStaysRunning(t *testing.T) {
 	interrupted := &atomic.Bool{}
 	var canceled atomic.Bool
 	m := newLiveModel(interrupted, func() { canceled.Store(true) })
@@ -106,17 +106,95 @@ func TestLiveModelCtrlCFiresInterruptAndQuits(t *testing.T) {
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 
 	if !interrupted.Load() {
-		t.Error("interrupted flag must be set on Ctrl-C")
+		t.Error("interrupted flag must be set on first Ctrl-C")
 	}
 	if !canceled.Load() {
-		t.Error("onInterrupt callback must fire on Ctrl-C")
+		t.Error("onInterrupt callback must fire on first Ctrl-C")
 	}
+	if cmd != nil {
+		t.Errorf("first Ctrl-C must NOT return tea.Quit (would lose in-flight events); got cmd %v", cmd)
+	}
+}
+
+// TestLiveModelSecondCtrlCForcesQuit is the escape hatch for goroutines
+// that won't respond to cancellation (network hung past the ctx cancel,
+// SDK still retrying, etc.). Pressing Ctrl-C a second time when
+// interrupted is already true returns tea.Quit immediately so the
+// operator gets their shell back.
+func TestLiveModelSecondCtrlCForcesQuit(t *testing.T) {
+	interrupted := &atomic.Bool{}
+	cancelCount := 0
+	m := newLiveModel(interrupted, func() { cancelCount++ })
+
+	// First press: signal cancel, stay running.
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd != nil {
+		t.Fatalf("first Ctrl-C should be a no-cmd (stay running); got %v", cmd)
+	}
+
+	// Second press: force quit.
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
-		t.Fatal("Ctrl-C must return tea.Quit")
+		t.Fatal("second Ctrl-C must return tea.Quit")
 	}
-	// tea.Quit is a function; calling it returns a tea.QuitMsg.
 	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Errorf("expected tea.QuitMsg, got %T", cmd())
+		t.Errorf("expected tea.QuitMsg on second Ctrl-C, got %T", cmd())
+	}
+	// The cancel callback should only have fired once — the second
+	// press is "give up on the cancel and force exit", not "cancel
+	// again".
+	if cancelCount != 1 {
+		t.Errorf("onInterrupt fired %d times, want 1 (second press should not re-fire)", cancelCount)
+	}
+}
+
+// TestLiveModelInterruptedViewShowsHint guarantees the user sees that
+// cob noticed the Ctrl-C while goroutines wind down — without it, the
+// wait between "I pressed Ctrl-C" and the final summary looked like a
+// hang.
+func TestLiveModelInterruptedViewShowsHint(t *testing.T) {
+	interrupted := &atomic.Bool{}
+	m := newLiveModel(interrupted, nil)
+	var im tea.Model = m
+	send := func(msg tea.Msg) { im, _ = im.Update(msg) }
+
+	send(assetStartMsg{name: "big.bin", size: 1000})
+	send(assetProgressMsg{name: "big.bin", delta: 200})
+	send(tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	out := im.(liveModel).View()
+	if !strings.Contains(out, "Canceling") {
+		t.Errorf("interrupted view should show a 'Canceling…' hint:\n%s", out)
+	}
+	// The active row is still there (bubbletea kept running so the
+	// AssetFail that will follow can be rendered onto it).
+	if !strings.Contains(out, "big.bin") {
+		t.Errorf("active row should remain in the view post-Ctrl-C:\n%s", out)
+	}
+}
+
+// TestLiveModelLateProgressIgnoredOnCanceledRow regression for: an
+// in-flight goroutine's last io.Copy buffer flush can land an
+// AssetProgress after the AssetFail. Without a state guard the failed
+// row's bar ticks past 100% and the row "revives" cosmetically.
+func TestLiveModelLateProgressIgnoredOnCanceledRow(t *testing.T) {
+	m := newLiveModel(nil, nil)
+	var im tea.Model = m
+	send := func(msg tea.Msg) { im, _ = im.Update(msg) }
+
+	send(assetStartMsg{name: "doomed.bin", size: 1000})
+	send(assetProgressMsg{name: "doomed.bin", delta: 300})
+	send(assetFailMsg{name: "doomed.bin", err: errors.New("canceled")})
+	// Now a late progress delta arrives (in the wild this is the last
+	// buffer the io.Copy was working on when ctx canceled).
+	send(assetProgressMsg{name: "doomed.bin", delta: 100})
+
+	row := im.(liveModel).byName["doomed.bin"]
+	if row.state != stateFailed {
+		t.Errorf("row should still be failed, got %v", row.state)
+	}
+	if row.bytes != 300 {
+		t.Errorf("late progress on a failed row must be dropped; bytes=%d, want 300", row.bytes)
 	}
 }
 

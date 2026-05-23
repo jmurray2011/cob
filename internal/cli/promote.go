@@ -264,6 +264,15 @@ func runPromote(ctx context.Context, cfg *Config, target, versionFlag, toRepo st
 
 	if !ok {
 		cmdResult.DurationMs = time.Since(start).Milliseconds()
+		// Interrupted (Ctrl-C in the live TUI) exits 130 so CI retries
+		// don't pick it up as a transient failure — see ExitInterrupted.
+		if out.Interrupted() {
+			cmdResult.Status = "interrupted"
+			out.Error("Interrupted.\n  %d of %d assets in place in %s. Version is unfinished — re-run with --resume to continue.",
+				copied+skipped, len(realNames), toRepo)
+			out.CommandResult(cmdResult)
+			return &ExitError{Code: cob.ExitInterrupted}
+		}
 		cmdResult.Status = "error"
 		cmdResult.Error = firstResultError(results)
 		out.Error("%s\n  %d of %d assets in place in %s. Version is unfinished — re-run with --resume to continue.",
