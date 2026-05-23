@@ -23,15 +23,21 @@ const currentPackageDir = ".cob"
 // so commands can surface "Using <coords> (from <source>)" to the
 // operator. A user who forgot they ran `cob use` last week shouldn't be
 // surprised by which package a no-arg command picked up.
+//
+// For flag/env sources the value is a fixed label; for disk sources it
+// is the path of the file that won — prettified so a cwd-local hit reads
+// "./.cob/current" and a home hit reads "~/.config/cob/current", but a
+// walk-up hit from a deep cwd shows the **absolute path of the ancestor**
+// so the operator can tell "this came from my project root .cob/current"
+// from "this came from /home/me/.cob/current set last month and
+// forgotten about." A "from .cob/current" message that's ambiguous
+// between those two is the exact footgun this naming avoids.
 type CurrentPackageSource string
 
 const (
 	SourceFlag    CurrentPackageSource = "--package flag"
 	SourceArg     CurrentPackageSource = "positional"
 	SourceEnv     CurrentPackageSource = "COB_PACKAGE_COORDS"
-	SourceCwd     CurrentPackageSource = "cwd .cob/current"
-	SourceCwdUp   CurrentPackageSource = "parent .cob/current"
-	SourceHome    CurrentPackageSource = "~/.config/cob/current"
 	SourceUnknown CurrentPackageSource = ""
 )
 
@@ -58,20 +64,51 @@ func CurrentPackage(cfg *Config) (coords string, src CurrentPackageSource, err e
 		// keeps the two from racing.
 		return cfg.PackageOverride, cfg.PackageOverrideSource, nil
 	}
-	if v, ok := readCwdCurrent(); ok {
-		v, src := v, SourceCwd
-		// Detect "walked up" by re-running the lookup and seeing whether
-		// the dir matches cwd.
-		cwd, _ := os.Getwd()
-		if dir, _ := findCobDir(cwd); dir != "" && filepath.Clean(dir) != filepath.Clean(filepath.Join(cwd, currentPackageDir)) {
-			src = SourceCwdUp
-		}
-		return v, src, nil
+	if v, path, ok := readCwdCurrent(); ok {
+		return v, prettifyPath(path), nil
 	}
-	if v, ok := readHomeCurrent(); ok {
-		return v, SourceHome, nil
+	if v, path, ok := readHomeCurrent(); ok {
+		return v, prettifyPath(path), nil
 	}
 	return "", SourceUnknown, nil
+}
+
+// prettifyPath turns an absolute path into the source label rendered
+// after "Using X (from ...)". The format follows operator intuition:
+//
+//   - Cwd-local hit (./.cob/current of the current dir): "./.cob/current"
+//     — short and unambiguous because the user is standing in this dir.
+//   - Home hit: "~/.config/cob/current" — recognizable across machines.
+//   - Anywhere else (walk-up from a deep cwd, custom XDG_CONFIG_HOME, …):
+//     the absolute path, so a walk-up to /home/me/work/.cob/current
+//     reads "from /home/me/work/.cob/current" instead of the ambiguous
+//     "from .cob/current" (which directory's?).
+func prettifyPath(absPath string) CurrentPackageSource {
+	abs, err := filepath.Abs(absPath)
+	if err != nil {
+		return CurrentPackageSource(absPath)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if cwdAbs, err := filepath.Abs(cwd); err == nil {
+			cwdLocal := filepath.Join(cwdAbs, currentPackageDir, currentPackageFile)
+			if filepath.Clean(abs) == filepath.Clean(cwdLocal) {
+				return CurrentPackageSource("./" + filepath.Join(currentPackageDir, currentPackageFile))
+			}
+		}
+	}
+	if home, err := homeCobDir(); err == nil {
+		homeFile := filepath.Join(home, currentPackageFile)
+		if filepath.Clean(abs) == filepath.Clean(homeFile) {
+			// Render under ~ when the path is inside the user's home —
+			// works whether home is XDG-relocated or the OS default.
+			if userHome, err := os.UserHomeDir(); err == nil {
+				if rel, err := filepath.Rel(userHome, abs); err == nil && !strings.HasPrefix(rel, "..") {
+					return CurrentPackageSource("~/" + filepath.ToSlash(rel))
+				}
+			}
+		}
+	}
+	return CurrentPackageSource(abs)
 }
 
 // SetCurrentPackage writes coords as the current package. When global is
@@ -142,18 +179,22 @@ func ClearCurrentPackage(global bool) (path string, err error) {
 }
 
 // readCwdCurrent walks from cwd up to the filesystem root looking for a
-// .cob/current. Returns (coords, true) on the first hit.
-func readCwdCurrent() (string, bool) {
+// .cob/current. Returns (coords, absolute-path-found, true) on the first
+// hit. The path is what gets prettified into the source attribution so
+// a walk-up from a deep cwd surfaces the actual ancestor location, not
+// a generic "parent .cob/current" that hides which ancestor.
+func readCwdCurrent() (string, string, bool) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	dir, _ := findCobDir(cwd)
 	if dir == "" {
-		return "", false
+		return "", "", false
 	}
-	v, ok := readCoordsFile(filepath.Join(dir, currentPackageFile))
-	return v, ok
+	path := filepath.Join(dir, currentPackageFile)
+	v, ok := readCoordsFile(path)
+	return v, path, ok
 }
 
 // findCobDir walks up from start looking for a .cob directory and
@@ -177,12 +218,15 @@ func findCobDir(start string) (string, error) {
 // readHomeCurrent reads ~/.config/cob/current. Missing or unreadable
 // home config is treated as "no global current" rather than an error,
 // so a broken permission doesn't block commands that wouldn't need it.
-func readHomeCurrent() (string, bool) {
+// Returns the absolute path alongside the coords for source attribution.
+func readHomeCurrent() (string, string, bool) {
 	dir, err := homeCobDir()
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
-	return readCoordsFile(filepath.Join(dir, currentPackageFile))
+	path := filepath.Join(dir, currentPackageFile)
+	v, ok := readCoordsFile(path)
+	return v, path, ok
 }
 
 // homeCobDir resolves ~/.config/cob (honoring XDG_CONFIG_HOME).

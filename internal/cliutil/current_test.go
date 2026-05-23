@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jmurray2011/cob/internal/output"
@@ -96,8 +97,10 @@ func TestCurrentPackageCwdBeatsHome(t *testing.T) {
 		if coords != "cwd/coords@1" {
 			t.Errorf("cwd should beat home, got %q", coords)
 		}
-		if src != SourceCwd {
-			t.Errorf("source = %q, want %q", src, SourceCwd)
+		// Direct cwd hit prettifies to "./.cob/current" — short and
+		// unambiguous because the operator is standing in this dir.
+		if string(src) != "./.cob/current" {
+			t.Errorf("cwd-direct source = %q, want %q", src, "./.cob/current")
 		}
 	})
 }
@@ -105,36 +108,71 @@ func TestCurrentPackageCwdBeatsHome(t *testing.T) {
 func TestCurrentPackageHomeFallback(t *testing.T) {
 	dir := t.TempDir() // no .cob here
 	withCwd(t, dir, func() {
-		withHomeRedirect(t)
+		home := withHomeRedirect(t)
 		_, _ = SetCurrentPackage("home/coords@1", true)
 		coords, src, _ := CurrentPackage(&Config{})
 		if coords != "home/coords@1" {
 			t.Errorf("home fallback should fire, got %q", coords)
 		}
-		if src != SourceHome {
-			t.Errorf("source = %q, want %q", src, SourceHome)
+		// Home renders under ~ when the path is inside the test's
+		// redirected HOME. Tolerate either "~/cob/current" (XDG sets
+		// UserConfigDir to $XDG_CONFIG_HOME directly, so homeCobDir is
+		// $XDG_CONFIG_HOME/cob) or the absolute path if the renderer
+		// couldn't relativize.
+		wantSuffix := "cob/current"
+		if !strings.HasSuffix(string(src), wantSuffix) {
+			t.Errorf("home source = %q, want to end in %q", src, wantSuffix)
+		}
+		// And it should contain the home base or render under ~.
+		if !strings.HasPrefix(string(src), "~/") && !strings.HasPrefix(string(src), home) {
+			t.Errorf("home source = %q, expected to start with ~/ or %q", src, home)
 		}
 	})
 }
 
-func TestCurrentPackageWalksUpForCobDir(t *testing.T) {
-	// Set a .cob/current in the project root, then cd into a deep
-	// subdirectory and confirm CurrentPackage walks back up to find it.
+func TestCurrentPackageWalksUpAndSourceShowsAncestorPath(t *testing.T) {
+	// The footgun this test exists to prevent: an ancestor directory has
+	// a forgotten .cob/current and you cd into a deep subdirectory of an
+	// unrelated project. The no-arg command inherits, the source
+	// attribution must NOT just say "from .cob/current" (which directory's?)
+	// — it must surface the absolute path of the ancestor that won, so
+	// the operator can see the resolution came from somewhere they
+	// didn't intend.
 	root := t.TempDir()
 	deep := filepath.Join(root, "a", "b", "c")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Set in root.
 	withCwd(t, root, func() {
 		_, _ = SetCurrentPackage("walked/up@1", false)
 	})
-	// Now from deep, lookup should still find it.
+
 	withCwd(t, deep, func() {
 		withHomeRedirect(t)
-		coords, _, _ := CurrentPackage(&Config{})
+		coords, src, _ := CurrentPackage(&Config{})
 		if coords != "walked/up@1" {
-			t.Errorf("cwd walk-up didn't find the parent's .cob/current, got %q", coords)
+			t.Errorf("cwd walk-up didn't find the ancestor's .cob/current, got %q", coords)
+		}
+		// The cwd is `deep`, the file is at `root/.cob/current`. The
+		// source must be the absolute path to that file — not the
+		// generic "./.cob/current" (which would falsely suggest the
+		// pointer lives in cwd) and not a generic label like
+		// "parent .cob/current" (which doesn't say which parent).
+		// EvalSymlinks-resolved to handle macOS /var → /private/var.
+		wantAbs := filepath.Join(root, ".cob", "current")
+		gotResolved, _ := filepath.EvalSymlinks(string(src))
+		wantResolved, _ := filepath.EvalSymlinks(wantAbs)
+		if gotResolved == "" {
+			gotResolved = string(src)
+		}
+		if wantResolved == "" {
+			wantResolved = wantAbs
+		}
+		if gotResolved != wantResolved {
+			t.Errorf("walk-up source = %q, want absolute ancestor path %q — operator must be able to tell *which* ancestor reached up to win", src, wantAbs)
+		}
+		if string(src) == "./.cob/current" {
+			t.Error("walk-up must not be labelled './.cob/current' — that's reserved for the cwd-direct hit; using it for a walk-up hides the ambiguity that motivates this attribution")
 		}
 	})
 }
