@@ -2,7 +2,8 @@ package cliutil
 
 import (
 	"context"
-	"sync"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/jmurray2011/cob/internal/cob"
 	"github.com/jmurray2011/cob/internal/output"
@@ -36,82 +37,53 @@ func ResolveConcurrency(requested int, out *output.Writer) int {
 }
 
 // RunConcurrent runs task for indices [0,n) with at most `limit` in flight,
-// returning results in index order. ctx is wrapped with a cancel that
-// fires on the first error so in-flight tasks see the cancellation and
-// can shortcut (AWS SDK calls abort, io.Copy bails) rather than running
-// to completion against an answer the caller is about to discard. The
-// task closure receives the wrapped ctx — not the outer one — so it must
-// pass that through to any SDK / context-aware call.
+// returning results in index order. Backed by golang.org/x/sync/errgroup:
 //
-// On the first error it stops scheduling new tasks (already-running
-// ones finish) and reports ok=false. limit is clamped to
-// [1,MaxConcurrency]; a clamped value of 1 runs strictly sequentially,
-// the exact pre-concurrency behaviour.
+//   - errgroup.WithContext returns a ctx that is canceled on the first
+//     non-nil error, so in-flight peers see the cancellation through
+//     their task's ctx and can shortcut (AWS SDK calls abort, io.Copy
+//     bails) rather than running to completion against an answer the
+//     caller is about to discard.
+//   - SetLimit(limit) caps in-flight goroutines — g.Go blocks until a
+//     slot opens, the same back-pressure shape the old hand-rolled
+//     channel-semaphore + WaitGroup produced.
+//
+// limit is clamped to [1,MaxConcurrency]; tasks must honor the passed
+// ctx to get the early-abort benefit (a task that ignores ctx will run
+// to completion even after a peer errored).
+//
+// Behavior note vs the pre-errgroup implementation: that version
+// short-circuited the scheduling loop on first error, so subsequent
+// indices never even got their goroutine spawned. With errgroup all N
+// g.Go calls eventually issue (gated by SetLimit) — but tasks scheduled
+// after cancellation see the canceled ctx immediately and exit, so the
+// observable behavior is the same for any ctx-respecting task. The
+// trade is ~one cheap goroutine per remaining index for the win of
+// shipping a 50-line hand-rolled fan-out in 8 lines built on the
+// canonical primitive.
 func RunConcurrent(ctx context.Context, n, limit int, task func(ctx context.Context, i int) (*cob.AssetResult, error)) (results []*cob.AssetResult, ok bool) {
 	results = make([]*cob.AssetResult, n)
 	if n == 0 {
 		return results, true
 	}
-	limit = ClampConcurrency(limit)
-	if limit == 1 {
-		for i := 0; i < n; i++ {
-			if ctx.Err() != nil {
-				return results, false
-			}
-			r, err := task(ctx, i)
-			results[i] = r
-			if err != nil {
-				return results, false
-			}
-		}
-		return results, true
+	// Pre-flight ctx check so a caller who passed in an already-canceled
+	// ctx gets ok=false without spawning any goroutines. errgroup by
+	// itself would queue all N g.Go calls; their tasks would then have
+	// to notice the canceled ctx and return non-nil for g.Wait to error.
+	// Tasks that ignore ctx (rare, but the API permits it) would
+	// otherwise return ok=true against a clearly-failed batch.
+	if err := ctx.Err(); err != nil {
+		return results, false
 	}
-
-	// Derive a cancelable ctx so the first error proactively aborts
-	// in-flight goroutines. defer cancel() also collapses the timer
-	// goroutine on normal completion.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var (
-		wg     sync.WaitGroup
-		mu     sync.Mutex
-		sem    = make(chan struct{}, limit)
-		failed bool
-	)
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(ClampConcurrency(limit))
 	for i := 0; i < n; i++ {
-		mu.Lock()
-		stop := failed
-		mu.Unlock()
-		if stop {
-			break
-		}
-		if ctx.Err() != nil {
-			// Ctx canceled before this task ran. Mark failed so ok=false
-			// reflects "we didn't complete the batch" — otherwise an
-			// already-canceled ctx with zero scheduled tasks would report
-			// ok=true, which lies about the caller's intent.
-			mu.Lock()
-			failed = true
-			mu.Unlock()
-			break
-		}
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			r, err := task(ctx, i)
-			mu.Lock()
-			results[i] = r
-			if err != nil {
-				failed = true
-				cancel() // signal in-flight peers to abort
-			}
-			mu.Unlock()
-		}(i)
+		i := i // capture before goroutine
+		g.Go(func() error {
+			r, err := task(gctx, i)
+			results[i] = r // unique index per goroutine — no mutex needed
+			return err     // first non-nil cancels gctx via errgroup
+		})
 	}
-	wg.Wait()
-
-	return results, !failed
+	return results, g.Wait() == nil
 }

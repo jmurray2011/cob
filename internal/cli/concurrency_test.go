@@ -62,8 +62,21 @@ func TestRunConcurrentOrderAndCompleteness(t *testing.T) {
 }
 
 func TestRunConcurrentSequentialStopsAtFirstError(t *testing.T) {
+	// With the errgroup migration, all N g.Go calls get queued; the
+	// short-circuit on first error happens via gctx cancellation, which
+	// only matters for tasks that respect ctx — that's the contract for
+	// real callers (publish/promote/pull/diff all pass ctx to AWS SDK
+	// calls which honor it). This test models that: each task checks
+	// gctx.Done before incrementing the call counter, so a goroutine
+	// scheduled after the i=3 error sees the canceled ctx and bails
+	// without touching the counter. The observable behavior matches the
+	// pre-errgroup version: 4 calls (0,1,2,3 ran fully; 3 then errored
+	// and canceled gctx; 4,5 saw the cancel and skipped).
 	var calls int32
-	results, ok := cliutil.RunConcurrent(context.Background(), 6, 1, func(_ context.Context, i int) (*cob.AssetResult, error) {
+	_, ok := cliutil.RunConcurrent(context.Background(), 6, 1, func(gctx context.Context, i int) (*cob.AssetResult, error) {
+		if gctx.Err() != nil {
+			return nil, gctx.Err()
+		}
 		atomic.AddInt32(&calls, 1)
 		if i == 3 {
 			return &cob.AssetResult{}, errors.New("boom")
@@ -73,11 +86,8 @@ func TestRunConcurrentSequentialStopsAtFirstError(t *testing.T) {
 	if ok {
 		t.Fatal("expected failure")
 	}
-	if calls != 4 { // 0,1,2,3 then stop
-		t.Fatalf("called %d times, want 4 (must stop after the failure)", calls)
-	}
-	if results[4] != nil || results[5] != nil {
-		t.Fatalf("post-failure tasks must not run: results[4]=%v results[5]=%v", results[4], results[5])
+	if calls != 4 { // 0,1,2,3 then ctx-canceled
+		t.Fatalf("called %d times, want 4 (post-failure tasks must respect gctx and bail before incrementing)", calls)
 	}
 }
 

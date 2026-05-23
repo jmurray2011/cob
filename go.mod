@@ -1,6 +1,6 @@
 module github.com/jmurray2011/cob
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.5
@@ -16,6 +16,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.4
+	golang.org/x/sync v0.20.0
 )
 
 require (
