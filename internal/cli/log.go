@@ -3,11 +3,11 @@ package cli
 import (
 	"context"
 	"strings"
-	"sync"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jmurray2011/cob/internal/cob"
+	"github.com/jmurray2011/cob/internal/concurrency"
 	"github.com/jmurray2011/cob/internal/manifest"
 )
 
@@ -146,46 +146,34 @@ func probeChainReferences(ctx context.Context, registry *cob.Registry, coords *c
 		return nil
 	}
 
-	statuses := make(map[string]chainRefStatus, len(refs))
-	var mu sync.Mutex
-	sem := make(chan struct{}, promotionStatusConcurrency)
-	var wg sync.WaitGroup
-
-	for ref := range refs {
-		if ctx.Err() != nil {
-			break
-		}
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(ref string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-
-			domain, repo, ok := strings.Cut(ref, "/")
-			if !ok || domain == "" || repo == "" {
-				mu.Lock()
-				statuses[ref] = chainRefUnknown
-				mu.Unlock()
-				return
-			}
-			probe := *coords
-			probe.Domain = domain
-			probe.Repository = repo
-			_, exists, err := registry.VersionStatus(ctx, &probe)
-			var s chainRefStatus
-			switch {
-			case err != nil:
-				s = chainRefUnknown
-			case !exists:
-				s = chainRefMissing
-			default:
-				s = chainRefOK
-			}
-			mu.Lock()
-			statuses[ref] = s
-			mu.Unlock()
-		}(ref)
+	// Convert the set to an ordered slice so ForEach can index-align;
+	// rebuild the keyed map afterward. Cheaper than the mutex-around-map
+	// pattern, and removes the lock altogether.
+	refKeys := make([]string, 0, len(refs))
+	for r := range refs {
+		refKeys = append(refKeys, r)
 	}
-	wg.Wait()
+	probed := concurrency.ForEach(ctx, refKeys, promotionStatusConcurrency, func(ctx context.Context, _ int, ref string) chainRefStatus {
+		domain, repo, ok := strings.Cut(ref, "/")
+		if !ok || domain == "" || repo == "" {
+			return chainRefUnknown
+		}
+		probe := *coords
+		probe.Domain = domain
+		probe.Repository = repo
+		_, exists, err := registry.VersionStatus(ctx, &probe)
+		switch {
+		case err != nil:
+			return chainRefUnknown
+		case !exists:
+			return chainRefMissing
+		default:
+			return chainRefOK
+		}
+	})
+	statuses := make(map[string]chainRefStatus, len(refKeys))
+	for i, ref := range refKeys {
+		statuses[ref] = probed[i]
+	}
 	return statuses
 }

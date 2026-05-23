@@ -3,11 +3,11 @@ package cli
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jmurray2011/cob/internal/cob"
+	"github.com/jmurray2011/cob/internal/concurrency"
 	"github.com/jmurray2011/cob/internal/manifest"
 	"github.com/jmurray2011/cob/internal/output"
 )
@@ -398,41 +398,28 @@ func runLsPromotionStatus(ctx context.Context, registry *cob.Registry, coords *c
 	// transient failure (throttle, network, access-denied) is distinct
 	// from "absent" — surface it as "?" so an operator never reads a
 	// check that never completed as "not promoted to this repo".
-	statuses := make([]cob.PromotionStatus, len(repos))
-	sem := make(chan struct{}, promotionStatusConcurrency)
-	var wg sync.WaitGroup
-	for i, repo := range repos {
-		if ctx.Err() != nil {
-			break
+	statuses := concurrency.ForEach(ctx, repos, promotionStatusConcurrency, func(ctx context.Context, _ int, repo string) cob.PromotionStatus {
+		checkCoords := &cob.PackageCoordinates{
+			Domain:     coords.Domain,
+			Repository: repo,
+			Namespace:  coords.Namespace,
+			Package:    coords.Package,
+			Version:    coords.Version,
 		}
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(i int, repo string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			checkCoords := &cob.PackageCoordinates{
-				Domain:     coords.Domain,
-				Repository: repo,
-				Namespace:  coords.Namespace,
-				Package:    coords.Package,
-				Version:    coords.Version,
+		s := cob.PromotionStatus{Repository: repo, Version: "-", Status: "-"}
+		st, found, err := registry.VersionStatus(ctx, checkCoords)
+		switch {
+		case err != nil:
+			s.Version, s.Status = "?", "?"
+		case found:
+			s.Version = coords.Version
+			if st == "" {
+				st = "-"
 			}
-			s := cob.PromotionStatus{Repository: repo, Version: "-", Status: "-"}
-			st, found, err := registry.VersionStatus(ctx, checkCoords)
-			switch {
-			case err != nil:
-				s.Version, s.Status = "?", "?"
-			case found:
-				s.Version = coords.Version
-				if st == "" {
-					st = "-"
-				}
-				s.Status = st
-			}
-			statuses[i] = s
-		}(i, repo)
-	}
-	wg.Wait()
+			s.Status = st
+		}
+		return s
+	})
 
 	if out.JSON(statuses) {
 		return nil

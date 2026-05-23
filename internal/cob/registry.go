@@ -4,18 +4,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
+
+	"github.com/jmurray2011/cob/internal/concurrency"
 )
 
 // versionMetaConcurrency bounds the parallel per-version metadata lookups
 // done by ListVersions, to keep `cob ls <pkg>` responsive without hammering
 // the CodeArtifact API into throttling.
 const versionMetaConcurrency = 8
+
+// maxPaginationIterations caps every CodeArtifact pagination loop. It's
+// belt-and-braces: a misbehaving SDK or transparent proxy that returned a
+// non-nil NextToken forever would otherwise loop until OOM via the
+// accumulating result slice. 10k pages × ~100 items/page = 1M items —
+// well past anything real cob would encounter.
+const maxPaginationIterations = 10000
 
 // ErrNotFound is wrapped into cob-level "not found" errors (e.g. no
 // published versions) that aren't an AWS ResourceNotFoundException, so
@@ -55,6 +63,7 @@ type DomainSummary struct {
 func (r *Registry) ListDomains(ctx context.Context) ([]DomainSummary, error) {
 	var results []DomainSummary
 	var nextToken *string
+	pages := 0
 
 	for {
 		out, err := r.client.CodeArtifact.ListDomains(ctx, &codeartifact.ListDomainsInput{
@@ -73,6 +82,10 @@ func (r *Registry) ListDomains(ctx context.Context) ([]DomainSummary, error) {
 		if out.NextToken == nil {
 			break
 		}
+		pages++
+		if pages >= maxPaginationIterations {
+			return nil, fmt.Errorf("listing domains: hit pagination safety cap of %d pages", maxPaginationIterations)
+		}
 		nextToken = out.NextToken
 	}
 
@@ -83,6 +96,7 @@ func (r *Registry) ListDomains(ctx context.Context) ([]DomainSummary, error) {
 func (r *Registry) ListRepositories(ctx context.Context, domain string) ([]string, error) {
 	var repos []string
 	var nextToken *string
+	pages := 0
 
 	for {
 		out, err := r.client.CodeArtifact.ListRepositoriesInDomain(ctx, &codeartifact.ListRepositoriesInDomainInput{
@@ -98,6 +112,10 @@ func (r *Registry) ListRepositories(ctx context.Context, domain string) ([]strin
 		if out.NextToken == nil {
 			break
 		}
+		pages++
+		if pages >= maxPaginationIterations {
+			return nil, fmt.Errorf("listing repositories in %s: hit pagination safety cap of %d pages", domain, maxPaginationIterations)
+		}
 		nextToken = out.NextToken
 	}
 
@@ -111,6 +129,7 @@ func (r *Registry) ListRepositories(ctx context.Context, domain string) ([]strin
 func (r *Registry) ListPackages(ctx context.Context, domain, repo string) ([]PackageSummary, error) {
 	var results []PackageSummary
 	var nextToken *string
+	pages := 0
 
 	for {
 		out, err := r.client.CodeArtifact.ListPackages(ctx, &codeartifact.ListPackagesInput{
@@ -134,6 +153,10 @@ func (r *Registry) ListPackages(ctx context.Context, domain, repo string) ([]Pac
 		if out.NextToken == nil {
 			break
 		}
+		pages++
+		if pages >= maxPaginationIterations {
+			return nil, fmt.Errorf("listing packages in %s/%s: hit pagination safety cap of %d pages", domain, repo, maxPaginationIterations)
+		}
 		nextToken = out.NextToken
 	}
 
@@ -149,31 +172,24 @@ func (r *Registry) ListPackages(ctx context.Context, domain, repo string) ([]Pac
 // package whose versions can't be listed degrades to "?" rather than failing
 // the whole listing. Only context cancellation is surfaced.
 func (r *Registry) populatePackageMeta(ctx context.Context, domain, repo string, pkgs []PackageSummary) error {
-	sem := make(chan struct{}, versionMetaConcurrency)
-	var wg sync.WaitGroup
-
-	for i := range pkgs {
-		if ctx.Err() != nil {
-			break
-		}
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			if ctx.Err() != nil {
-				return
-			}
-			latest, count, err := r.getLatestVersion(ctx, domain, repo, pkgs[i].Namespace, pkgs[i].Package)
-			if err != nil {
-				pkgs[i].LatestVersion, pkgs[i].VersionCount = "?", 0
-				return
-			}
-			pkgs[i].LatestVersion, pkgs[i].VersionCount = latest, count
-		}(i)
+	type fill struct {
+		latest string
+		count  int
 	}
-
-	wg.Wait()
+	fills := concurrency.ForEach(ctx, pkgs, versionMetaConcurrency, func(ctx context.Context, _ int, p PackageSummary) fill {
+		if ctx.Err() != nil {
+			return fill{latest: "?"}
+		}
+		latest, count, err := r.getLatestVersion(ctx, domain, repo, p.Namespace, p.Package)
+		if err != nil {
+			return fill{latest: "?"} // best-effort: surface as "?" rather than failing the whole listing
+		}
+		return fill{latest: latest, count: count}
+	})
+	for i, f := range fills {
+		pkgs[i].LatestVersion = f.latest
+		pkgs[i].VersionCount = f.count
+	}
 	return ctx.Err()
 }
 
@@ -185,6 +201,7 @@ func (r *Registry) populatePackageMeta(ctx context.Context, domain, repo string,
 func (r *Registry) ListVersions(ctx context.Context, coords *PackageCoordinates) ([]VersionSummary, error) {
 	var results []VersionSummary
 	var nextToken *string
+	pages := 0
 
 	for {
 		out, err := r.client.CodeArtifact.ListPackageVersions(ctx, &codeartifact.ListPackageVersionsInput{
@@ -213,6 +230,10 @@ func (r *Registry) ListVersions(ctx context.Context, coords *PackageCoordinates)
 		if out.NextToken == nil {
 			break
 		}
+		pages++
+		if pages >= maxPaginationIterations {
+			return nil, fmt.Errorf("listing versions of %s/%s: hit pagination safety cap of %d pages", coords.Namespace, coords.Package, maxPaginationIterations)
+		}
 		nextToken = out.NextToken
 	}
 
@@ -229,37 +250,29 @@ func (r *Registry) ListVersions(ctx context.Context, coords *PackageCoordinates)
 // window) leaves that row's Assets/Published zero rather than failing the
 // whole `ls` — mirroring getLatestVersion, which degrades to "?" instead of
 // erroring. Only context cancellation is surfaced.
-//
-// The semaphore is acquired before the goroutine is spawned, so it bounds
-// goroutine count (not just in-flight API calls) to versionMetaConcurrency.
-// Each goroutine writes a distinct slice index, so the post-Wait read needs
-// no lock.
 func (r *Registry) populateVersionMeta(ctx context.Context, coords *PackageCoordinates, versions []VersionSummary) error {
-	sem := make(chan struct{}, versionMetaConcurrency)
-	var wg sync.WaitGroup
-
-	for i := range versions {
-		if ctx.Err() != nil {
-			break
-		}
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			if ctx.Err() != nil {
-				return
-			}
-			assets, published, err := r.versionMeta(ctx, coords, versions[i].Version)
-			if err != nil {
-				return // best-effort: leave zero values for this version
-			}
-			versions[i].Assets = assets
-			versions[i].Published = published
-		}(i)
+	type fill struct {
+		assets    int
+		published time.Time
+		ok        bool
 	}
-
-	wg.Wait()
+	fills := concurrency.ForEach(ctx, versions, versionMetaConcurrency, func(ctx context.Context, _ int, v VersionSummary) fill {
+		if ctx.Err() != nil {
+			return fill{}
+		}
+		assets, published, err := r.versionMeta(ctx, coords, v.Version)
+		if err != nil {
+			return fill{} // best-effort: leave zero values for this version
+		}
+		return fill{assets: assets, published: published, ok: true}
+	})
+	for i, f := range fills {
+		if !f.ok {
+			continue
+		}
+		versions[i].Assets = f.assets
+		versions[i].Published = f.published
+	}
 	return ctx.Err()
 }
 
@@ -284,6 +297,7 @@ func (r *Registry) versionMeta(ctx context.Context, coords *PackageCoordinates, 
 
 	count := 0
 	var nextToken *string
+	pages := 0
 	for {
 		out, err := r.client.CodeArtifact.ListPackageVersionAssets(ctx, &codeartifact.ListPackageVersionAssetsInput{
 			Domain:         aws.String(coords.Domain),
@@ -301,6 +315,10 @@ func (r *Registry) versionMeta(ctx context.Context, coords *PackageCoordinates, 
 		if out.NextToken == nil {
 			break
 		}
+		pages++
+		if pages >= maxPaginationIterations {
+			return 0, time.Time{}, fmt.Errorf("listing assets for %s/%s@%s: hit pagination safety cap of %d pages", coords.Namespace, coords.Package, version, maxPaginationIterations)
+		}
 		nextToken = out.NextToken
 	}
 
@@ -311,6 +329,7 @@ func (r *Registry) versionMeta(ctx context.Context, coords *PackageCoordinates, 
 func (r *Registry) ListAssets(ctx context.Context, coords *PackageCoordinates) ([]AssetSummary, error) {
 	var results []AssetSummary
 	var nextToken *string
+	pages := 0
 
 	for {
 		out, err := r.client.CodeArtifact.ListPackageVersionAssets(ctx, &codeartifact.ListPackageVersionAssetsInput{
@@ -346,6 +365,10 @@ func (r *Registry) ListAssets(ctx context.Context, coords *PackageCoordinates) (
 
 		if out.NextToken == nil {
 			break
+		}
+		pages++
+		if pages >= maxPaginationIterations {
+			return nil, fmt.Errorf("listing assets for %s/%s@%s: hit pagination safety cap of %d pages", coords.Namespace, coords.Package, coords.Version, maxPaginationIterations)
 		}
 		nextToken = out.NextToken
 	}
@@ -425,6 +448,7 @@ func (r *Registry) ResolveLatest(ctx context.Context, coords *PackageCoordinates
 func (r *Registry) getLatestVersion(ctx context.Context, domain, repo, ns, pkg string) (string, int, error) {
 	var allVersions []string
 	var nextToken *string
+	pages := 0
 
 	for {
 		out, err := r.client.CodeArtifact.ListPackageVersions(ctx, &codeartifact.ListPackageVersionsInput{
@@ -448,6 +472,10 @@ func (r *Registry) getLatestVersion(ctx context.Context, domain, repo, ns, pkg s
 		}
 		if out.NextToken == nil {
 			break
+		}
+		pages++
+		if pages >= maxPaginationIterations {
+			return "", 0, fmt.Errorf("listing versions of %s/%s in %s/%s: hit pagination safety cap of %d pages", ns, pkg, domain, repo, maxPaginationIterations)
 		}
 		nextToken = out.NextToken
 	}

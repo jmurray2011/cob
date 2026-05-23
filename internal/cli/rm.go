@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jmurray2011/cob/internal/cob"
+	"github.com/jmurray2011/cob/internal/concurrency"
 	"github.com/jmurray2011/cob/internal/manifest"
 )
 
@@ -176,33 +176,27 @@ func findDownstreamCopies(ctx context.Context, registry *cob.Registry, coords *c
 	if err != nil {
 		return nil, err
 	}
-	found := make([]string, len(repos)) // index-aligned, "" means "not found / skipped"
-	sem := make(chan struct{}, promotionStatusConcurrency)
-	var wg sync.WaitGroup
-	for i, repo := range repos {
-		if repo == coords.Repository {
-			continue
+	// Filter self before fanning out: skipping inside the fn would leave a
+	// "" hole in the result slice that the post-loop already drops, but
+	// pre-filtering keeps the per-item callback uncluttered.
+	others := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		if repo != coords.Repository {
+			others = append(others, repo)
 		}
-		if ctx.Err() != nil {
-			break
-		}
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(i int, r string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			probe := *coords
-			probe.Repository = r
-			// A transient error per repo is intentionally ignored — a probe
-			// failure is not a green light to delete; the worst case is a
-			// missed downstream entry, which is bounded by --everywhere
-			// being the next required flag.
-			if _, exists, err := registry.VersionStatus(ctx, &probe); err == nil && exists {
-				found[i] = r
-			}
-		}(i, repo)
 	}
-	wg.Wait()
+	found := concurrency.ForEach(ctx, others, promotionStatusConcurrency, func(ctx context.Context, _ int, repo string) string {
+		probe := *coords
+		probe.Repository = repo
+		// A transient error per repo is intentionally ignored — a probe
+		// failure is not a green light to delete; the worst case is a
+		// missed downstream entry, which is bounded by --everywhere
+		// being the next required flag.
+		if _, exists, err := registry.VersionStatus(ctx, &probe); err == nil && exists {
+			return repo
+		}
+		return ""
+	})
 	var out []string
 	for _, r := range found {
 		if r != "" {
