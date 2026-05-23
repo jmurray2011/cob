@@ -71,6 +71,16 @@ func applyEnvFallbacks(cmd *cobra.Command, cfg *Config) {
 		if set, b := envBool("COB_TUI"); set {
 			cfg.NoTUI = !b
 		}
+		// ACCESSIBLE is a cross-tool convention (Charm libs, gh, etc.)
+		// for "I'm using a screen reader; please degrade to text". The
+		// live TUI's box-drawing and ANSI cursor movement are unusable
+		// in that mode — force the stream renderer regardless of TTY
+		// detection. Only set NoTUI=true; never unset (a user with both
+		// COB_TUI=1 and ACCESSIBLE=1 set still gets the accessible
+		// path, which is the conservative choice).
+		if set, b := envBool("ACCESSIBLE"); set && b {
+			cfg.NoTUI = true
+		}
 	}
 }
 

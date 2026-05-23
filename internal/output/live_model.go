@@ -6,9 +6,24 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// keyBindings are the keys the live view reacts to. Centralized so adding
+// a `help` bubble in the future picks them up via Bubbles' WithHelp text
+// automatically — and so the deliberate non-handling of `q`/`esc` (cob's
+// TUI is non-interactive; a stray keypress shouldn't kill a 15-minute
+// publish) stays an explicit, locatable decision.
+var keyBindings = struct {
+	cancel key.Binding
+}{
+	cancel: key.NewBinding(
+		key.WithKeys("ctrl+c"),
+		key.WithHelp("ctrl+c", "cancel (press twice to force-quit)"),
+	),
+}
 
 // tea.Msg types — these are the events liveRenderer forwards into the
 // program. Keeping them as concrete struct types (rather than interfaces
@@ -188,8 +203,9 @@ func (m liveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		//  the TUI so the operator gets their shell back; in-flight
 		//  goroutines will eventually clean up on their own.
 		//
-		// Other keys are no-ops — cob's TUI is non-interactive.
-		if msg.Type == tea.KeyCtrlC {
+		// Other keys are no-ops — cob's TUI is non-interactive (no
+		// `q`/`esc` quit so a stray keypress can't kill a long pull).
+		if key.Matches(msg, keyBindings.cancel) {
 			if m.interrupted != nil && m.interrupted.Load() {
 				return m, tea.Quit
 			}
@@ -392,16 +408,38 @@ type liveStyle struct {
 }
 
 func newLiveStyle() liveStyle {
+	// AdaptiveColor picks the right shade for the user's terminal
+	// background — lipgloss does the dark/light detection. The previous
+	// ANSI 16-color codes (10, 12, 8, ...) rendered as "bright blue" on
+	// Solarized-light terminals, which is essentially invisible. Hex
+	// codes pinned per side fix that without us having to detect
+	// anything ourselves.
 	return liveStyle{
-		done:     lipgloss.NewStyle().Foreground(lipgloss.Color("10")), // green
-		active:   lipgloss.NewStyle().Foreground(lipgloss.Color("12")), // blue
-		queued:   lipgloss.NewStyle().Foreground(lipgloss.Color("8")),  // dim
-		failed:   lipgloss.NewStyle().Foreground(lipgloss.Color("9")),  // red
-		skipped:  lipgloss.NewStyle().Foreground(lipgloss.Color("3")),  // yellow
-		meta:     lipgloss.NewStyle().Foreground(lipgloss.Color("8")),  // dim
-		barFill:  lipgloss.NewStyle().Foreground(lipgloss.Color("12")),
-		barEmpty: lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
-		summary:  lipgloss.NewStyle().Bold(true),
+		done: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
+			Light: "#2e7d32", Dark: "#7ee787", // green
+		}),
+		active: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
+			Light: "#0969da", Dark: "#79c0ff", // blue
+		}),
+		queued: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
+			Light: "#6e7781", Dark: "#7d8590", // dim gray
+		}),
+		failed: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
+			Light: "#cf222e", Dark: "#ff7b72", // red
+		}),
+		skipped: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
+			Light: "#9a6700", Dark: "#d29922", // amber
+		}),
+		meta: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
+			Light: "#6e7781", Dark: "#7d8590", // dim gray
+		}),
+		barFill: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
+			Light: "#0969da", Dark: "#79c0ff", // blue
+		}),
+		barEmpty: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
+			Light: "#d0d7de", Dark: "#3d444d", // dim gray, background-leaning
+		}),
+		summary: lipgloss.NewStyle().Bold(true),
 	}
 }
 

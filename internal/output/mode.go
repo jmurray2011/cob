@@ -11,7 +11,10 @@ package output
 //	Quiet → suppresses headers, summaries, and asset-stream events; errors
 //	        and warnings still surface
 //	NoTUI → forces the line-stream renderer even on an interactive TTY
-//	        (set by --no-tui or COB_TUI=0)
+//	        (set by --no-tui, COB_TUI=0, or ACCESSIBLE=1 — the live
+//	        TUI's box-drawing and color rely on ANSI escapes that screen
+//	        readers can't make sense of, so treat ACCESSIBLE as a hard
+//	        opt-out alongside the explicit flag)
 //
 // The decision tree the Writer uses to pick a renderer:
 //

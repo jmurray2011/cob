@@ -641,8 +641,14 @@ COB_JSON         Set 1/true to default to --json output
 COB_QUIET        Set 1/true to default to --quiet output
 COB_DEBUG        Set 1/true to default to --debug logging
 COB_TUI          Set 0 to disable the live progress view (same as --no-tui)
+ACCESSIBLE       Set 1 to force the line-stream renderer (screen-reader friendly)
 COB_VAR_*        Values for ${env.*} in source URIs (see Variable substitution)
 ```
+
+`ACCESSIBLE` is a cross-tool convention (Charm libs, `gh`, others) for
+"I'm using a screen reader; please degrade to plain text." cob honors it
+identically to `--no-tui` / `COB_TUI=0` -- the live TUI's box-drawing and
+cursor-positioning escapes are unusable in that mode.
 
 Standard AWS environment variables (`AWS_REGION`, `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) are also respected through the default credential chain.
 
