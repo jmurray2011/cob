@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -118,7 +119,8 @@ func runDiff(ctx context.Context, manifestPath, versionFlag string, deep bool) e
 			unknown++
 			ar.Method = "unknown"
 			out.Plain("  ? %s  (no source checksum; can't compare without download)", c.Name)
-		case c.SrcSHA != c.PubSHA:
+		case !strings.EqualFold(c.SrcSHA, c.PubSHA):
+			// hex SHA-256 case-insensitive — avoid spurious drift.
 			changed++
 			ar.Method = "changed"
 			out.Plain("  ~ %s  (%s -> %s)", c.Name, short(c.PubSHA), short(c.SrcSHA))

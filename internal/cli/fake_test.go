@@ -99,14 +99,17 @@ func (f *fakeCA) ListPackages(_ context.Context, in *codeartifact.ListPackagesIn
 }
 
 // useFake installs an in-memory CodeArtifact client and buffer-backed output
-// for one test, restoring the real seams and command flags on cleanup. The
-// returned buffers receive everything the command would have printed.
+// for one test, restoring every package-level seam and persistent flag on
+// cleanup. Saving each persistent flag is deliberate — a partial save/restore
+// would let a test that flips e.g. flagQuiet leak that state into the next.
+// The returned buffers receive everything the command would have printed.
 func useFake(t *testing.T, ca cob.CodeArtifactAPI) (stdout, stderr *bytes.Buffer) {
 	t.Helper()
 	stdout, stderr = &bytes.Buffer{}, &bytes.Buffer{}
 
 	origClient, origWriter := newClient, newWriter
-	origJSON, origProfile, origRegion := flagJSON, flagProfile, flagRegion
+	origJSON, origQuiet, origDebug := flagJSON, flagQuiet, flagDebug
+	origProfile, origRegion, origTmpDir := flagProfile, flagRegion, flagTmpDir
 
 	newClient = func(context.Context, cob.ClientOptions) (*cob.Client, error) {
 		return &cob.Client{CodeArtifact: ca, Region: "us-east-2"}, nil
@@ -114,11 +117,13 @@ func useFake(t *testing.T, ca cob.CodeArtifactAPI) (stdout, stderr *bytes.Buffer
 	newWriter = func(j bool) *output.Writer {
 		return output.NewWithWriters(stdout, stderr, j)
 	}
-	flagJSON, flagProfile, flagRegion = false, "", ""
+	flagJSON, flagQuiet, flagDebug = false, false, false
+	flagProfile, flagRegion, flagTmpDir = "", "", ""
 
 	t.Cleanup(func() {
 		newClient, newWriter = origClient, origWriter
-		flagJSON, flagProfile, flagRegion = origJSON, origProfile, origRegion
+		flagJSON, flagQuiet, flagDebug = origJSON, origQuiet, origDebug
+		flagProfile, flagRegion, flagTmpDir = origProfile, origRegion, origTmpDir
 	})
 	return stdout, stderr
 }

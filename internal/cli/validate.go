@@ -152,8 +152,10 @@ func validateSourceURI(uri, manifestDir string) (string, int64, error) {
 		if err != nil {
 			return "", 0, fmt.Errorf("local source not found: %s", path)
 		}
-		if info.IsDir() {
-			return "", 0, fmt.Errorf("local source is a directory: %s", path)
+		if !info.Mode().IsRegular() {
+			// FIFOs, sockets, device nodes etc. would hang the eventual
+			// publish; fail at validate time instead.
+			return "", 0, fmt.Errorf("local source is not a regular file: %s (mode %s)", path, info.Mode())
 		}
 		return filepath.Base(path), info.Size(), nil
 	}

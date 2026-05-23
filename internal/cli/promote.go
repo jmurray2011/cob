@@ -130,31 +130,9 @@ func runPromote(ctx context.Context, target, versionFlag, toRepo string, force, 
 		return runPromoteDryRun(ctx, cob.NewPromoter(client), coords, srcRepo, toRepo, exists, out)
 	}
 
-	// present holds the assets already in an unfinished destination version
-	// being resumed; for a normal promote it stays nil, so nothing is skipped.
-	var present map[string]cob.AssetSummary
-	switch {
-	case resume:
-		if !exists {
-			return fail(out, "promote", cob.ExitError,
-				"no version %s in %s to resume — run promote without --resume", coords.Version, toRepo)
-		}
-		if status != "Unfinished" {
-			return fail(out, "promote", cob.ExitError,
-				"version %s in %s is not resumable (status %q) — only an unfinished promote can be resumed; use --force to overwrite", coords.Version, toRepo, status)
-		}
-		listed, lerr := registry.ListAssets(ctx, destCoords)
-		if lerr != nil {
-			return fail(out, "promote", cob.ExitError, "listing already-promoted assets: %s", lerr)
-		}
-		present = make(map[string]cob.AssetSummary, len(listed))
-		for _, a := range listed {
-			present[a.Name] = a
-		}
-	case exists && !force:
-		return fail(out, "promote", cob.ExitConflict,
-			"version %s already exists in %s. Use --force to overwrite, or --resume to continue an unfinished promote.",
-			coords.Version, toRepo)
+	present, code, gerr := gatePromote(ctx, registry, destCoords, toRepo, status, exists, resume, force)
+	if gerr != nil {
+		return fail(out, "promote", code, "%s", gerr)
 	}
 
 	verb := "Promoting"
@@ -414,4 +392,40 @@ func reconcilePromotedAssets(recorded []cob.ProvenanceEntry, realNames []string,
 		out = append(out, entry)
 	}
 	return out
+}
+
+// gatePromote enforces promote's destination precondition: a fresh dest
+// (default), an existing dest with --force, or an Unfinished dest with
+// --resume. For --resume it also returns the assets already in the dest
+// (the caller will skip copying those). Symmetric to gatePublish so the
+// two stay in sync as resume logic evolves.
+func gatePromote(ctx context.Context, registry *cob.Registry, destCoords *cob.PackageCoordinates,
+	toRepo, status string, exists, resume, force bool) (present map[string]cob.AssetSummary, exitCode int, err error) {
+
+	switch {
+	case resume:
+		if !exists {
+			return nil, cob.ExitError, fmt.Errorf(
+				"no version %s in %s to resume — run promote without --resume",
+				destCoords.Version, toRepo)
+		}
+		if status != "Unfinished" {
+			return nil, cob.ExitError, fmt.Errorf(
+				"version %s in %s is not resumable (status %q) — only an unfinished promote can be resumed; use --force to overwrite",
+				destCoords.Version, toRepo, status)
+		}
+		listed, lerr := registry.ListAssets(ctx, destCoords)
+		if lerr != nil {
+			return nil, cob.ExitError, fmt.Errorf("listing already-promoted assets: %w", lerr)
+		}
+		present = make(map[string]cob.AssetSummary, len(listed))
+		for _, a := range listed {
+			present[a.Name] = a
+		}
+	case exists && !force:
+		return nil, cob.ExitConflict, fmt.Errorf(
+			"version %s already exists in %s -- use --force to overwrite, or --resume to continue an unfinished promote",
+			destCoords.Version, toRepo)
+	}
+	return present, cob.ExitOK, nil
 }

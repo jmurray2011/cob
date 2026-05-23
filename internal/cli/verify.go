@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -135,7 +136,9 @@ func runVerifyManifest(ctx context.Context, manifestPath, versionFlag string, de
 			unverified++
 			ar.Method = "unverified"
 			out.AssetSkipped(c.Name + " (no checksum/provenance; use --deep to hash)")
-		case c.SrcSHA == c.PubSHA:
+		case strings.EqualFold(c.SrcSHA, c.PubSHA):
+			// hex SHA-256 is case-insensitive — different sources/SDKs return
+			// upper- vs lower-hex, so EqualFold avoids a spurious mismatch.
 			ar.Method = "match(" + c.SrcFrom + ")"
 			out.AssetOK(&ar, c.Source)
 		default:
@@ -246,7 +249,8 @@ func runVerifyCoords(ctx context.Context, target, versionFlag string) error {
 			failures++
 			ar.Method = "missing"
 			out.AssetFail(e.Asset, e.Source, fmt.Errorf("recorded in provenance but not in the published version"))
-		case cur == e.SHA256:
+		case strings.EqualFold(cur, e.SHA256):
+			// hex SHA-256 case-insensitive — see compareManifestToPublished.
 			ar.Method = "match(provenance)"
 			out.AssetOK(&ar, e.Source)
 		default:

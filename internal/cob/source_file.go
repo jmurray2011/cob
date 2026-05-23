@@ -36,8 +36,10 @@ func (f *FileSource) Resolve(_ context.Context) (*AssetMetadata, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stat %s: %w", f.path, err)
 	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("%s is a directory, not a file", f.path)
+	if !info.Mode().IsRegular() {
+		// FIFOs, sockets, device nodes etc. would either block forever on
+		// Open or stream attacker-controlled bytes — fail fast and clearly.
+		return nil, fmt.Errorf("%s is not a regular file (mode %s)", f.path, info.Mode())
 	}
 	return &AssetMetadata{Size: info.Size()}, nil
 }

@@ -271,6 +271,53 @@ func TestGatePublish(t *testing.T) {
 	})
 }
 
+func TestGatePromote(t *testing.T) {
+	ctx := context.Background()
+	dest := &cob.PackageCoordinates{Domain: "d", Repository: "prod", Namespace: "n", Package: "p", Version: "1.0.0"}
+	reg := func(ca *fakeCA) *cob.Registry { return cob.NewRegistry(&cob.Client{CodeArtifact: ca}) }
+
+	t.Run("fresh destination: no gate fires", func(t *testing.T) {
+		present, code, err := gatePromote(ctx, reg(&fakeCA{}), dest, "prod", "", false, false, false)
+		if err != nil || code != cob.ExitOK || present != nil {
+			t.Fatalf("got present=%v code=%d err=%v", present, code, err)
+		}
+	})
+	t.Run("existing dest without --force is a conflict", func(t *testing.T) {
+		_, code, err := gatePromote(ctx, reg(&fakeCA{}), dest, "prod", "Published", true, false, false)
+		if code != cob.ExitConflict || err == nil {
+			t.Fatalf("got code=%d err=%v", code, err)
+		}
+	})
+	t.Run("existing dest with --force is allowed", func(t *testing.T) {
+		_, code, err := gatePromote(ctx, reg(&fakeCA{}), dest, "prod", "Published", true, false, true)
+		if err != nil || code != cob.ExitOK {
+			t.Fatalf("got code=%d err=%v", code, err)
+		}
+	})
+	t.Run("--resume with no dest errors", func(t *testing.T) {
+		_, code, err := gatePromote(ctx, reg(&fakeCA{}), dest, "prod", "", false, true, false)
+		if code != cob.ExitError || err == nil {
+			t.Fatalf("got code=%d err=%v", code, err)
+		}
+	})
+	t.Run("--resume on Published (not Unfinished) errors", func(t *testing.T) {
+		_, code, err := gatePromote(ctx, reg(&fakeCA{}), dest, "prod", "Published", true, true, false)
+		if code != cob.ExitError || err == nil {
+			t.Fatalf("got code=%d err=%v", code, err)
+		}
+	})
+	t.Run("--resume on Unfinished returns the present map", func(t *testing.T) {
+		present, code, err := gatePromote(ctx, reg(&fakeCA{listAssetsFn: oneAsset("app.bin", 9)}),
+			dest, "prod", "Unfinished", true, true, false)
+		if err != nil || code != cob.ExitOK {
+			t.Fatalf("got code=%d err=%v", code, err)
+		}
+		if _, ok := present["app.bin"]; !ok {
+			t.Errorf("present = %v, want app.bin", present)
+		}
+	})
+}
+
 func TestRunPromote(t *testing.T) {
 	ctx := context.Background()
 
@@ -499,6 +546,16 @@ func TestRunVerify(t *testing.T) {
 		useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, helloSHA)})
 		if err := runVerify(ctx, writeHelloManifest(t), "1.0.0", true); err != nil {
 			t.Fatalf("verify clean: %v", err)
+		}
+	})
+
+	t.Run("uppercase-hex SHA still matches (case-insensitive)", func(t *testing.T) {
+		// hex SHA-256 is case-insensitive; different sources return upper
+		// vs lower. A case-sensitive compare here would be a spurious
+		// mismatch on bytes that are actually identical.
+		useFake(t, &fakeCA{listAssetsFn: publishedAsset("payload.txt", 5, strings.ToUpper(helloSHA))})
+		if err := runVerify(ctx, writeHelloManifest(t), "1.0.0", true); err != nil {
+			t.Fatalf("uppercase-hex must still match the lowercase source hash: %v", err)
 		}
 	})
 

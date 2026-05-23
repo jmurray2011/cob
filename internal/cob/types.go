@@ -17,7 +17,7 @@ type AssetResult struct {
 	Source     string `json:"source,omitempty"`
 	Size       int64  `json:"size"`
 	SHA256     string `json:"sha256"`
-	Method     string `json:"method"` // transfer/verify outcome, e.g. buffered, skipped, match(...), mismatch, missing
+	Method     string `json:"method"` // transfer/verify outcome, e.g. spilled, skipped, match(...), mismatch, missing, drift
 	DurationMs int64  `json:"duration_ms"`
 	Error      error  `json:"-"`
 	ErrorMsg   string `json:"error,omitempty"`
@@ -72,7 +72,10 @@ type AssetSummary struct {
 type PromotionStatus struct {
 	Repository string `json:"repository"`
 	Version    string `json:"version"`
-	Status     string `json:"status"` // "Published" or "-"
+	// Status is the CodeArtifact version status as observed in this repo:
+	// "Published", "Unfinished", "Unlisted", "Archived", etc., or "-" when
+	// the version isn't present and "?" when the check itself failed.
+	Status string `json:"status"`
 }
 
 // FormatGeneric is the CodeArtifact package format used by cob.
