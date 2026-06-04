@@ -72,6 +72,11 @@ type ClientOptions struct {
 	Debug bool
 	// TmpDir overrides the asset spill directory (see Client.TmpDir).
 	TmpDir string
+	// Trace, when non-nil, receives one entry per CodeArtifact/S3 call the
+	// resulting client makes (operation + targeted coordinates). Wired to
+	// --verbose. Distinct from Debug: Debug is the SDK's own response/retry
+	// logging; Trace is cob's coarse "which calls did this command issue".
+	Trace TraceFunc
 }
 
 // NewClient creates a Client using the standard credential chain.
@@ -103,9 +108,20 @@ func NewClient(ctx context.Context, opts ClientOptions) (*Client, error) {
 		}
 	}
 
+	var s3API S3API = s3.NewFromConfig(cfg)
+	var caAPI CodeArtifactAPI = codeartifact.NewFromConfig(cfg)
+	if opts.Trace != nil {
+		// Wrap the read/transfer clients so --verbose can trace each call.
+		// (A cross-region S3 redirect rebuilds its client via rebuildS3Client
+		// and drops the wrapper, so calls after a redirect aren't traced —
+		// an acceptable gap for a coarse trace.)
+		s3API = tracedS3{inner: s3API, trace: opts.Trace}
+		caAPI = tracedCA{inner: caAPI, trace: opts.Trace}
+	}
+
 	return &Client{
-		S3:           s3.NewFromConfig(cfg),
-		CodeArtifact: codeartifact.NewFromConfig(cfg),
+		S3:           s3API,
+		CodeArtifact: caAPI,
 		STS:          sts.NewFromConfig(cfg),
 		Region:       cfg.Region,
 		TmpDir:       opts.TmpDir,

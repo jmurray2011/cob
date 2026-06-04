@@ -33,7 +33,7 @@ func runManifest(ctx context.Context, cfg *cliutil.Config, out *output.Writer, m
 		Namespace: m.Namespace, Package: m.Package, Version: version,
 	}
 
-	client, err := cliutil.DialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg, out)
 	if err != nil {
 		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}

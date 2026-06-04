@@ -79,7 +79,7 @@ func runRm(ctx context.Context, cfg *cliutil.Config, target string, force, every
 		return cliutil.Fail(out, "rm", cob.ExitError, "--everywhere requires --force")
 	}
 
-	client, err := cliutil.DialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg, out)
 	if err != nil {
 		return cliutil.Fail(out, "rm", cob.ExitError, "%s", err)
 	}

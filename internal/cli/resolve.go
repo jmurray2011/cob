@@ -45,7 +45,7 @@ func runResolve(ctx context.Context, cfg *cliutil.Config, args []string) error {
 		return cliutil.Fail(out, "resolve", cob.ExitError, "full coordinates required (domain/repo/namespace/package)")
 	}
 
-	client, err := cliutil.DialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg, out)
 	if err != nil {
 		return cliutil.Fail(out, "resolve", cob.ExitError, "%s", err)
 	}

@@ -39,7 +39,7 @@ func runVersions(ctx context.Context, cfg *cliutil.Config, out *output.Writer, l
 			left.Namespace, left.Package, right.Namespace, right.Package)
 	}
 
-	client, err := cliutil.DialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg, out)
 	if err != nil {
 		return cliutil.Fail(out, "diff", cob.ExitError, "%s", err)
 	}
