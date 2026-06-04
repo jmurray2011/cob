@@ -265,7 +265,8 @@ func readCoordsFile(path string) (string, bool) {
 // set. Phrased to point at the fix.
 func PackageOverrideMissingErr(cmd string) error {
 	return fmt.Errorf(
-		"no coordinates and no current package set — pass <coordinates> or run `cob use <coordinates>` first",
+		"%s needs coordinates: none given and no current package set — pass <coordinates> or run `cob use <coordinates>` first",
+		cmd,
 	)
 }
 
