@@ -183,8 +183,11 @@ cob rm my-domain/dev/my-namespace/my-package@2.1.0 --force --everywhere
 you name the bytes explicitly. With `--force` on a Published version, cob
 probes every other repo in the same domain; if any holds the same version
 (meaning a `promote` once recorded `from: <this-repo>`), the deletion
-refuses and lists those repos. `--force --everywhere` overrides; the
-confirm prompt then names the chains that will dangle.
+refuses and lists those repos. If a probe can't be completed (a transient
+error), cob treats that repo as *unverified* rather than empty and refuses
+the same way — a failed check is not evidence of "no downstream copy".
+`--force --everywhere` overrides either case; the confirm prompt then names
+the chains that will dangle.
 
 Deletion destroys the `cob-provenance.json` along with the assets;
 there is no soft-delete or archive.

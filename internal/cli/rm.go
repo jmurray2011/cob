@@ -109,9 +109,20 @@ func runRm(ctx context.Context, cfg *cliutil.Config, target string, force, every
 	}
 	var downstream []string
 	if isPublished && force {
-		downstream, err = findDownstreamCopies(ctx, registry, coords)
+		var unverified []string
+		downstream, unverified, err = findDownstreamCopies(ctx, registry, coords)
 		if err != nil {
 			return cliutil.Fail(out, "rm", cob.ExitError, "checking downstream copies: %s", err)
+		}
+		// A probe that errored is not evidence of "no copy" — treating it as
+		// such would let --force silently break an unverified repo's
+		// chain-of-evidence. Refuse unless the operator opts past the check
+		// with --everywhere (same escape hatch as a confirmed downstream copy).
+		if len(unverified) > 0 && !everywhere {
+			return cliutil.Fail(out, "rm", cob.ExitConflict,
+				"could not verify whether %s/{%s} hold promoted copies (transient errors checking them). "+
+					"Re-run, or use --force --everywhere to delete without the downstream check.",
+				coords.Domain, strings.Join(unverified, ","))
 		}
 		if len(downstream) > 0 && !everywhere {
 			return cliutil.Fail(out, "rm", cob.ExitConflict,
@@ -170,41 +181,50 @@ func buildRmPrompt(coords *cob.PackageCoordinates, status string, downstream []s
 
 // findDownstreamCopies returns the repositories in coords.Domain that hold
 // the same version of the same package, excluding coords.Repository
-// itself. Probes are fanned out concurrently — matching the
-// promotion-status pattern — so a 50-repo domain doesn't make rm wait
-// minutes for its safety gate.
-func findDownstreamCopies(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates) ([]string, error) {
+// itself. It also returns the repos whose probe could not be completed
+// (transient error): those are NOT evidence of absence, so the caller must
+// refuse a --force delete that would otherwise dangle their
+// chain-of-evidence unverified. Probes are fanned out concurrently —
+// matching the promotion-status pattern — so a 50-repo domain doesn't make
+// rm wait minutes for its safety gate.
+func findDownstreamCopies(ctx context.Context, registry *cob.Registry, coords *cob.PackageCoordinates) (found, unverified []string, err error) {
 	repos, err := registry.ListRepositories(ctx, coords.Domain)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Filter self before fanning out: skipping inside the fn would leave a
-	// "" hole in the result slice that the post-loop already drops, but
-	// pre-filtering keeps the per-item callback uncluttered.
+	// zero-value hole in the result slice that the post-loop already drops,
+	// but pre-filtering keeps the per-item callback uncluttered.
 	others := make([]string, 0, len(repos))
 	for _, repo := range repos {
 		if repo != coords.Repository {
 			others = append(others, repo)
 		}
 	}
-	found := concurrency.ForEach(ctx, others, cliutil.PromotionStatusConcurrency, func(ctx context.Context, _ int, repo string) string {
-		probe := *coords
-		probe.Repository = repo
-		// A transient error per repo is intentionally ignored — a probe
-		// failure is not a green light to delete; the worst case is a
-		// missed downstream entry, which is bounded by --everywhere
-		// being the next required flag.
-		if _, exists, err := registry.VersionStatus(ctx, &probe); err == nil && exists {
-			return repo
+	// probe records one repo's outcome: present (holds a copy) and/or
+	// errored (the check itself failed and must be surfaced, not swallowed).
+	type probe struct {
+		repo            string
+		present, failed bool
+	}
+	results := concurrency.ForEach(ctx, others, cliutil.PromotionStatusConcurrency, func(ctx context.Context, _ int, repo string) probe {
+		c := *coords
+		c.Repository = repo
+		_, exists, err := registry.VersionStatus(ctx, &c)
+		if err != nil {
+			return probe{repo: repo, failed: true}
 		}
-		return ""
+		return probe{repo: repo, present: exists}
 	})
-	var out []string
-	for _, r := range found {
-		if r != "" {
-			out = append(out, r)
+	for _, r := range results {
+		switch {
+		case r.failed:
+			unverified = append(unverified, r.repo)
+		case r.present:
+			found = append(found, r.repo)
 		}
 	}
-	sort.Strings(out)
-	return out, nil
+	sort.Strings(found)
+	sort.Strings(unverified)
+	return found, unverified, nil
 }
