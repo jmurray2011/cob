@@ -8,8 +8,31 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 )
+
+// TestFetchAssetInfoPaginationSafetyCap pins the belt-and-braces page cap
+// the registry paginators use onto FetchAssetInfo, which every pull depends
+// on. A misbehaving SDK/proxy that returns a non-nil NextToken forever must
+// error rather than loop or OOM.
+func TestFetchAssetInfoPaginationSafetyCap(t *testing.T) {
+	var calls int
+	ca := &fakeCA{listAssetsFn: func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
+		calls++
+		return &codeartifact.ListPackageVersionAssetsOutput{NextToken: aws.String("forever")}, nil
+	}}
+	_, err := NewPuller(newTestClient(ca)).FetchAssetInfo(context.Background(), coords())
+	if err == nil {
+		t.Fatal("expected pagination safety cap to error out")
+	}
+	if !strings.Contains(err.Error(), "pagination safety cap") {
+		t.Errorf("error should mention the cap, got %v", err)
+	}
+	if calls > maxPaginationIterations+1 {
+		t.Errorf("paginator made %d calls, expected at most %d (cap + 1)", calls, maxPaginationIterations+1)
+	}
+}
 
 func getAsset(content string) func(*codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
 	return func(*codeartifact.GetPackageVersionAssetInput) (*codeartifact.GetPackageVersionAssetOutput, error) {
