@@ -148,9 +148,10 @@ func UseFake(t *testing.T, ca cob.CodeArtifactAPI) (cfg *cliutil.Config, stdout,
 		// engaged from a unit test — deterministic output, no TUI
 		// teardown to wait on.
 		return output.NewWithWriters(stdout, stderr, output.Mode{
-			JSON:  c.JSON,
-			Quiet: c.Quiet,
-			NoTUI: c.NoTUI,
+			JSON:    c.JSON,
+			Quiet:   c.Quiet,
+			NoTUI:   c.NoTUI,
+			Verbose: c.Verbose,
 		})
 	}
 

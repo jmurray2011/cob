@@ -121,6 +121,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, toRepo s
 	if err := cliutil.ResolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
 		return cliutil.Fail(out, "promote", cliutil.CodeFor(err), "%s", err)
 	}
+	out.Verbosef("promote %s/%s@%s: %s -> %s", coords.Namespace, coords.Package, coords.Version, srcRepo, toRepo)
 
 	// Check if version exists in destination.
 	destCoords := &cob.PackageCoordinates{
@@ -209,6 +210,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, toRepo s
 	for i, name := range realNames {
 		if a, done := present[name]; done {
 			out.AssetSkipped(name)
+			out.Verbosef("skip %s: already present in %s (resume)", name, toRepo)
 			results[i] = &cob.AssetResult{Name: name, Kind: cob.KindTransfer, SHA256: a.SHA256, Size: a.Size, Method: cob.TransferSkipped}
 			continue
 		}
@@ -223,6 +225,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, toRepo s
 			out.AssetFail(name, "", err)
 			return ar, err
 		}
+		out.Verbosef("%s: %s %s in %dms", name, ar.Method, output.FormatSize(ar.Size), ar.DurationMs)
 		out.AssetOK(ar, "")
 		return ar, nil
 	}

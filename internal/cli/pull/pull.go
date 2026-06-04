@@ -204,6 +204,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, destinat
 	if err := cliutil.ResolveLatestIfNeeded(ctx, coords, registry, out); err != nil {
 		return cliutil.Fail(out, "pull", cliutil.CodeFor(err), "%s", err)
 	}
+	out.Verbosef("target %s/%s/%s/%s@%s", coords.Domain, coords.Repository, coords.Namespace, coords.Package, coords.Version)
 
 	// Fetch all asset metadata in a single API call.
 	allAssets, err := puller.FetchAssetInfo(ctx, coords)
@@ -277,7 +278,9 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, destinat
 		}
 		if ar.Method == "skipped" {
 			out.AssetSkipped(info.Name)
+			out.Verbosef("skip %s: present with matching SHA-256", info.Name)
 		} else {
+			out.Verbosef("%s: %s %s in %dms", info.Name, ar.Method, output.FormatSize(ar.Size), ar.DurationMs)
 			out.AssetOK(ar, "")
 		}
 		return ar, nil
