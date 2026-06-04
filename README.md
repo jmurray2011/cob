@@ -671,6 +671,7 @@ COB_VAR_GIT_SHA=abc123 cob publish my-package.yaml --version 2.1.0
 --region       AWS region
 --json         Machine-readable JSON output
 --quiet, -q    Suppress headers, summaries, and progress (errors still print)
+--verbose      Log cob's own steps -- coordinate resolution, source list, skip reasons, per-asset timing, and one line per AWS call -- to stderr (also: COB_VERBOSE)
 --debug        Log AWS API responses/retries to stderr
 --tmpdir       Directory for streaming spill files (default: $TMPDIR)
 --no-tui       Force line-stream output even on a TTY (also: COB_TUI=0)
@@ -688,7 +689,15 @@ updates). `--no-tui` (or `COB_TUI=0`) forces stream output even on a
 TTY -- useful for screen recording, exotic terminal emulators, or
 copy-paste-friendly logs.
 
-`--debug` is the first thing to reach for when an AWS call fails for a
+`--verbose` and `--debug` are different lenses. `--verbose` narrates what
+*cob* is doing -- which coordinates a target resolved to, which source URIs
+it's publishing, why an asset was skipped, how long each transfer took, and
+one `aws <Operation> <coords>` line per CodeArtifact/S3 call -- as
+`verbose:`-prefixed lines on stderr (never stdout, so `--json` stays clean;
+emitted even under `--quiet`, since you asked for it). It has no `-v` short:
+`diff` keeps `-v` for its per-row detail.
+
+`--debug` is the lower-level lens for when an AWS call fails for a
 non-obvious reason (region, credentials, throttling) -- it logs every AWS
 response status line and retry attempt to stderr without touching stdout.
 Request logging is deliberately omitted: a signed AWS request header carries
@@ -722,6 +731,7 @@ COB_TMPDIR           Spill directory (--tmpdir fallback)
 COB_TIMEOUT          Deadline for long-running ops (--timeout fallback, e.g. 30m)
 COB_JSON             Set 1/true to default to --json output
 COB_QUIET            Set 1/true to default to --quiet output
+COB_VERBOSE          Set 1/true to default to --verbose step/AWS-call tracing
 COB_DEBUG            Set 1/true to default to --debug logging
 COB_TUI              Set 0 to disable the live progress view (same as --no-tui)
 ACCESSIBLE           Set 1 to force the line-stream renderer (screen-reader friendly)
