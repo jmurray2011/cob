@@ -282,7 +282,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, toRepo s
 			return &cliutil.ExitError{Code: cob.ExitInterrupted}
 		}
 		cmdResult.Status = "error"
-		cmdResult.Error = firstResultError(results)
+		cmdResult.Error = cliutil.FirstResultError(results)
 		out.Error("%s\n  %d of %d assets in place in %s. Version is unfinished — re-run with --resume to continue.",
 			cmdResult.Error, copied+skipped, len(realNames), toRepo)
 		out.CommandResult(cmdResult)
@@ -450,15 +450,4 @@ func gatePromote(ctx context.Context, registry *cob.Registry, destCoords *cob.Pa
 			destCoords.Version, toRepo)
 	}
 	return present, cob.ExitOK, nil
-}
-
-// firstResultError returns the error message of the first failed asset
-// result, for the partial-failure summary.
-func firstResultError(results []*cob.AssetResult) string {
-	for _, r := range results {
-		if r != nil && r.ErrorMsg != "" {
-			return r.ErrorMsg
-		}
-	}
-	return "asset transfer failed"
 }

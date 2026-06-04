@@ -270,7 +270,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, manifestPath, versionFlag str
 			return &cliutil.ExitError{Code: cob.ExitInterrupted}
 		}
 		result.Status = "error"
-		result.Error = firstResultError(results)
+		result.Error = cliutil.FirstResultError(results)
 		out.Error("%s\n  %d of %d assets in place. Version is unfinished — re-run with --resume to continue.",
 			result.Error, uploaded+skipped, len(sources))
 		out.CommandResult(result)
@@ -291,17 +291,6 @@ func Run(ctx context.Context, cfg *cliutil.Config, manifestPath, versionFlag str
 			len(result.Assets), output.FormatSize(result.TotalSize), output.FormatDuration(result.DurationMs))
 	}
 	return out.CommandResult(result)
-}
-
-// firstResultError returns the error message of the first failed asset
-// result, for the partial-failure summary.
-func firstResultError(results []*cob.AssetResult) string {
-	for _, r := range results {
-		if r != nil && r.ErrorMsg != "" {
-			return r.ErrorMsg
-		}
-	}
-	return "asset transfer failed"
 }
 
 func runDryRun(ctx context.Context, coords *cob.PackageCoordinates, sources []cliutil.NamedSource, client *cob.Client, out *output.Writer) error {
