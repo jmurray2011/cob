@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -129,6 +130,51 @@ func TestRunRmForceRefusedWithDownstream(t *testing.T) {
 	se := stderr.String()
 	if !strings.Contains(se, "staging") || !strings.Contains(se, "prod") {
 		t.Errorf("error message should list downstream repos (staging, prod); got: %s", se)
+	}
+}
+
+func TestRunRmForceRefusedWhenDownstreamProbeErrors(t *testing.T) {
+	ctx := context.Background()
+	var deleted int
+	// "dev" holds the Published version being deleted. The downstream probe
+	// to "staging" fails transiently (throttle / creds blip); "prod" has no
+	// copy. A failed probe must NOT be read as "no copy" — that would let
+	// --force silently break staging's chain-of-evidence without the
+	// --everywhere consent the downstream-found path already requires.
+	ca := &clitest.FakeCA{
+		DescribeFn: func(in *codeartifact.DescribePackageVersionInput) (*codeartifact.DescribePackageVersionOutput, error) {
+			switch aws.ToString(in.Repository) {
+			case "dev":
+				return &codeartifact.DescribePackageVersionOutput{
+					PackageVersion: &catypes.PackageVersionDescription{Status: catypes.PackageVersionStatusPublished},
+				}, nil
+			case "staging":
+				return nil, errors.New("ThrottlingException: rate exceeded")
+			default: // prod and anything else
+				return nil, &catypes.ResourceNotFoundException{}
+			}
+		},
+		ListReposFn: func(*codeartifact.ListRepositoriesInDomainInput) (*codeartifact.ListRepositoriesInDomainOutput, error) {
+			return &codeartifact.ListRepositoriesInDomainOutput{Repositories: []catypes.RepositorySummary{
+				{Name: aws.String("dev")}, {Name: aws.String("staging")}, {Name: aws.String("prod")},
+			}}, nil
+		},
+		DeleteFn: func(*codeartifact.DeletePackageVersionsInput) (*codeartifact.DeletePackageVersionsOutput, error) {
+			deleted++
+			return &codeartifact.DeletePackageVersionsOutput{}, nil
+		},
+	}
+	cfg, _, stderr := clitest.UseFake(t, ca)
+	// --force, NOT --everywhere: an unverifiable downstream must block, not proceed.
+	err := runRm(ctx, cfg, "acme/dev/tools/app@2.1.0", true, false, true)
+	clitest.WantExit(t, err, cob.ExitConflict)
+	if deleted != 0 {
+		t.Errorf("DeleteVersion must not run when a downstream probe failed: ran %d times", deleted)
+	}
+	// The message should name the repo it couldn't verify so the operator
+	// knows where the uncertainty is — not a bare "try again".
+	if se := stderr.String(); !strings.Contains(se, "staging") {
+		t.Errorf("error should name the unverifiable repo (staging); got: %s", se)
 	}
 }
 
