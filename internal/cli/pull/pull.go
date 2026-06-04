@@ -82,13 +82,18 @@ func NewCmd(cfg *cliutil.Config) *cobra.Command {
 }
 
 // splitSourceAndFilter divides the SOURCE positional into the
-// coords/manifest part and the inline asset filter, splitting on the
-// first ':' that isn't inside coordinate syntax. Coordinate strings
-// don't legally contain ':' (segments are alphanumeric +.-_, version
-// is [a-zA-Z0-9.+-]+ per CodeArtifact), so the first ':' is
-// unambiguously the filter separator. Returns (source, filter) where
-// filter is "" when no inline filter was given.
+// coords/manifest part and the inline asset filter. A manifest path is
+// returned whole — it may carry a drive-letter ':' on Windows
+// (C:\dir\m.yaml) that is not a filter separator, and a manifest never
+// takes an inline filter anyway (Run rejects that combination). Otherwise
+// the first ':' splits: coordinate strings don't legally contain ':'
+// (segments are alphanumeric +.-_, version is [a-zA-Z0-9.+-]+ per
+// CodeArtifact), so the first ':' is unambiguously the filter separator.
+// Returns (source, filter) where filter is "" when no inline filter was given.
 func splitSourceAndFilter(s string) (source, filter string) {
+	if cliutil.IsManifestPath(s) {
+		return s, ""
+	}
 	i := strings.IndexByte(s, ':')
 	if i < 0 {
 		return s, ""

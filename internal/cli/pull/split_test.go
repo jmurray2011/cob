@@ -3,10 +3,11 @@ package pull
 import "testing"
 
 // TestSplitSourceAndFilter pins the parser that divides "SOURCE:filter"
-// into the coords/manifest part and the inline asset list. A first-':'
-// split is unambiguous in coordinate strings — coord segments are
-// alphanumeric +.-_, version is [a-zA-Z0-9.+-]+, manifest paths end in
-// .yaml/.yml — so ':' is never legal before the filter.
+// into the coords/manifest part and the inline asset list. A manifest path
+// is never split — it can carry a drive-letter ':' on Windows
+// (C:\dir\m.yaml) — so it passes through whole. Otherwise the first ':'
+// splits: coord segments are alphanumeric +.-_ and version is
+// [a-zA-Z0-9.+-]+, so ':' is never legal before the filter in coordinates.
 //
 // The known limitation: ':' IS legal in CodeArtifact generic asset
 // names. A user with `foo:bar.jar` as an asset can't filter to that
@@ -23,6 +24,11 @@ func TestSplitSourceAndFilter(t *testing.T) {
 		{"acme/dev/tools/app@2.1.0", "acme/dev/tools/app@2.1.0", ""},
 		{"./my-package.yaml", "./my-package.yaml", ""},
 		{"", "", ""},
+
+		// Windows manifest paths carry a drive-letter ':' that must NOT be
+		// read as the filter separator — the whole path is the source.
+		{`C:\build\cob-manifest.yaml`, `C:\build\cob-manifest.yaml`, ""},
+		{`D:\pkgs\m.yml`, `D:\pkgs\m.yml`, ""},
 
 		// Single inline filter.
 		{"acme/dev/tools/app@2.1.0:foo.jar", "acme/dev/tools/app@2.1.0", "foo.jar"},
