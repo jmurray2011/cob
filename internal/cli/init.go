@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -140,11 +141,19 @@ func runInit(cfg *cliutil.Config, dirArg, coordsArg, outputPath string, force, m
 		outputFile = outputPath
 	}
 	if outputFile != "" {
-		if _, err := os.Stat(outputFile); err == nil && !force {
+		// Without --force, create exclusively: O_EXCL fails if the file
+		// already exists AND refuses to follow a symlink onto its target —
+		// closing the stat-then-create TOCTOU the previous os.Stat/os.Create
+		// pair left open. With --force we truncate in place.
+		flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		if !force {
+			flag = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+		}
+		f, err := os.OpenFile(outputFile, flag, 0o644)
+		if errors.Is(err, os.ErrExist) {
 			return cliutil.Fail(out, "init", cob.ExitConflict,
 				"%s already exists; --force to overwrite", outputFile)
 		}
-		f, err := os.Create(outputFile)
 		if err != nil {
 			return cliutil.Fail(out, "init", cob.ExitError, "%s", err)
 		}
