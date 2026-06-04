@@ -614,7 +614,21 @@ func truncateName(s string, width int) string {
 	if width <= 1 {
 		return "…"
 	}
-	return s[:width-1] + "…"
+	// Reserve one cell for the ellipsis and accumulate whole runes by their
+	// display width — never byte-slice, which would split a multibyte rune
+	// (CJK / emoji asset names) into invalid UTF-8.
+	budget := width - 1
+	used := 0
+	var b strings.Builder
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if used+rw > budget {
+			break
+		}
+		b.WriteRune(r)
+		used += rw
+	}
+	return b.String() + "…"
 }
 
 func padRight(s string, width int) string {
