@@ -89,6 +89,19 @@ func WarnManifestOverrides(m *manifest.Manifest, out *output.Writer) {
 	}
 }
 
+// FirstResultError returns the message of the first failed asset result —
+// for the partial-failure summary pull/publish/promote each print. nil
+// results are skipped; the generic fallback covers a batch that failed
+// without any per-asset message (e.g. an early cancellation).
+func FirstResultError(results []*cob.AssetResult) string {
+	for _, r := range results {
+		if r != nil && r.ErrorMsg != "" {
+			return r.ErrorMsg
+		}
+	}
+	return "asset transfer failed"
+}
+
 // ResolveLatestIfNeeded checks if coords.Version is "latest" and, if so,
 // resolves it to the most recently published version. Prints the resolved
 // version so the user knows what they got.

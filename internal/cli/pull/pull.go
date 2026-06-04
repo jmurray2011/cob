@@ -307,7 +307,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, destinat
 	}
 	if !ok {
 		result.Status = "error"
-		result.Error = firstResultError(results)
+		result.Error = cliutil.FirstResultError(results)
 	}
 
 	result.DurationMs = time.Since(start).Milliseconds()
@@ -417,15 +417,4 @@ func isDir(path string) bool {
 		return false
 	}
 	return info.IsDir()
-}
-
-// firstResultError returns the error message of the first failed asset
-// result, for the partial-failure summary.
-func firstResultError(results []*cob.AssetResult) string {
-	for _, r := range results {
-		if r != nil && r.ErrorMsg != "" {
-			return r.ErrorMsg
-		}
-	}
-	return "asset transfer failed"
 }
