@@ -2,6 +2,8 @@ module github.com/jmurray2011/cob
 
 go 1.25.0
 
+toolchain go1.25.11
+
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
