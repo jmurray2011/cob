@@ -3,16 +3,17 @@ package cli
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/jmurray2011/cob/internal/cob"
+	"github.com/jmurray2011/cob/internal/concurrency"
 	"github.com/jmurray2011/cob/internal/output"
 )
 
-// treeWalkConcurrency bounds in-flight CodeArtifact list calls during a
-// hierarchy walk. Matches cliutil.PromotionStatusConcurrency — both are batches of
-// independent reads against the same service.
+// treeWalkConcurrency bounds both the in-flight CodeArtifact list calls and
+// the goroutines a hierarchy walk holds at once. Matches
+// cliutil.PromotionStatusConcurrency — both are batches of independent reads
+// against the same service.
 const treeWalkConcurrency = 8
 
 // TreeDepth names the deepest level a walk descends to. Absolute, not
@@ -155,94 +156,120 @@ type FlatNode struct {
 // errors are recorded on the node, not propagated — discovery use cases
 // want a partial tree, not an aborted command.
 func walkHierarchy(ctx context.Context, registry *cob.Registry, start *cob.PackageCoordinates, depth TreeDepth) *TreeNode {
-	w := &walker{registry: registry, sem: make(chan struct{}, treeWalkConcurrency), depth: depth}
-
-	switch {
-	case start == nil || start.Domain == "":
-		root := &TreeNode{Kind: "root"}
-		w.expandRoot(ctx, root)
-		return root
-	case start.Repository == "":
-		n := &TreeNode{Name: start.Domain, Kind: "domain", Path: start.Domain, Domain: start.Domain}
-		if depth >= DepthRepos {
-			w.expandDomain(ctx, n, start.Domain)
-		}
-		return n
-	case start.Namespace == "":
-		n := &TreeNode{
-			Name: start.Repository, Kind: "repo",
-			Path:   start.Domain + "/" + start.Repository,
-			Domain: start.Domain, Repository: start.Repository,
-		}
-		if depth >= DepthPackages {
-			w.expandRepo(ctx, n, start.Domain, start.Repository)
-		}
-		return n
-	case start.Version == "":
-		path := fmt.Sprintf("%s/%s/%s/%s", start.Domain, start.Repository, start.Namespace, start.Package)
-		n := &TreeNode{
-			Name: start.Namespace + "/" + start.Package, Kind: "package", Path: path,
-			Domain: start.Domain, Repository: start.Repository,
-			Namespace: start.Namespace, Package: start.Package,
-		}
-		if depth >= DepthVersions {
-			w.expandPackage(ctx, n, *start)
-		}
-		return n
-	default:
-		path := fmt.Sprintf("%s/%s/%s/%s@%s", start.Domain, start.Repository, start.Namespace, start.Package, start.Version)
-		n := &TreeNode{
-			Name: start.Version, Kind: "version", Path: path,
-			Domain: start.Domain, Repository: start.Repository,
-			Namespace: start.Namespace, Package: start.Package, Version: start.Version,
-		}
-		if depth >= DepthAssets {
-			w.expandVersion(ctx, n, *start)
-		}
-		return n
-	}
+	w := &walker{registry: registry, depth: depth}
+	root := startNode(start)
+	w.walk(ctx, root)
+	return root
 }
 
 type walker struct {
 	registry *cob.Registry
-	sem      chan struct{}
 	depth    TreeDepth
 }
 
-// throttled runs the API call holding one semaphore slot, then releases it
-// before the caller fans out into children. Bounding only the API call (not
-// the parent goroutine while it waits for children) prevents nested
-// fan-outs from deadlocking on the semaphore — a recursive walk would
-// otherwise deadlock the moment depth-N goroutines all held slots and
-// tried to start depth-(N+1).
-func (w *walker) throttled(fn func()) {
-	w.sem <- struct{}{}
-	defer func() { <-w.sem }()
-	fn()
+// startNode builds the unexpanded root of the walk from the start
+// coordinates: every level of detail that was supplied pins one more node
+// kind. nil/empty start means a whole-namespace walk rooted at "root".
+func startNode(start *cob.PackageCoordinates) *TreeNode {
+	switch {
+	case start == nil || start.Domain == "":
+		return &TreeNode{Kind: "root"}
+	case start.Repository == "":
+		return &TreeNode{Name: start.Domain, Kind: "domain", Path: start.Domain, Domain: start.Domain}
+	case start.Namespace == "":
+		return &TreeNode{
+			Name: start.Repository, Kind: "repo",
+			Path:   start.Domain + "/" + start.Repository,
+			Domain: start.Domain, Repository: start.Repository,
+		}
+	case start.Version == "":
+		return &TreeNode{
+			Name: start.Namespace + "/" + start.Package, Kind: "package",
+			Path:   fmt.Sprintf("%s/%s/%s/%s", start.Domain, start.Repository, start.Namespace, start.Package),
+			Domain: start.Domain, Repository: start.Repository,
+			Namespace: start.Namespace, Package: start.Package,
+		}
+	default:
+		return &TreeNode{
+			Name: start.Version, Kind: "version",
+			Path:   fmt.Sprintf("%s/%s/%s/%s@%s", start.Domain, start.Repository, start.Namespace, start.Package, start.Version),
+			Domain: start.Domain, Repository: start.Repository,
+			Namespace: start.Namespace, Package: start.Package, Version: start.Version,
+		}
+	}
 }
 
-// recurse expands each child concurrently. Each child does its own API
-// call under w.throttled, so the semaphore caps concurrent API calls
-// without capping goroutines (which would deadlock here).
-func (w *walker) recurse(ctx context.Context, children []*TreeNode, expand func(context.Context, *TreeNode)) {
-	var wg sync.WaitGroup
-	for _, c := range children {
-		if ctx.Err() != nil {
-			break
-		}
-		wg.Add(1)
-		go func(c *TreeNode) {
-			defer wg.Done()
-			expand(ctx, c)
-		}(c)
+// levelOf maps a node kind to its absolute depth. The synthetic "root" is
+// above DepthDomains so it always expands into the domain list.
+func levelOf(kind string) TreeDepth {
+	switch kind {
+	case "domain":
+		return DepthDomains
+	case "repo":
+		return DepthRepos
+	case "package":
+		return DepthPackages
+	case "version":
+		return DepthVersions
+	case "asset":
+		return DepthAssets
+	default: // root
+		return DepthDomains - 1
 	}
-	wg.Wait()
+}
+
+// walk expands the tree breadth-first, one level at a time. Each level's
+// nodes are expanded through concurrency.ForEach, which acquires a
+// treeWalkConcurrency-slot semaphore *before* spawning a goroutine — so the
+// walk holds at most treeWalkConcurrency goroutines (and in-flight API
+// calls) at once, regardless of how wide the tree is. A node is expanded
+// only while its level is shallower than the target depth; deeper nodes are
+// leaves. Per-branch errors land on the node (expandNode), so one bad branch
+// never aborts the walk.
+func (w *walker) walk(ctx context.Context, root *TreeNode) {
+	frontier := []*TreeNode{root}
+	for len(frontier) > 0 {
+		var expandable []*TreeNode
+		for _, n := range frontier {
+			if levelOf(n.Kind) < w.depth {
+				expandable = append(expandable, n)
+			}
+		}
+		if len(expandable) == 0 {
+			return
+		}
+		concurrency.ForEach(ctx, expandable, treeWalkConcurrency, func(ctx context.Context, _ int, n *TreeNode) struct{} {
+			w.expandNode(ctx, n)
+			return struct{}{}
+		})
+		var next []*TreeNode
+		for _, n := range expandable {
+			next = append(next, n.Children...)
+		}
+		frontier = next
+	}
+}
+
+// expandNode lists n's immediate children for its kind. No throttling or
+// goroutine spawning here — walk's ForEach owns concurrency; each call is a
+// plain, synchronous listing run on a bounded worker.
+func (w *walker) expandNode(ctx context.Context, n *TreeNode) {
+	switch n.Kind {
+	case "root":
+		w.expandRoot(ctx, n)
+	case "domain":
+		w.expandDomain(ctx, n)
+	case "repo":
+		w.expandRepo(ctx, n)
+	case "package":
+		w.expandPackage(ctx, n)
+	case "version":
+		w.expandVersion(ctx, n)
+	}
 }
 
 func (w *walker) expandRoot(ctx context.Context, n *TreeNode) {
-	var domains []cob.DomainSummary
-	var err error
-	w.throttled(func() { domains, err = w.registry.ListDomains(ctx) })
+	domains, err := w.registry.ListDomains(ctx)
 	if err != nil {
 		n.Error = err.Error()
 		return
@@ -250,18 +277,10 @@ func (w *walker) expandRoot(ctx context.Context, n *TreeNode) {
 	for _, d := range domains {
 		n.Children = append(n.Children, &TreeNode{Name: d.Name, Kind: "domain", Path: d.Name, Domain: d.Name})
 	}
-	if w.depth <= DepthDomains {
-		return
-	}
-	w.recurse(ctx, n.Children, func(ctx context.Context, child *TreeNode) {
-		w.expandDomain(ctx, child, child.Domain)
-	})
 }
 
-func (w *walker) expandDomain(ctx context.Context, n *TreeNode, domain string) {
-	var repos []string
-	var err error
-	w.throttled(func() { repos, err = w.registry.ListRepositories(ctx, domain) })
+func (w *walker) expandDomain(ctx context.Context, n *TreeNode) {
+	repos, err := w.registry.ListRepositories(ctx, n.Domain)
 	if err != nil {
 		n.Error = err.Error()
 		return
@@ -269,22 +288,14 @@ func (w *walker) expandDomain(ctx context.Context, n *TreeNode, domain string) {
 	n.RepoCount = len(repos)
 	for _, r := range repos {
 		n.Children = append(n.Children, &TreeNode{
-			Name: r, Kind: "repo", Path: domain + "/" + r,
-			Domain: domain, Repository: r,
+			Name: r, Kind: "repo", Path: n.Domain + "/" + r,
+			Domain: n.Domain, Repository: r,
 		})
 	}
-	if w.depth <= DepthRepos {
-		return
-	}
-	w.recurse(ctx, n.Children, func(ctx context.Context, child *TreeNode) {
-		w.expandRepo(ctx, child, domain, child.Repository)
-	})
 }
 
-func (w *walker) expandRepo(ctx context.Context, n *TreeNode, domain, repo string) {
-	var pkgs []cob.PackageSummary
-	var err error
-	w.throttled(func() { pkgs, err = w.registry.ListPackages(ctx, domain, repo) })
+func (w *walker) expandRepo(ctx context.Context, n *TreeNode) {
+	pkgs, err := w.registry.ListPackages(ctx, n.Domain, n.Repository)
 	if err != nil {
 		n.Error = err.Error()
 		return
@@ -297,28 +308,18 @@ func (w *walker) expandRepo(ctx context.Context, n *TreeNode, domain, repo strin
 		n.Children = append(n.Children, &TreeNode{
 			Name:   p.Namespace + "/" + p.Package,
 			Kind:   "package",
-			Path:   fmt.Sprintf("%s/%s/%s/%s", domain, repo, p.Namespace, p.Package),
-			Domain: domain, Repository: repo,
+			Path:   fmt.Sprintf("%s/%s/%s/%s", n.Domain, n.Repository, p.Namespace, p.Package),
+			Domain: n.Domain, Repository: n.Repository,
 			Namespace: p.Namespace, Package: p.Package,
 			VersionCount:  p.VersionCount,
 			LatestVersion: p.LatestVersion,
 		})
 	}
-	if w.depth <= DepthPackages {
-		return
-	}
-	w.recurse(ctx, n.Children, func(ctx context.Context, child *TreeNode) {
-		w.expandPackage(ctx, child, cob.PackageCoordinates{
-			Domain: domain, Repository: repo,
-			Namespace: child.Namespace, Package: child.Package,
-		})
-	})
 }
 
-func (w *walker) expandPackage(ctx context.Context, n *TreeNode, c cob.PackageCoordinates) {
-	var versions []cob.VersionSummary
-	var err error
-	w.throttled(func() { versions, err = w.registry.ListVersions(ctx, &c) })
+func (w *walker) expandPackage(ctx context.Context, n *TreeNode) {
+	c := cob.PackageCoordinates{Domain: n.Domain, Repository: n.Repository, Namespace: n.Namespace, Package: n.Package}
+	versions, err := w.registry.ListVersions(ctx, &c)
 	if err != nil {
 		n.Error = err.Error()
 		return
@@ -339,20 +340,11 @@ func (w *walker) expandPackage(ctx context.Context, n *TreeNode, c cob.PackageCo
 			AssetCount: v.Assets, Published: published,
 		})
 	}
-	if w.depth <= DepthVersions {
-		return
-	}
-	w.recurse(ctx, n.Children, func(ctx context.Context, child *TreeNode) {
-		vc := c
-		vc.Version = child.Version
-		w.expandVersion(ctx, child, vc)
-	})
 }
 
-func (w *walker) expandVersion(ctx context.Context, n *TreeNode, c cob.PackageCoordinates) {
-	var assets []cob.AssetSummary
-	var err error
-	w.throttled(func() { assets, err = w.registry.ListAssets(ctx, &c) })
+func (w *walker) expandVersion(ctx context.Context, n *TreeNode) {
+	c := cob.PackageCoordinates{Domain: n.Domain, Repository: n.Repository, Namespace: n.Namespace, Package: n.Package, Version: n.Version}
+	assets, err := w.registry.ListAssets(ctx, &c)
 	if err != nil {
 		n.Error = err.Error()
 		return
