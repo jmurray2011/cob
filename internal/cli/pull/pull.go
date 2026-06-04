@@ -212,7 +212,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, destinat
 	}
 
 	// Narrow to the requested assets via the inline filter (if any).
-	assets, unmatched, err := selectAssets(allAssets, "", assetsFilter)
+	assets, unmatched, err := selectAssets(allAssets, assetsFilter)
 	for _, name := range unmatched {
 		out.Warn("asset %q not found in %s/%s@%s, skipping", name, coords.Namespace, coords.Package, coords.Version)
 	}
@@ -357,43 +357,38 @@ func totalAssetSize(assets []cob.AssetInfo) int64 {
 }
 
 // selectAssets narrows the full asset list to what the caller asked for: a
-// single positional asset, a comma-separated --assets filter, or — given
-// neither — everything. unmatched holds any --assets names that matched no
-// asset (the caller warns on each). A non-nil error means nothing matched
-// at all; it carries no coordinates, so the caller frames it.
-func selectAssets(all []cob.AssetInfo, assetArg, assetsFilter string) (selected []cob.AssetInfo, unmatched []string, err error) {
-	switch {
-	case assetArg != "":
-		for _, a := range all {
-			if a.Name == assetArg {
-				return []cob.AssetInfo{a}, nil, nil
-			}
+// comma-separated inline filter, or — given none — everything. unmatched
+// holds any filter names that matched no asset (the caller warns on each).
+// A non-nil error means nothing matched at all; it carries no coordinates,
+// so the caller frames it. Blank elements (from a trailing or doubled comma)
+// are dropped rather than reported as misses.
+func selectAssets(all []cob.AssetInfo, assetsFilter string) (selected []cob.AssetInfo, unmatched []string, err error) {
+	wanted := make(map[string]bool)
+	for _, name := range strings.Split(assetsFilter, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			wanted[name] = true
 		}
-		return nil, nil, fmt.Errorf("asset %q not found", assetArg)
-	case assetsFilter != "":
-		wanted := make(map[string]bool)
-		for _, name := range strings.Split(assetsFilter, ",") {
-			wanted[strings.TrimSpace(name)] = true
-		}
-		matched := make(map[string]bool)
-		for _, a := range all {
-			if wanted[a.Name] {
-				selected = append(selected, a)
-				matched[a.Name] = true
-			}
-		}
-		for name := range wanted {
-			if !matched[name] {
-				unmatched = append(unmatched, name)
-			}
-		}
-		if len(selected) == 0 {
-			return nil, unmatched, fmt.Errorf("none of the requested assets found")
-		}
-		return selected, unmatched, nil
-	default:
+	}
+	if len(wanted) == 0 {
+		// No (or only-blank) filter → everything.
 		return all, nil, nil
 	}
+	matched := make(map[string]bool)
+	for _, a := range all {
+		if wanted[a.Name] {
+			selected = append(selected, a)
+			matched[a.Name] = true
+		}
+	}
+	for name := range wanted {
+		if !matched[name] {
+			unmatched = append(unmatched, name)
+		}
+	}
+	if len(selected) == 0 {
+		return nil, unmatched, fmt.Errorf("none of the requested assets found")
+	}
+	return selected, unmatched, nil
 }
 
 func writePulledManifest(ctx context.Context, client *cob.Client, coords *cob.PackageCoordinates, assets []cob.AssetInfo, dir string, out *output.Writer) {
