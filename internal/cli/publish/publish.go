@@ -122,6 +122,12 @@ func Run(ctx context.Context, cfg *cliutil.Config, manifestPath, versionFlag str
 	if err != nil {
 		return cliutil.Fail(out, "publish", cob.ExitError, "%s", err)
 	}
+	out.Verbosef("target %s/%s/%s/%s@%s", coords.Domain, coords.Repository, coords.Namespace, coords.Package, version)
+	if out.Verbose() {
+		for _, ns := range sources {
+			out.Verbosef("source %s -> %s (asset %s)", ns.Name, ns.Source.URI(), ns.Source.Filename())
+		}
+	}
 	// Tell the live renderer how many rows to expect; bytes are 0
 	// because sources resolve lazily and we don't know sizes until they
 	// stream.
@@ -191,6 +197,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, manifestPath, versionFlag str
 	for i, ns := range sources {
 		if a, done := present[ns.Source.Filename()]; done {
 			out.AssetSkipped(ns.Name)
+			out.Verbosef("skip %s: already published (resume)", ns.Name)
 			results[i] = &cob.AssetResult{
 				Name: ns.Name, Source: ns.Source.URI(),
 				Kind: cob.KindTransfer, SHA256: a.SHA256, Size: a.Size, Method: cob.TransferSkipped,
@@ -208,6 +215,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, manifestPath, versionFlag str
 			out.AssetFail(ns.Name, ns.Source.URI(), err)
 			return ar, err
 		}
+		out.Verbosef("%s: %s %s in %dms", ns.Name, ar.Method, output.FormatSize(ar.Size), ar.DurationMs)
 		out.AssetOK(ar, ns.Source.URI())
 		return ar, nil
 	}
