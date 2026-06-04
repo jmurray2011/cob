@@ -35,6 +35,9 @@ func NewRootCmd(build cliutil.BuildInfo) *cobra.Command {
 	root.PersistentFlags().BoolVar(&cfg.JSON, "json", false, "Machine-readable JSON output")
 	root.PersistentFlags().BoolVarP(&cfg.Quiet, "quiet", "q", false, "Suppress headers, summaries, and progress (errors still print)")
 	root.PersistentFlags().BoolVar(&cfg.Debug, "debug", false, "Log AWS API responses/retries to stderr")
+	// --verbose has no -v short: the diff subcommand owns local -v for its
+	// per-row detail. Operators set --verbose for cob's own step trace.
+	root.PersistentFlags().BoolVar(&cfg.Verbose, "verbose", false, "Log cob's own resolution, skip, and timing steps plus one line per AWS call to stderr (also: COB_VERBOSE)")
 	root.PersistentFlags().StringVar(&cfg.TmpDir, "tmpdir", "", "Directory for streaming spill files (default: $TMPDIR)")
 	root.PersistentFlags().BoolVar(&cfg.NoTUI, "no-tui", false, "Force line-stream output even on a TTY (also: COB_TUI=0)")
 	root.PersistentFlags().DurationVar(&cfg.Timeout, "timeout", 0, "Deadline for long-running ops (pull/publish/promote/diff); e.g. 30m. 0 = no deadline (also: COB_TIMEOUT)")

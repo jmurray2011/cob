@@ -242,6 +242,25 @@ func (w *Writer) Error(format string, args ...any) {
 	fmt.Fprintf(w.errOut, "Error: "+format+"\n", args...)
 }
 
+// Verbosef writes a leveled "verbose:" trace line to stderr when --verbose
+// is set. It never touches stdout (so --json output stays clean) and fires
+// even under --quiet — the operator opted into the trace explicitly, so it
+// outranks the quiet preference. Safe for concurrent callers: the AWS-call
+// trace fires from the transfer goroutines, so writes are serialized under
+// the same mutex as Warn to keep lines from interleaving.
+func (w *Writer) Verbosef(format string, args ...any) {
+	if !w.mode.Verbose {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	fmt.Fprintf(w.errOut, "verbose: "+format+"\n", args...)
+}
+
+// Verbose reports whether the --verbose trace channel is active, so a
+// caller can skip building an expensive detail string when it won't print.
+func (w *Writer) Verbose() bool { return w.mode.Verbose }
+
 // JSON writes an arbitrary value as indented JSON to stdout.
 // Returns true if JSON mode is active (and the value was written),
 // false if the caller should fall through to human output.

@@ -30,6 +30,11 @@ import (
 type Config struct {
 	Profile, Region, TmpDir string
 	JSON, Quiet, Debug      bool
+	// Verbose enables cob's own step trace on stderr: source/coordinate
+	// resolution, skip/decision reasons, per-asset timing, and one line per
+	// AWS call. Distinct from Debug, which toggles the AWS SDK's own
+	// response/retry logging. Set by --verbose or COB_VERBOSE.
+	Verbose bool
 	// NoTUI forces the line-stream renderer even on an interactive TTY —
 	// for screen-recording, exotic emulators, or pipelines that want
 	// scriptable output without the JSON envelope. Set by --no-tui or
@@ -129,6 +134,11 @@ func ApplyEnvFallbacks(cmd *cobra.Command, cfg *Config) {
 	if !cmd.Flags().Changed("debug") {
 		if set, b := envBool("COB_DEBUG"); set {
 			cfg.Debug = b
+		}
+	}
+	if !cmd.Flags().Changed("verbose") {
+		if set, b := envBool("COB_VERBOSE"); set {
+			cfg.Verbose = b
 		}
 	}
 	if !cmd.Flags().Changed("timeout") {
