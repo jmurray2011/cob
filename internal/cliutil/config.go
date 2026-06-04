@@ -12,7 +12,7 @@ package cliutil
 
 import (
 	"os"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -173,15 +173,21 @@ func ApplyEnvFallbacks(cmd *cobra.Command, cfg *Config) {
 	}
 }
 
-// envBool reads a COB_* boolean env var. Returns (set=false) when the var
-// is unset or empty; an unparseable non-empty value is treated as true.
+// envBool reads a COB_* boolean env var. Returns set=false when the var is
+// unset, empty, or holds an unrecognized value — so a typo (COB_QUIET=nope)
+// falls through to the flag/default instead of silently forcing true.
+// Recognized spellings cover the usual truthy/falsey words, case-insensitive.
 func envBool(name string) (set, val bool) {
 	v, ok := os.LookupEnv(name)
-	if !ok || v == "" {
+	if !ok {
 		return false, false
 	}
-	if b, err := strconv.ParseBool(v); err == nil {
-		return true, b
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "t", "true", "y", "yes", "on":
+		return true, true
+	case "0", "f", "false", "n", "no", "off":
+		return true, false
+	default:
+		return false, false
 	}
-	return true, true
 }
