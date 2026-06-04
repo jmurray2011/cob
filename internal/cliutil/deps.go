@@ -22,9 +22,10 @@ var (
 	// prompt returns.
 	NewWriter = func(cfg *Config) *output.Writer {
 		return output.New(output.Mode{
-			JSON:  cfg.JSON,
-			Quiet: cfg.Quiet,
-			NoTUI: cfg.NoTUI,
+			JSON:    cfg.JSON,
+			Quiet:   cfg.Quiet,
+			NoTUI:   cfg.NoTUI,
+			Verbose: cfg.Verbose,
 		})
 	}
 )

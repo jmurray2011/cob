@@ -25,4 +25,9 @@ type Mode struct {
 	JSON  bool
 	Quiet bool
 	NoTUI bool
+	// Verbose enables cob's own step trace (resolution, skips, per-asset
+	// timing, and one line per AWS call) on stderr. Orthogonal to the
+	// renderer choice above — it adds a "verbose:" channel, it doesn't
+	// change how asset events draw.
+	Verbose bool
 }
