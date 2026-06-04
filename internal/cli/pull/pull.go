@@ -142,7 +142,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, destinat
 	}
 	target = source
 
-	client, err := cliutil.DialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg, out)
 	if err != nil {
 		return cliutil.Fail(out, "pull", cob.ExitError, "%s", err)
 	}

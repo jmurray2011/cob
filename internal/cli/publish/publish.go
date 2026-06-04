@@ -98,7 +98,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, manifestPath, versionFlag str
 		Version:    version,
 	}
 
-	client, err := cliutil.DialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg, out)
 	if err != nil {
 		return cliutil.Fail(out, "publish", cob.ExitError, "%s", err)
 	}

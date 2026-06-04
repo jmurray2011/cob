@@ -95,7 +95,7 @@ func runTree(ctx context.Context, cfg *cliutil.Config, cmd *cobra.Command, targe
 		}
 	}
 
-	client, err := cliutil.DialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg, out)
 	if err != nil {
 		return cliutil.Fail(out, "tree", cob.ExitError, "%s", err)
 	}

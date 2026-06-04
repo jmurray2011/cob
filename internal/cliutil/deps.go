@@ -31,12 +31,25 @@ var (
 )
 
 // DialClient builds the AWS client from cfg. Every command goes through it,
-// so a flag affecting client construction is wired in one place.
-func DialClient(ctx context.Context, cfg *Config) (*cob.Client, error) {
-	return NewClient(ctx, cob.ClientOptions{
+// so a flag affecting client construction is wired in one place. out carries
+// the --verbose channel: when set, each CodeArtifact/S3 call the client makes
+// is traced through out.Verbosef. Pass the command's Writer; nil disables the
+// trace (and is harmless when --verbose is off).
+func DialClient(ctx context.Context, cfg *Config, out *output.Writer) (*cob.Client, error) {
+	opts := cob.ClientOptions{
 		Profile: cfg.Profile,
 		Region:  cfg.Region,
 		Debug:   cfg.Debug,
 		TmpDir:  cfg.TmpDir,
-	})
+	}
+	if cfg.Verbose && out != nil {
+		opts.Trace = func(op, detail string) {
+			if detail == "" {
+				out.Verbosef("aws %s", op)
+			} else {
+				out.Verbosef("aws %s %s", op, detail)
+			}
+		}
+	}
+	return NewClient(ctx, opts)
 }

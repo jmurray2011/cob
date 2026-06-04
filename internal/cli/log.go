@@ -72,7 +72,7 @@ func runLog(ctx context.Context, cfg *cliutil.Config, args []string, checkRefs b
 		return cliutil.Fail(out, "log", cob.ExitError, "version is required (use @version or @latest)")
 	}
 
-	client, err := cliutil.DialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg, out)
 	if err != nil {
 		return cliutil.Fail(out, "log", cob.ExitError, "%s", err)
 	}

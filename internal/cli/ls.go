@@ -90,7 +90,7 @@ func runLsRecursive(ctx context.Context, cfg *cliutil.Config, cmd *cobra.Command
 		}
 	}
 
-	client, err := cliutil.DialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg, out)
 	if err != nil {
 		return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 	}
@@ -173,7 +173,7 @@ func runLs(ctx context.Context, cfg *cliutil.Config, target string) error {
 	out := cliutil.NewWriter(cfg)
 	defer out.Close()
 
-	client, err := cliutil.DialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg, out)
 	if err != nil {
 		return cliutil.Fail(out, "ls", cob.ExitError, "%s", err)
 	}

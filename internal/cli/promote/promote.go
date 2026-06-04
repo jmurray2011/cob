@@ -65,7 +65,7 @@ func Run(ctx context.Context, cfg *cliutil.Config, target, versionFlag, toRepo s
 		return cliutil.Fail(out, "promote", cob.ExitError, "--resume and --force are mutually exclusive (one continues a version, the other replaces it)")
 	}
 
-	client, err := cliutil.DialClient(ctx, cfg)
+	client, err := cliutil.DialClient(ctx, cfg, out)
 	if err != nil {
 		return cliutil.Fail(out, "promote", cob.ExitError, "%s", err)
 	}
