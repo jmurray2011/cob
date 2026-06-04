@@ -29,6 +29,7 @@ func NewPromoter(client *Client) *Promoter {
 func (p *Promoter) ListAssetsToPromote(ctx context.Context, coords *PackageCoordinates, srcRepo string) ([]string, error) {
 	var assetNames []string
 	var nextToken *string
+	pages := 0
 
 	for {
 		out, err := p.client.CodeArtifact.ListPackageVersionAssets(ctx, &codeartifact.ListPackageVersionAssetsInput{
@@ -48,6 +49,10 @@ func (p *Promoter) ListAssetsToPromote(ctx context.Context, coords *PackageCoord
 		}
 		if out.NextToken == nil {
 			break
+		}
+		pages++
+		if pages >= maxPaginationIterations {
+			return nil, fmt.Errorf("listing assets in %s: hit pagination safety cap of %d pages", srcRepo, maxPaginationIterations)
 		}
 		nextToken = out.NextToken
 	}

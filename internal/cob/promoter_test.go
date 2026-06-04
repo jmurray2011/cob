@@ -11,6 +11,27 @@ import (
 	catypes "github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 )
 
+// TestListAssetsToPromotePaginationSafetyCap pins the shared page cap onto
+// the promote source-listing loop. A perpetual NextToken must error, not
+// loop or OOM.
+func TestListAssetsToPromotePaginationSafetyCap(t *testing.T) {
+	var calls int
+	ca := &fakeCA{listAssetsFn: func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {
+		calls++
+		return &codeartifact.ListPackageVersionAssetsOutput{NextToken: aws.String("forever")}, nil
+	}}
+	_, err := NewPromoter(newTestClient(ca)).ListAssetsToPromote(context.Background(), coords(), "dev")
+	if err == nil {
+		t.Fatal("expected pagination safety cap to error out")
+	}
+	if !strings.Contains(err.Error(), "pagination safety cap") {
+		t.Errorf("error should mention the cap, got %v", err)
+	}
+	if calls > maxPaginationIterations+1 {
+		t.Errorf("paginator made %d calls, expected at most %d (cap + 1)", calls, maxPaginationIterations+1)
+	}
+}
+
 func TestListAssetsToPromote(t *testing.T) {
 	ctx := context.Background()
 

@@ -254,8 +254,9 @@ func TestListVersionsFanOut(t *testing.T) {
 // cap that protects every CodeArtifact paginator from a misbehaving SDK
 // or proxy that returns a non-nil NextToken forever. The fake hands back
 // a NextToken on every page; the call must error rather than loop or
-// OOM. Asserts on ListAssets but covers the shared maxPaginationIterations
-// guard wired into all 8 paginators.
+// OOM. Asserts on ListAssets; the same shared maxPaginationIterations
+// guard is wired into every CodeArtifact paginator (registry, source_ca,
+// puller, promoter — the last two pinned by their own cap tests).
 func TestListAssetsPaginationSafetyCap(t *testing.T) {
 	var calls int
 	ca := &fakeCA{listAssetsFn: func(*codeartifact.ListPackageVersionAssetsInput) (*codeartifact.ListPackageVersionAssetsOutput, error) {

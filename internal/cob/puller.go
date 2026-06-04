@@ -41,6 +41,7 @@ func NewPuller(client *Client) *Puller {
 func (p *Puller) FetchAssetInfo(ctx context.Context, coords *PackageCoordinates) ([]AssetInfo, error) {
 	var all []AssetInfo
 	var nextToken *string
+	pages := 0
 
 	for {
 		out, err := p.client.CodeArtifact.ListPackageVersionAssets(ctx, &codeartifact.ListPackageVersionAssetsInput{
@@ -74,6 +75,11 @@ func (p *Puller) FetchAssetInfo(ctx context.Context, coords *PackageCoordinates)
 
 		if out.NextToken == nil {
 			break
+		}
+		pages++
+		if pages >= maxPaginationIterations {
+			return nil, fmt.Errorf("listing assets for %s/%s@%s: hit pagination safety cap of %d pages",
+				coords.Namespace, coords.Package, coords.Version, maxPaginationIterations)
 		}
 		nextToken = out.NextToken
 	}
