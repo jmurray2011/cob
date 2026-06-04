@@ -43,6 +43,13 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `--verbose` (global; `COB_VERBOSE`): narrates cob's own steps on stderr —
+  coordinate resolution, the resolved source list, skip reasons, per-asset
+  method and timing, and one `aws <Operation> <coords>` line per
+  CodeArtifact/S3 call. Distinct from `--debug` (the AWS SDK's own
+  response/retry logging). Leveled `verbose:` prefix; never touches stdout, so
+  `--json` stays clean; emitted even under `--quiet`. No `-v` short — `diff`
+  keeps `-v` for its per-row detail.
 - `CONTRIBUTING.md` documenting the validate gate and the tests-first workflow.
 - This changelog.
 
