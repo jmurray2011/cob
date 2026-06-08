@@ -4,7 +4,17 @@ All notable changes to `cob` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims
 to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1] - 2026-06-07
+
+### Added
+
+- Live integration test suite (`//go:build livetest`): a black-box harness that
+  execs the real `cob` binary against a live CodeArtifact domain — the full
+  publish/promote/rm lifecycle, the exit-code matrix, and the drift and
+  downstream-safety gates. Internal only; the shipped binary is unchanged from
+  0.1.0.
+
+## [0.1.0] - 2026-06-04
 
 ### Fixed
 
@@ -57,5 +67,7 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Initial release.
 
-[Unreleased]: https://github.com/jmurray2011/cob/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/jmurray2011/cob/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/jmurray2011/cob/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/jmurray2011/cob/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/jmurray2011/cob/releases/tag/v0.0.1
